@@ -42,6 +42,11 @@ module Wip
       command
     end
 
+    def find
+      container = required(@config.defaults, 'container')
+      [@wslc, 'list', '--all', '--filter', "name=#{container}", '--format', 'json']
+    end
+
     def down
       [@wslc, 'stop', required(@config.defaults, 'container')]
     end
@@ -68,6 +73,8 @@ module Wip
       public_send(type, base + arguments, settings: values, interactive: values.fetch('interactive', false))
     end
 
+    def tty?(requested) = requested && @environment.interactive?
+
     private
 
     def options(values, include_container: false, include_publish: true)
@@ -88,7 +95,5 @@ module Wip
 
       value
     end
-
-    def tty?(requested) = requested && @environment.interactive?
   end
 end

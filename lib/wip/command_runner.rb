@@ -13,8 +13,10 @@ module Wip
       @interpreter = interpreter
     end
 
-    def run(command, env: {})
+    def run(command, env: {}, interactive: false)
       @stderr.puts "+ #{Shellwords.join(command)}" if ENV['WIP_DEBUG']
+      return run_attached(command, env) if interactive
+
       captured = +''
       status = nil
       Open3.popen3(env, *command) do |input, output, error, wait|
@@ -32,6 +34,19 @@ module Wip
     end
 
     private
+
+    # Piping stdin/stdout/stderr (as `run` does above) closes the child's
+    # stdin immediately, which breaks anything that reads from the terminal
+    # (a shell, `rails console`, ...). Inherit the real file descriptors
+    # instead so the child gets a genuine TTY.
+    def run_attached(command, env)
+      pid = Process.spawn(env, *command)
+      _, status = Process.wait2(pid)
+      status.exitstatus
+    rescue Errno::ENOENT => e
+      @stderr.puts e.message
+      127
+    end
 
     def pump(source, destination, captured)
       Thread.new do

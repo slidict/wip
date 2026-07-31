@@ -59,6 +59,10 @@ RSpec.describe Wip::CommandBuilder do
     expect(builder.remove).to eq(%w[wslc.exe remove -f app])
   end
 
+  it 'builds a quiet find query for the configured container' do
+    expect(builder.find).to eq(%w[wslc.exe list --all --filter name=app --format json])
+  end
+
   it 'appends the configured up command so the container stays running' do
     with_up_command = Wip::Config.new('defaults' => { 'container' => 'app', 'image' => 'example:dev' },
                                       'up' => { 'command' => 'local' })
