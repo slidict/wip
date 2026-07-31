@@ -30,4 +30,16 @@ RSpec.describe Wip::CLI do
 
     described_class.start(%w[rails c])
   end
+
+  it 'falls back to creating the container when `up` finds none to start' do
+    runner = instance_double(Wip::CommandRunner)
+    allow(Wip::CommandRunner).to receive(:new).and_return(runner)
+    allow(Wip::CommandResolver).to receive(:new).and_return(instance_double(Wip::CommandResolver,
+                                                                            resolve: 'wslc.exe'))
+
+    expect(runner).to receive(:run).with(%w[wslc.exe start app -a -i]).and_return(1)
+    expect(runner).to receive(:run).with(%w[wslc.exe run --name app -w /app example:dev]).and_return(0)
+
+    described_class.start(%w[up])
+  end
 end

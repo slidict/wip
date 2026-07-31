@@ -26,6 +26,28 @@ module Wip
       command.concat(options(values)).push(required(values, 'image')).concat(arguments)
     end
 
+    def up(detach: false)
+      values = @config.defaults
+      command = [@wslc, 'run', '--name', required(values, 'container')]
+      command << '-d' if detach
+      command << '-it' if !detach && tty?(true)
+      command.concat(options(values)).push(required(values, 'image'))
+    end
+
+    def start(detach: false)
+      command = [@wslc, 'start', required(@config.defaults, 'container')]
+      command.push('-a', '-i') unless detach
+      command
+    end
+
+    def down
+      [@wslc, 'stop', required(@config.defaults, 'container')]
+    end
+
+    def remove
+      [@wslc, 'remove', '-f', required(@config.defaults, 'container')]
+    end
+
     def build(settings:, extra: [])
       values = @config.defaults.merge(settings)
       context = values['context'] || '.'

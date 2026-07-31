@@ -37,4 +37,25 @@ RSpec.describe Wip::CommandBuilder do
     expect(builder.exec(%w[bin/rails c], settings: settings))
       .to eq(%w[wslc.exe exec -it -w /app app bin/rails c])
   end
+
+  it 'builds a detached up command that names the persistent container' do
+    expect(builder.up(detach: true)).to eq(%w[wslc.exe run --name app -d -w /app example:dev])
+  end
+
+  it 'builds a foreground up command with -it when the terminal is interactive' do
+    expect(builder.up).to eq(%w[wslc.exe run --name app -it -w /app example:dev])
+  end
+
+  it 'builds a start command that attaches by default' do
+    expect(builder.start).to eq(%w[wslc.exe start app -a -i])
+  end
+
+  it 'builds a detached start command without attaching' do
+    expect(builder.start(detach: true)).to eq(%w[wslc.exe start app])
+  end
+
+  it 'builds down and remove commands for the configured container' do
+    expect(builder.down).to eq(%w[wslc.exe stop app])
+    expect(builder.remove).to eq(%w[wslc.exe remove -f app])
+  end
 end

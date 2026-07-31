@@ -82,6 +82,8 @@ commands:
 | `wip doctor` | WSL2、相互運用、WSLC、設定、アーキテクチャ、Git を診断 |
 | `wip config` | デフォルト適用済み設定（秘密値をマスク） |
 | `wip build -- --no-cache` | build 定義でイメージをビルド |
+| `wip up [-d]` | `defaults.container` を起動（無ければ作成）。`-d` でバックグラウンド実行 |
+| `wip down` | `defaults.container` を停止・削除 |
 | `wip exec [--no-interactive] COMMAND...` | 既存コンテナ内で実行 |
 | `wip run [--no-interactive] COMMAND...` | `--rm` の新規コンテナで実行 |
 | `wip shell` | 定義済み shell、または `bash`、`sh` の順に起動 |
