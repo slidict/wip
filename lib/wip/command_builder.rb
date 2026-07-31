@@ -32,6 +32,8 @@ module Wip
       command << '-d' if detach
       command << '-it' if !detach && tty?(true)
       command.concat(options(values)).push(required(values, 'image'))
+      command.concat(Shellwords.split(@config.up_command.to_s)) if @config.up_command
+      command
     end
 
     def start(detach: false)
