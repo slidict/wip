@@ -31,4 +31,10 @@ RSpec.describe Wip::CommandBuilder do
   it 'appends custom command arguments' do
     expect(builder.custom('rails', ['console'])).to eq(%w[wslc.exe exec -it -w /app app bin/rails console])
   end
+
+  it 'omits ports and volumes from exec commands since wslc exec does not accept them' do
+    settings = { 'ports' => ['5000:3000'], 'volumes' => ['.:/app'], 'interactive' => true }
+    expect(builder.exec(%w[bin/rails c], settings: settings))
+      .to eq(%w[wslc.exe exec -it -w /app app bin/rails c])
+  end
 end

@@ -15,7 +15,7 @@ module Wip
       values = @config.defaults.merge(settings)
       command = [@wslc, 'exec']
       command << '-it' if tty?(interactive)
-      command.concat(options(values, include_container: true)).concat(arguments)
+      command.concat(options(values, include_container: true, include_publish: false)).concat(arguments)
     end
 
     def run(arguments, settings: {}, interactive: true)
@@ -46,12 +46,14 @@ module Wip
 
     private
 
-    def options(values, include_container: false)
+    def options(values, include_container: false, include_publish: true)
       result = []
       result.push('-w', values['workdir']) unless values['workdir'].to_s.empty?
       values.fetch('env', {}).each { |key, value| result.push('-e', "#{key}=#{value}") }
-      Array(values['ports']).each { |port| result.push('-p', port.to_s) }
-      Array(values['volumes']).each { |volume| result.push('-v', volume.to_s) }
+      if include_publish
+        Array(values['ports']).each { |port| result.push('-p', port.to_s) }
+        Array(values['volumes']).each { |volume| result.push('-v', volume.to_s) }
+      end
       result << required(values, 'container') if include_container
       result
     end
