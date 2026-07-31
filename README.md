@@ -50,6 +50,7 @@ defaults:
   workdir: /app
   interactive: false
   remove: true
+  network: app-tier # optional; shared with `dependencies` so containers can resolve each other by name
   env:
     RAILS_ENV: development
     PORT: "3000"
@@ -60,6 +61,15 @@ defaults:
 up:
   command: server # command `wip up` passes to the image when it creates the container
                    # (omit to use the image's default CMD)
+dependencies:
+  redis:
+    image: redis:latest
+  development.mysql:
+    image: mysql:8.0
+    command: --default-authentication-plugin=mysql_native_password
+    env:
+      MYSQL_ROOT_PASSWORD: password
+      MYSQL_DATABASE: development
 commands:
   rails:
     type: exec
@@ -91,6 +101,16 @@ commands:
 credential, or auth. Keep real secrets out of the config file and in your runtime environment
 instead.
 
+### Dependency containers
+
+If your app needs sidecar services (a database, Redis, ...), declare them under `dependencies`
+and set `defaults.network`. `wip up` creates the network first (if it doesn't exist), then brings
+up each dependency by name before the main container — so `bin/rails c` (or anything else run
+inside the main container) can reach `development.mysql`/`redis`/etc. by their dependency name,
+the same way Compose's service names resolve. `wip down` tears the main container and all
+dependencies down (the network itself is left in place). Each dependency entry accepts `image`
+(required), `command`, `env`, `ports`, `volumes`, and `workdir` — the same shape as `defaults`.
+
 ## Commands
 
 | Command | Description |
@@ -99,8 +119,8 @@ instead.
 | `wip doctor` | Diagnose WSL2, interop, WSLC, config, architecture, and Git |
 | `wip config` | Print the effective configuration (secrets masked) |
 | `wip build -- --no-cache` | Build the image from the `build` definition |
-| `wip up [-d]` | Start `defaults.container` (creating it with `up.command` if missing). `-d` runs it in the background |
-| `wip down` | Stop and remove `defaults.container` |
+| `wip up [-d]` | Start `defaults.container` and its `dependencies` (creating any that are missing, on `defaults.network` if set). `-d` runs the main container in the background |
+| `wip down` | Stop and remove `defaults.container` and its `dependencies` |
 | `wip exec [--no-interactive] COMMAND...` | Run a command in the existing container |
 | `wip run [--no-interactive] COMMAND...` | Run a command in a new `--rm` container |
 | `wip shell` | Open the configured shell, falling back to `bash` then `sh` |
@@ -165,10 +185,10 @@ checklist.
 
 ## Not in the initial release
 
-Compose compatibility, a resident/daemon process, a GUI, PowerShell-specific tuning, direct
-registry API/manifest parsing, self-update, and plugins are all unimplemented. Likely future
-additions: a richer config schema, lifecycle hooks, multi-container support, platform selection,
-and more detailed diagnostics.
+Full Compose compatibility (multiple networks, `depends_on` ordering/health checks, profiles), a
+resident/daemon process, a GUI, PowerShell-specific tuning, direct registry API/manifest parsing,
+self-update, and plugins are all unimplemented. Likely future additions: a richer config schema,
+lifecycle hooks, platform selection, and more detailed diagnostics.
 
 ## License
 

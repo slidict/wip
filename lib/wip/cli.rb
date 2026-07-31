@@ -53,24 +53,22 @@ module Wip
       execute(builder.build(settings: load_config.command('build') || {}, extra: extra))
     end
 
-    desc 'up', 'Start the configured container, creating it if necessary'
+    desc 'up', 'Start the configured container and its dependencies, creating them if necessary'
     option :detach, type: :boolean, default: false, aliases: '-d'
     def up
-      container = load_config.defaults['container']
-      interactive = builder.tty?(!options[:detach])
-      if container_exists?
-        warn "wip: starting existing container '#{container}'"
-        execute(builder.start(detach: options[:detach]), interactive: interactive)
-      else
-        warn "wip: container '#{container}' not found, creating it"
-        execute(builder.up(detach: options[:detach]), interactive: interactive)
-      end
+      ensure_network
+      load_config.dependencies.each_key { |name| ensure_dependency(name) }
+      ensure_container
     end
 
-    desc 'down', 'Stop and remove the configured container'
+    desc 'down', 'Stop and remove the configured container and its dependencies'
     def down
       execute(builder.down, exit_on_failure: false)
       execute(builder.remove, exit_on_failure: false)
+      load_config.dependencies.each_key do |name|
+        execute(builder.dependency_down(name), exit_on_failure: false)
+        execute(builder.dependency_remove(name), exit_on_failure: false)
+      end
     end
 
     desc 'exec COMMAND...', 'Execute a command in the running container'
@@ -126,12 +124,53 @@ module Wip
       code
     end
 
-    def container_exists?
+    def resource_exists?(find_command)
       out = StringIO.new
-      code = CommandRunner.new(stdout: out, stderr: StringIO.new).run(builder.find)
+      code = CommandRunner.new(stdout: out, stderr: StringIO.new).run(find_command)
       code.zero? && !JSON.parse(out.string).empty?
     rescue JSON::ParserError
       false
+    end
+
+    def ensure_network
+      network = load_config.network
+      return unless network
+      return if network_exists?(network)
+
+      warn "wip: creating network '#{network}'"
+      execute(builder.network_create, exit_on_failure: false)
+    end
+
+    def network_exists?(network)
+      out = StringIO.new
+      code = CommandRunner.new(stdout: out, stderr: StringIO.new).run(builder.network_list)
+      return false unless code.zero?
+
+      JSON.parse(out.string).any? { |entry| entry['Name'] == network }
+    rescue JSON::ParserError
+      false
+    end
+
+    def ensure_dependency(name)
+      if resource_exists?(builder.dependency_find(name))
+        warn "wip: starting existing dependency '#{name}'"
+        execute(builder.dependency_start(name))
+      else
+        warn "wip: dependency '#{name}' not found, creating it"
+        execute(builder.dependency_up(name))
+      end
+    end
+
+    def ensure_container
+      container = load_config.defaults['container']
+      interactive = builder.tty?(!options[:detach])
+      if resource_exists?(builder.find)
+        warn "wip: starting existing container '#{container}'"
+        execute(builder.start(detach: options[:detach]), interactive: interactive)
+      else
+        warn "wip: container '#{container}' not found, creating it"
+        execute(builder.up(detach: options[:detach]), interactive: interactive)
+      end
     end
   end
 end

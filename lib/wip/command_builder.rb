@@ -29,6 +29,7 @@ module Wip
     def up(detach: false)
       values = @config.defaults
       command = [@wslc, 'run', '--name', required(values, 'container')]
+      command.push('--network', @config.network) if @config.network
       command << '-d' if detach
       command << '-it' if !detach && tty?(true)
       command.concat(options(values)).push(required(values, 'image'))
@@ -53,6 +54,40 @@ module Wip
 
     def remove
       [@wslc, 'remove', '-f', required(@config.defaults, 'container')]
+    end
+
+    def network_create
+      [@wslc, 'network', 'create', required_network]
+    end
+
+    def network_list
+      [@wslc, 'network', 'list', '--format', 'json']
+    end
+
+    def dependency_up(name, detach: true)
+      values = dependency_values(name)
+      command = [@wslc, 'run', '--name', name.to_s]
+      command.push('--network', @config.network) if @config.network
+      command << '-d' if detach
+      command.concat(options(values)).push(required(values, 'image'))
+      command.concat(Shellwords.split(values['command'].to_s)) unless values['command'].to_s.empty?
+      command
+    end
+
+    def dependency_start(name)
+      [@wslc, 'start', name.to_s]
+    end
+
+    def dependency_find(name)
+      [@wslc, 'list', '--all', '--filter', "name=#{name}", '--format', 'json']
+    end
+
+    def dependency_down(name)
+      [@wslc, 'stop', name.to_s]
+    end
+
+    def dependency_remove(name)
+      [@wslc, 'remove', '-f', name.to_s]
     end
 
     def build(settings:, extra: [])
@@ -94,6 +129,17 @@ module Wip
       raise ConfigError, "Configured #{key} must not be empty" if value.to_s.empty?
 
       value
+    end
+
+    def required_network
+      network = @config.network
+      raise ConfigError, 'Configured network must not be empty' if network.to_s.empty?
+
+      network
+    end
+
+    def dependency_values(name)
+      @config.dependency(name) || raise(ConfigError, "Unknown dependency: #{name}")
     end
   end
 end

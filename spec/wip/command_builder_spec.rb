@@ -70,4 +70,49 @@ RSpec.describe Wip::CommandBuilder do
 
     expect(builder.up(detach: true)).to eq(%w[wslc.exe run --name app -d -w /app example:dev local])
   end
+
+  describe 'network and dependency support' do
+    let(:networked_config) do
+      Wip::Config.new('defaults' => { 'container' => 'app', 'image' => 'example:dev', 'network' => 'app-tier' },
+                      'dependencies' => { 'redis' => { 'image' => 'redis:latest' },
+                                          'development.mysql' => {
+                                            'image' => 'mysql:8.0',
+                                            'command' => '--default-authentication-plugin=mysql_native_password',
+                                            'env' => { 'MYSQL_ROOT_PASSWORD' => 'password' },
+                                            'ports' => ['3306:3306']
+                                          } })
+    end
+    subject(:builder) { described_class.new(wslc: 'wslc.exe', config: networked_config, environment: environment) }
+
+    it 'attaches the main container to the configured network on creation' do
+      expect(builder.up(detach: true)).to eq(%w[wslc.exe run --name app --network app-tier -d -w /app example:dev])
+    end
+
+    it 'builds network create and list commands' do
+      expect(builder.network_create).to eq(%w[wslc.exe network create app-tier])
+      expect(builder.network_list).to eq(%w[wslc.exe network list --format json])
+    end
+
+    it 'builds a dependency container on the shared network with its own env/ports/command' do
+      expected = ['wslc.exe', 'run', '--name', 'development.mysql', '--network', 'app-tier', '-d', '-e',
+                  'MYSQL_ROOT_PASSWORD=password', '-p', '3306:3306', 'mysql:8.0',
+                  '--default-authentication-plugin=mysql_native_password']
+      expect(builder.dependency_up('development.mysql')).to eq(expected)
+    end
+
+    it 'builds a simple dependency container without a custom command' do
+      expect(builder.dependency_up('redis')).to eq(%w[wslc.exe run --name redis --network app-tier -d redis:latest])
+    end
+
+    it 'builds start/find/down/remove commands for a dependency' do
+      expect(builder.dependency_start('redis')).to eq(%w[wslc.exe start redis])
+      expect(builder.dependency_find('redis')).to eq(%w[wslc.exe list --all --filter name=redis --format json])
+      expect(builder.dependency_down('redis')).to eq(%w[wslc.exe stop redis])
+      expect(builder.dependency_remove('redis')).to eq(%w[wslc.exe remove -f redis])
+    end
+
+    it 'raises for an undefined dependency' do
+      expect { builder.dependency_up('unknown') }.to raise_error(Wip::ConfigError, /Unknown dependency: unknown/)
+    end
+  end
 end
