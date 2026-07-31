@@ -1,0 +1,13 @@
+version: 1
+
+defaults:
+  container: wip-demo
+  image: ubuntu:latest
+  workdir: /app
+
+up:
+  command: sleep infinity
+
+commands:
+  hello:
+    command: echo "hello from the container"

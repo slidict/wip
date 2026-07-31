@@ -1,37 +1,49 @@
 # wip
 
-`wip` は、Docker 開発環境 CLI の dip に近い操作感を Microsoft WSLC に提供する Ruby 製 OSS CLI ラッパーです。プロジェクト固有のコンテナ、イメージ、環境変数やコマンドを `wip.yml` にまとめ、安全な引数配列として `wslc.exe` / `wslc` に渡します。
+[![Tests](https://github.com/slidict/wip/actions/workflows/test.yml/badge.svg)](https://github.com/slidict/wip/actions/workflows/test.yml)
+[![Gem Version](https://img.shields.io/gem/v/wslc-wip.svg)](https://rubygems.org/gems/wslc-wip)
+[![License: MIT](https://img.shields.io/github/license/slidict/wip.svg)](LICENSE)
+[![Ruby](https://img.shields.io/badge/ruby-%3E%3D%203.2-red.svg)](wslc-wip.gemspec)
 
-> **Status:** 初期リリース 0.1.0。WSLC 自体の仕様変更に追随が必要になる可能性があります。
+`wip` is a Ruby-built OSS CLI wrapper that brings a [`dip`](https://github.com/bibendi/dip)-like
+workflow to Microsoft WSLC. It collects a project's container, image, environment variables, and
+commands into a single `wip.yml`, and forwards them to `wslc.exe` / `wslc` as safe argument arrays
+(no shell interpolation).
 
-## 対応環境とインストール
+![wip demo](https://raw.githubusercontent.com/slidict/wip/main/docs/demo.gif)
 
-Ruby 3.2 以上、WSL2、および Microsoft WSLC が必要です。RubyGems 公開後は次で導入できます。
+> **Status:** early release. Expect to track WSLC's own interface as it evolves.
+
+## Requirements & installation
+
+Ruby 3.2+, WSL2, and Microsoft WSLC.
 
 ```bash
-gem install wip
+gem install wslc-wip
 ```
 
-ソースからは `bundle install && bundle exec exe/wip version` を使用します。
+From source: `bundle install && bundle exec exe/wip version`.
 
-## クイックスタート
+## Quick start
 
 ```bash
-gem install wip
+gem install wslc-wip
 cd my-project
 wip doctor
 wip build
+wip up -d
 wip rails console
 ```
 
-## 完全な設定例
+## Full configuration example
 
-プロジェクトルートに `wip.yml` を置きます。子ディレクトリから実行しても親方向へ探索され、`--config PATH` で明示指定もできます。
+Put a `wip.yml` in your project root. Running from a subdirectory walks up to find it, or pass
+`--config PATH` to point at one explicitly.
 
 ```yaml
 version: 1
 wslc:
-  command: auto # wslc.exe、wslc、System32 の順。絶対パスも指定可能
+  command: auto # tries wslc.exe, wslc, then System32; an absolute path also works
 defaults:
   container: app
   image: slidict/slidict:development
@@ -46,7 +58,8 @@ defaults:
   volumes:
     - ".:/app"
 up:
-  command: server # `wip up` がコンテナ作成時にイメージへ渡す常駐コマンド（未指定ならイメージの既定 CMD）
+  command: server # command `wip up` passes to the image when it creates the container
+                   # (omit to use the image's default CMD)
 commands:
   rails:
     type: exec
@@ -74,46 +87,53 @@ commands:
     tag: slidict/slidict:development
 ```
 
-`env` の値は文字列化されます。`config` の表示では token、password、secret、credential、auth を含むキーを伏せます。秘密値は可能なら設定ファイルではなく実行環境側で管理してください。
+`env` values are stringified. `wip config` masks any key matching token, password, secret,
+credential, or auth. Keep real secrets out of the config file and in your runtime environment
+instead.
 
-## コマンド
+## Commands
 
-| コマンド | 説明 |
+| Command | Description |
 |---|---|
-| `wip version` | wip と、検出できた WSLC のバージョン |
-| `wip doctor` | WSL2、相互運用、WSLC、設定、アーキテクチャ、Git を診断 |
-| `wip config` | デフォルト適用済み設定（秘密値をマスク） |
-| `wip build -- --no-cache` | build 定義でイメージをビルド |
-| `wip up [-d]` | `defaults.container` を起動（無ければ `up.command` 付きで作成）。`-d` でバックグラウンド実行 |
-| `wip down` | `defaults.container` を停止・削除 |
-| `wip exec [--no-interactive] COMMAND...` | 既存コンテナ内で実行 |
-| `wip run [--no-interactive] COMMAND...` | `--rm` の新規コンテナで実行 |
-| `wip shell` | 定義済み shell、または `bash`、`sh` の順に起動 |
-| `wip NAME ARGS...` | `commands.NAME` を実行し、引数を末尾に追加 |
+| `wip version` | wip's version, plus WSLC's if it can be detected |
+| `wip doctor` | Diagnose WSL2, interop, WSLC, config, architecture, and Git |
+| `wip config` | Print the effective configuration (secrets masked) |
+| `wip build -- --no-cache` | Build the image from the `build` definition |
+| `wip up [-d]` | Start `defaults.container` (creating it with `up.command` if missing). `-d` runs it in the background |
+| `wip down` | Stop and remove `defaults.container` |
+| `wip exec [--no-interactive] COMMAND...` | Run a command in the existing container |
+| `wip run [--no-interactive] COMMAND...` | Run a command in a new `--rm` container |
+| `wip shell` | Open the configured shell, falling back to `bash` then `sh` |
+| `wip NAME ARGS...` | Run `commands.NAME`, appending any extra arguments |
 
-TTY はコマンド設定、CLI オプション、標準入出力が双方 TTY かを合わせて判定します。`WIP_DEBUG=1` では `Shellwords.join` した実行コマンドを表示します。
+TTY allocation is decided by combining the command's config, the CLI option, and whether both
+stdin and stdout are real TTYs. Set `WIP_DEBUG=1` to print the `Shellwords`-joined command before
+running it.
 
 ## doctor
 
-`[OK]`、`[WARN]`、`[FAIL]` で各診断を表示します。警告だけなら終了コード 0、WSL2/相互運用/WSLC/設定など実行を妨げる問題があれば 1 です。実際のビルド環境から Git が見えない場合は警告になります。
+Each check prints as `[OK]`, `[WARN]`, or `[FAIL]`. Warnings alone exit 0; a WSL2, interop, WSLC,
+or config problem that blocks execution exits 1. Git being unreachable from the real build
+environment is only a warning.
 
-## よくあるエラー
+## Common errors
 
-### WSLC がない
+### WSLC not found
 
-WSLC/WSL コンテナツールをインストールまたは更新し、`wip doctor` を実行してください。`auto` は `wslc.exe`、`wslc`、`/mnt/c/Windows/System32/wslc.exe` の順で探します。
+Install or update the WSL container tooling, then run `wip doctor`. `auto` looks for `wslc.exe`,
+`wslc`, then `/mnt/c/Windows/System32/wslc.exe`, in that order.
 
-### Docker Hub の認証
+### Docker Hub authentication
 
-`pull access denied` 等を検出するとログイン方法を補足します。
+When `pull access denied` (or similar) is detected, wip suggests how to log in:
 
 ```bash
 wslc registry login -u <username> docker.io
 ```
 
-### CPU アーキテクチャ不一致
+### CPU architecture mismatch
 
-イメージを確認し、amd64/arm64 のマルチアーキテクチャイメージを公開します。
+Check the image and publish a multi-arch (amd64/arm64) image:
 
 ```bash
 docker buildx imagetools inspect <image>
@@ -123,10 +143,10 @@ docker buildx build \
   --push .
 ```
 
-## 開発
+## Development
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/slidict/wip.git
 cd wip
 bundle install
 bundle exec rspec
@@ -134,11 +154,21 @@ bundle exec rubocop
 bundle exec rake
 ```
 
-テストは WSLC を必要とせず、解決・構築・実行層を差し替え可能にしています。GitHub Actions は Ruby 3.2、3.3、3.4 で RSpec と RuboCop を実行します。
+The test suite doesn't need WSLC — the resolution, build, and execution layers are all
+swappable. GitHub Actions runs RSpec and RuboCop on Ruby 3.2, 3.3, 3.4, and 4.0.
 
-## 初期リリースに含まれないもの
+## Contributing
 
-Compose 互換、常駐プロセス、GUI、PowerShell 最適化、レジストリ API/manifest の直接解析、自動更新、プラグインは未実装です。将来は設定スキーマ、ライフサイクルフック、複数コンテナ、プラットフォーム選択、より詳細な診断の追加が有用です。
+Bug reports and pull requests are welcome on [GitHub](https://github.com/slidict/wip). See
+[CONTRIBUTING.md](CONTRIBUTING.md) for commit conventions, versioning policy, and the PR
+checklist.
+
+## Not in the initial release
+
+Compose compatibility, a resident/daemon process, a GUI, PowerShell-specific tuning, direct
+registry API/manifest parsing, self-update, and plugins are all unimplemented. Likely future
+additions: a richer config schema, lifecycle hooks, multi-container support, platform selection,
+and more detailed diagnostics.
 
 ## License
 
