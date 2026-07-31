@@ -13,4 +13,13 @@ RSpec.describe Wip::Config do
     config = described_class.new('commands' => { 'x' => { 'command' => 'x', 'env' => { 'API_TOKEN' => 'secret' } } })
     expect(config.to_h.dig('commands', 'x', 'env', 'API_TOKEN')).to eq('[REDACTED]')
   end
+
+  it 'exposes the up command, defaulting to nil' do
+    expect(described_class.new({}).up_command).to be_nil
+    expect(described_class.new('up' => { 'command' => 'local' }).up_command).to eq('local')
+  end
+
+  it 'rejects a non-mapping up section' do
+    expect { described_class.new('up' => 'local') }.to raise_error(Wip::ConfigError, /up must be a mapping/)
+  end
 end

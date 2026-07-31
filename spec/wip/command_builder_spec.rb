@@ -58,4 +58,12 @@ RSpec.describe Wip::CommandBuilder do
     expect(builder.down).to eq(%w[wslc.exe stop app])
     expect(builder.remove).to eq(%w[wslc.exe remove -f app])
   end
+
+  it 'appends the configured up command so the container stays running' do
+    with_up_command = Wip::Config.new('defaults' => { 'container' => 'app', 'image' => 'example:dev' },
+                                      'up' => { 'command' => 'local' })
+    builder = described_class.new(wslc: 'wslc.exe', config: with_up_command, environment: environment)
+
+    expect(builder.up(detach: true)).to eq(%w[wslc.exe run --name app -d -w /app example:dev local])
+  end
 end

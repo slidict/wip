@@ -45,6 +45,8 @@ defaults:
     - "3000:3000"
   volumes:
     - ".:/app"
+up:
+  command: server # `wip up` がコンテナ作成時にイメージへ渡す常駐コマンド（未指定ならイメージの既定 CMD）
 commands:
   rails:
     type: exec
@@ -82,7 +84,7 @@ commands:
 | `wip doctor` | WSL2、相互運用、WSLC、設定、アーキテクチャ、Git を診断 |
 | `wip config` | デフォルト適用済み設定（秘密値をマスク） |
 | `wip build -- --no-cache` | build 定義でイメージをビルド |
-| `wip up [-d]` | `defaults.container` を起動（無ければ作成）。`-d` でバックグラウンド実行 |
+| `wip up [-d]` | `defaults.container` を起動（無ければ `up.command` 付きで作成）。`-d` でバックグラウンド実行 |
 | `wip down` | `defaults.container` を停止・削除 |
 | `wip exec [--no-interactive] COMMAND...` | 既存コンテナ内で実行 |
 | `wip run [--no-interactive] COMMAND...` | `--rm` の新規コンテナで実行 |
