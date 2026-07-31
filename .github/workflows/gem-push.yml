@@ -110,7 +110,7 @@ jobs:
 
       - name: Configure RubyGems trusted publishing credentials
         if: steps.version_file.outputs.changed == 'true' && steps.existing.outputs.rubygems_exists == 'false'
-        uses: rubygems/configure-rubygems-credentials@v1
+        uses: rubygems/configure-rubygems-credentials@dc5a8d8553e6ee01fc26761a49e99e733d17954a # v2
 
       - name: Publish to RubyGems
         if: steps.version_file.outputs.changed == 'true' && steps.existing.outputs.rubygems_exists == 'false'
