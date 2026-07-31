@@ -6,7 +6,7 @@ module Wip
     SECRET_PATTERN = /token|password|secret|credential|auth/i
     attr_reader :path
 
-    def initialize(raw, path: nil)
+    def initialize(raw, path = nil)
       @raw = stringify(raw)
       @path = path
       validate!

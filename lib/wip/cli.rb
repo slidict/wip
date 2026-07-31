@@ -43,18 +43,20 @@ module Wip
 
     desc "run COMMAND...", "Run a command in a new container"
     option :interactive, type: :boolean, default: true
-    def run(*command)
+    def run_command(*command)
       execute(builder.run(command, interactive: options[:interactive]))
     end
+    map "run" => :run_command
 
     desc "shell", "Open a shell in the configured container"
-    def shell
+    def shell_command
       configured = load_config.command("shell")
       return execute(builder.custom("shell", [])) if configured
 
       code = execute(builder.exec(["bash"], settings: { "interactive" => true }, interactive: true))
       execute(builder.exec(["sh"], settings: { "interactive" => true }, interactive: true)) if code != 0
     end
+    map "shell" => :shell_command
 
     desc "dispatch COMMAND [ARGS...]", "Run a command defined in wip.yml"
     def dispatch(name = nil, *arguments)

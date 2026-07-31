@@ -26,7 +26,7 @@ module Wip
       raise ConfigError, "wip.yml was not found (searched from #{@start_dir} to the filesystem root)" unless path&.file?
 
       data = YAML.safe_load_file(path, permitted_classes: [], aliases: false) || {}
-      Config.new(data, path: path)
+      Config.new(data, path)
     rescue Psych::Exception => e
       raise ConfigError, "Could not parse #{path}: #{e.message}"
     end
