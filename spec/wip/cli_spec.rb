@@ -31,14 +31,30 @@ RSpec.describe Wip::CLI do
     described_class.start(%w[rails c])
   end
 
-  it 'falls back to creating the container when `up` finds none to start' do
+  it 'creates the container when `up` finds none existing via a quiet `wslc list` probe' do
     runner = instance_double(Wip::CommandRunner)
-    allow(Wip::CommandRunner).to receive(:new).and_return(runner)
+    allow(Wip::CommandRunner).to receive(:new) do |**kwargs|
+      kwargs[:stdout]&.write('[]')
+      runner
+    end
     allow(Wip::CommandResolver).to receive(:new).and_return(instance_double(Wip::CommandResolver,
                                                                             resolve: 'wslc.exe'))
-
-    expect(runner).to receive(:run).with(%w[wslc.exe start app -a -i]).and_return(1)
+    allow(runner).to receive(:run).with(%w[wslc.exe list --all --filter name=app --format json]).and_return(0)
     expect(runner).to receive(:run).with(%w[wslc.exe run --name app -w /app example:dev]).and_return(0)
+
+    described_class.start(%w[up])
+  end
+
+  it 'starts an existing container instead of recreating it' do
+    runner = instance_double(Wip::CommandRunner)
+    allow(Wip::CommandRunner).to receive(:new) do |**kwargs|
+      kwargs[:stdout]&.write('[{"Name":"app"}]')
+      runner
+    end
+    allow(Wip::CommandResolver).to receive(:new).and_return(instance_double(Wip::CommandResolver,
+                                                                            resolve: 'wslc.exe'))
+    allow(runner).to receive(:run).with(%w[wslc.exe list --all --filter name=app --format json]).and_return(0)
+    expect(runner).to receive(:run).with(%w[wslc.exe start app -a -i]).and_return(0)
 
     described_class.start(%w[up])
   end

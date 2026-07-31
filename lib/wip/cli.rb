@@ -2,6 +2,8 @@
 
 require 'thor'
 require 'yaml'
+require 'json'
+require 'stringio'
 
 module Wip
   # Thor-based command-line interface for wip.
@@ -54,8 +56,14 @@ module Wip
     desc 'up', 'Start the configured container, creating it if necessary'
     option :detach, type: :boolean, default: false, aliases: '-d'
     def up
-      code = execute(builder.start(detach: options[:detach]), exit_on_failure: false)
-      execute(builder.up(detach: options[:detach])) if code != 0
+      container = load_config.defaults['container']
+      if container_exists?
+        warn "wip: starting existing container '#{container}'"
+        execute(builder.start(detach: options[:detach]))
+      else
+        warn "wip: container '#{container}' not found, creating it"
+        execute(builder.up(detach: options[:detach]))
+      end
     end
 
     desc 'down', 'Stop and remove the configured container'
@@ -106,6 +114,14 @@ module Wip
       code = CommandRunner.new.run(command)
       exit(code) if exit_on_failure && !code.zero?
       code
+    end
+
+    def container_exists?
+      out = StringIO.new
+      code = CommandRunner.new(stdout: out, stderr: StringIO.new).run(builder.find)
+      code.zero? && !JSON.parse(out.string).empty?
+    rescue JSON::ParserError
+      false
     end
   end
 end

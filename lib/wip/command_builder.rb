@@ -42,6 +42,11 @@ module Wip
       command
     end
 
+    def find
+      container = required(@config.defaults, 'container')
+      [@wslc, 'list', '--all', '--filter', "name=#{container}", '--format', 'json']
+    end
+
     def down
       [@wslc, 'stop', required(@config.defaults, 'container')]
     end
