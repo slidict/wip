@@ -26,7 +26,7 @@ RSpec.describe Wip::CLI do
     allow(Wip::CommandResolver).to receive(:new).and_return(instance_double(Wip::CommandResolver,
                                                                             resolve: 'wslc.exe'))
 
-    expect(runner).to receive(:run).with(%w[wslc.exe exec -w /app app bin/rails c]).and_return(0)
+    expect(runner).to receive(:run).with(%w[wslc.exe exec -w /app app bin/rails c], interactive: false).and_return(0)
 
     described_class.start(%w[rails c])
   end
@@ -40,7 +40,8 @@ RSpec.describe Wip::CLI do
     allow(Wip::CommandResolver).to receive(:new).and_return(instance_double(Wip::CommandResolver,
                                                                             resolve: 'wslc.exe'))
     allow(runner).to receive(:run).with(%w[wslc.exe list --all --filter name=app --format json]).and_return(0)
-    expect(runner).to receive(:run).with(%w[wslc.exe run --name app -w /app example:dev]).and_return(0)
+    expect(runner).to receive(:run).with(%w[wslc.exe run --name app -w /app example:dev],
+                                         interactive: false).and_return(0)
 
     described_class.start(%w[up])
   end
@@ -54,7 +55,7 @@ RSpec.describe Wip::CLI do
     allow(Wip::CommandResolver).to receive(:new).and_return(instance_double(Wip::CommandResolver,
                                                                             resolve: 'wslc.exe'))
     allow(runner).to receive(:run).with(%w[wslc.exe list --all --filter name=app --format json]).and_return(0)
-    expect(runner).to receive(:run).with(%w[wslc.exe start app -a -i]).and_return(0)
+    expect(runner).to receive(:run).with(%w[wslc.exe start app -a -i], interactive: false).and_return(0)
 
     described_class.start(%w[up])
   end

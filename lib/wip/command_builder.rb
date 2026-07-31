@@ -73,6 +73,8 @@ module Wip
       public_send(type, base + arguments, settings: values, interactive: values.fetch('interactive', false))
     end
 
+    def tty?(requested) = requested && @environment.interactive?
+
     private
 
     def options(values, include_container: false, include_publish: true)
@@ -93,7 +95,5 @@ module Wip
 
       value
     end
-
-    def tty?(requested) = requested && @environment.interactive?
   end
 end
