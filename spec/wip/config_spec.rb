@@ -1,0 +1,16 @@
+# frozen_string_literal: true
+
+require 'spec_helper'
+RSpec.describe Wip::Config do
+  it 'applies defaults and converts environment values to strings' do
+    config = described_class.new('version' => 1,
+                                 'commands' => { 'web' => { 'command' => 'server',
+                                                            'env' => { 'PORT' => 3000 } } })
+    expect(config.command('web')).to include('container' => 'app', 'workdir' => '/app', 'env' => { 'PORT' => '3000' })
+  end
+
+  it 'redacts secret-like settings' do
+    config = described_class.new('commands' => { 'x' => { 'command' => 'x', 'env' => { 'API_TOKEN' => 'secret' } } })
+    expect(config.to_h.dig('commands', 'x', 'env', 'API_TOKEN')).to eq('[REDACTED]')
+  end
+end
