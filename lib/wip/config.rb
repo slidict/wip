@@ -18,6 +18,8 @@ module Wip
     def commands = @raw['commands'] || {}
     def defaults = DEFAULTS.merge(@raw['defaults'] || {})
     def up_command = @raw.dig('up', 'command')
+    def dependencies = @raw['dependencies'] || {}
+    def network = defaults['network']
 
     def command(name)
       entry = commands[name.to_s]
@@ -26,9 +28,16 @@ module Wip
       defaults.merge('type' => 'exec').merge(entry)
     end
 
+    def dependency(name)
+      entry = dependencies[name.to_s]
+      return unless entry
+
+      { 'workdir' => nil, 'env' => {}, 'ports' => [], 'volumes' => [] }.merge(entry)
+    end
+
     def to_h(redact: true)
       value = { 'version' => 1, 'wslc' => { 'command' => wslc_command }, 'defaults' => defaults,
-                'up' => { 'command' => up_command },
+                'up' => { 'command' => up_command }, 'dependencies' => dependencies,
                 'commands' => commands.transform_values { |entry| defaults.merge('type' => 'exec').merge(entry) } }
       redact ? redact_secrets(value) : value
     end
@@ -37,10 +46,22 @@ module Wip
 
     def validate!
       raise ConfigError, "Unsupported configuration version: #{@raw['version']}" unless (@raw['version'] || 1) == 1
-      raise ConfigError, 'commands must be a mapping' unless commands.is_a?(Hash)
       raise ConfigError, 'up must be a mapping' if @raw.key?('up') && !@raw['up'].is_a?(Hash)
 
+      validate_commands!
+      validate_dependencies!
+    end
+
+    def validate_commands!
+      raise ConfigError, 'commands must be a mapping' unless commands.is_a?(Hash)
+
       commands.each { |name, entry| validate_command!(name, entry) }
+    end
+
+    def validate_dependencies!
+      raise ConfigError, 'dependencies must be a mapping' unless dependencies.is_a?(Hash)
+
+      dependencies.each { |name, entry| validate_dependency!(name, entry) }
     end
 
     def validate_command!(name, entry)
@@ -48,6 +69,13 @@ module Wip
 
       type = entry['type'] || (name == 'build' ? 'build' : 'exec')
       raise ConfigError, "Invalid command type for #{name}: #{type}" unless %w[exec run build].include?(type)
+
+      entry['env']&.transform_values!(&:to_s)
+    end
+
+    def validate_dependency!(name, entry)
+      raise ConfigError, "dependencies.#{name} must be a mapping" unless entry.is_a?(Hash)
+      raise ConfigError, "dependencies.#{name} must set image" if entry['image'].to_s.empty?
 
       entry['env']&.transform_values!(&:to_s)
     end
