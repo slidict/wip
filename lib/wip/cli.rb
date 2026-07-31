@@ -51,6 +51,19 @@ module Wip
       execute(builder.build(settings: load_config.command('build') || {}, extra: extra))
     end
 
+    desc 'up', 'Start the configured container, creating it if necessary'
+    option :detach, type: :boolean, default: false, aliases: '-d'
+    def up
+      code = execute(builder.start(detach: options[:detach]), exit_on_failure: false)
+      execute(builder.up(detach: options[:detach])) if code != 0
+    end
+
+    desc 'down', 'Stop and remove the configured container'
+    def down
+      execute(builder.down, exit_on_failure: false)
+      execute(builder.remove, exit_on_failure: false)
+    end
+
     desc 'exec COMMAND...', 'Execute a command in the running container'
     option :interactive, type: :boolean, default: true
     def exec(*command)
@@ -69,7 +82,8 @@ module Wip
       configured = load_config.command('shell')
       return execute(builder.custom('shell', [])) if configured
 
-      code = execute(builder.exec(['bash'], settings: { 'interactive' => true }, interactive: true))
+      code = execute(builder.exec(['bash'], settings: { 'interactive' => true }, interactive: true),
+                     exit_on_failure: false)
       execute(builder.exec(['sh'], settings: { 'interactive' => true }, interactive: true)) if code != 0
     end
     map 'shell' => :shell_command
@@ -88,9 +102,9 @@ module Wip
     def resolver = CommandResolver.new
     def builder = CommandBuilder.new(wslc: resolver.resolve(load_config.wslc_command), config: load_config)
 
-    def execute(command)
+    def execute(command, exit_on_failure: true)
       code = CommandRunner.new.run(command)
-      exit(code) unless code.zero?
+      exit(code) if exit_on_failure && !code.zero?
       code
     end
   end
