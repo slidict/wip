@@ -1,0 +1,14 @@
+AllCops:
+  TargetRubyVersion: 3.2
+  NewCops: enable
+  SuggestExtensions: false
+  Exclude:
+    - vendor/**/*
+Metrics/MethodLength:
+  Max: 20
+Metrics/AbcSize:
+  Max: 25
+Metrics/ClassLength:
+  Max: 140
+Layout/LineLength:
+  Max: 120

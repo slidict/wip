@@ -1,0 +1,12 @@
+# frozen_string_literal: true
+require_relative "wip/version"
+require_relative "wip/errors"
+require_relative "wip/config"
+require_relative "wip/config_loader"
+require_relative "wip/environment"
+require_relative "wip/command_resolver"
+require_relative "wip/error_interpreter"
+require_relative "wip/command_builder"
+require_relative "wip/command_runner"
+require_relative "wip/doctor"
+require_relative "wip/cli"
