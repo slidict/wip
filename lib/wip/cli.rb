@@ -9,6 +9,20 @@ module Wip
     class_option :config, type: :string, desc: 'Path to wip.yml'
     default_task :dispatch
 
+    def self.exit_on_failure? = true
+
+    # Thor only falls back to the default task when no command name is given at
+    # all; an unrecognized first argument (e.g. a custom wip.yml command name)
+    # would otherwise raise "Could not find command". Route those to `dispatch`.
+    def self.dispatch(meth, given_args, given_opts, config)
+      name = given_args.first
+      if meth.nil? && name && !name.to_s.start_with?('-') && find_command_possibilities(name).empty?
+        return super('dispatch', given_args, given_opts, config)
+      end
+
+      super
+    end
+
     desc 'version', 'Show wip and WSLC versions'
     def version
       puts "wip #{VERSION}"
