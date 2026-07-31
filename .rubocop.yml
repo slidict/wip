@@ -10,5 +10,8 @@ Metrics/AbcSize:
   Max: 25
 Metrics/ClassLength:
   Max: 140
+Metrics/BlockLength:
+  Exclude:
+    - spec/**/*
 Layout/LineLength:
   Max: 120
