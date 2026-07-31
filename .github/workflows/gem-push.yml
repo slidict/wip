@@ -26,7 +26,7 @@ jobs:
       - name: Check if version file changed
         id: version_file
         run: |
-          if git diff --name-only HEAD~1 HEAD | grep -qx "lib/slidict/version.rb"; then
+          if git diff --name-only HEAD~1 HEAD | grep -qx "lib/wip/version.rb"; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
             echo "changed=false" >> "$GITHUB_OUTPUT"
@@ -36,7 +36,7 @@ jobs:
         if: steps.version_file.outputs.changed == 'true'
         id: version
         run: |
-          version=$(grep -Eo "[0-9]+\.[0-9]+\.[0-9]+" lib/slidict/version.rb | head -n 1)
+          version=$(grep -Eo "[0-9]+\.[0-9]+\.[0-9]+" lib/wip/version.rb | head -n 1)
           echo "tag=v$version" >> "$GITHUB_OUTPUT"
 
       - name: Set up Ruby 3.4

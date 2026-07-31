@@ -39,7 +39,7 @@ jobs:
           BUMP: ${{ inputs.bump }}
         run: |
           ruby <<'RUBY' >> "$GITHUB_OUTPUT"
-          version_file = "lib/slidict/version.rb"
+          version_file = "lib/wip/version.rb"
           content = File.read(version_file)
           current = content[/VERSION\s*=\s*"(\d+\.\d+\.\d+)"/, 1]
           abort "Could not find current version in #{version_file}" unless current
@@ -68,10 +68,10 @@ jobs:
         env:
           NEXT_VERSION: ${{ steps.version.outputs.next }}
         run: |
-          ruby -e 'path = "lib/slidict/version.rb"; version = ENV.fetch("NEXT_VERSION"); content = File.read(path); updated = content.sub(/VERSION\s*=\s*"\d+\.\d+\.\d+"/, "VERSION = \"#{version}\""); abort "Version was not updated" if updated == content; File.write(path, updated)'
+          ruby -e 'path = "lib/wip/version.rb"; version = ENV.fetch("NEXT_VERSION"); content = File.read(path); updated = content.sub(/VERSION\s*=\s*"\d+\.\d+\.\d+"/, "VERSION = \"#{version}\""); abort "Version was not updated" if updated == content; File.write(path, updated)'
 
       - name: Verify gemspec
-        run: gem build slidict.gemspec
+        run: gem build wslc-wip.gemspec
 
       - name: Commit version bump
         env:
@@ -80,7 +80,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -B bump-version
-          git add lib/slidict/version.rb
+          git add lib/wip/version.rb
           git commit -m "chore: bump version to v${NEXT_VERSION}"
           git push --force-with-lease origin bump-version
 
@@ -93,4 +93,4 @@ jobs:
             --base "${GITHUB_REF_NAME}" \
             --head bump-version \
             --title "chore: bump version to v${NEXT_VERSION}" \
-            --body "Bump slidict gem version to v${NEXT_VERSION}."
+            --body "Bump wslc-wip gem version to v${NEXT_VERSION}."

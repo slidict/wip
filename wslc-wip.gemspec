@@ -3,7 +3,7 @@
 require_relative "lib/wip/version"
 
 Gem::Specification.new do |spec|
-  spec.name = "wip"
+  spec.name = "wslc-wip"
   spec.version = Wip::VERSION
   spec.authors = ["Wip contributors"]
   spec.summary = "A developer-friendly CLI wrapper for Microsoft WSLC"

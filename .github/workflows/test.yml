@@ -29,6 +29,4 @@ jobs:
 
       - name: Smoke test CLI
         run: |
-          printf 'PDF Difference Monitoring Service\n5 minutes\nEngineering managers\nApprove an MVP pilot\n' | bin/slidict --output /tmp/slidict-smoke.md
-          test -s /tmp/slidict-smoke.md
-          grep -q '# PDF Difference Monitoring Service' /tmp/slidict-smoke.md
+          bundle exec exe/wip help | grep -q '^Commands:'
