@@ -1,0 +1,96 @@
+name: Bump Version
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Version segment to bump.
+        required: true
+        default: patch
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  bump-version:
+    name: Bump gem version
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@9eb537ca036ebaed86729dcb9309076e4c5c3b74 # v1.314.0
+        with:
+          ruby-version: "3.4"
+
+      - name: Calculate next version
+        id: version
+        env:
+          BUMP: ${{ inputs.bump }}
+        run: |
+          ruby <<'RUBY' >> "$GITHUB_OUTPUT"
+          version_file = "lib/slidict/version.rb"
+          content = File.read(version_file)
+          current = content[/VERSION\s*=\s*"(\d+\.\d+\.\d+)"/, 1]
+          abort "Could not find current version in #{version_file}" unless current
+
+          major, minor, patch = current.split(".").map(&:to_i)
+          case ENV.fetch("BUMP")
+          when "major"
+            major += 1
+            minor = 0
+            patch = 0
+          when "minor"
+            minor += 1
+            patch = 0
+          when "patch"
+            patch += 1
+          else
+            abort "Unsupported bump value: #{ENV.fetch("BUMP")}"
+          end
+          target = [major, minor, patch].join(".")
+
+          puts "current=#{current}"
+          puts "next=#{target}"
+          RUBY
+
+      - name: Update version file
+        env:
+          NEXT_VERSION: ${{ steps.version.outputs.next }}
+        run: |
+          ruby -e 'path = "lib/slidict/version.rb"; version = ENV.fetch("NEXT_VERSION"); content = File.read(path); updated = content.sub(/VERSION\s*=\s*"\d+\.\d+\.\d+"/, "VERSION = \"#{version}\""); abort "Version was not updated" if updated == content; File.write(path, updated)'
+
+      - name: Verify gemspec
+        run: gem build slidict.gemspec
+
+      - name: Commit version bump
+        env:
+          NEXT_VERSION: ${{ steps.version.outputs.next }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B bump-version
+          git add lib/slidict/version.rb
+          git commit -m "chore: bump version to v${NEXT_VERSION}"
+          git push --force-with-lease origin bump-version
+
+      - name: Create pull request
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NEXT_VERSION: ${{ steps.version.outputs.next }}
+        run: |
+          gh pr create \
+            --base "${GITHUB_REF_NAME}" \
+            --head bump-version \
+            --title "chore: bump version to v${NEXT_VERSION}" \
+            --body "Bump slidict gem version to v${NEXT_VERSION}."
