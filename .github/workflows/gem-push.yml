@@ -18,7 +18,7 @@ jobs:
       id-token: write
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
           fetch-depth: 0
@@ -45,13 +45,63 @@ jobs:
         with:
           ruby-version: 3.4.3
 
-      - name: Publish to GPR
+      - name: Check existing versions
         if: steps.version_file.outputs.changed == 'true'
+        id: existing
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+          GEM_NAME: wslc-wip
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          PLAIN_VERSION="${TAG#v}"
+
+          rubygems_status=$(curl -s -o /tmp/rubygems_versions.json -w '%{http_code}' \
+            "https://rubygems.org/api/v1/versions/${GEM_NAME}.json")
+          if [ "$rubygems_status" = "200" ]; then
+            if jq -e --arg v "$PLAIN_VERSION" 'any(.[]; .number == $v)' /tmp/rubygems_versions.json >/dev/null; then
+              echo "rubygems_exists=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "rubygems_exists=false" >> "$GITHUB_OUTPUT"
+            fi
+          elif [ "$rubygems_status" = "404" ]; then
+            echo "rubygems_exists=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Unexpected RubyGems API status: $rubygems_status" >&2
+            exit 1
+          fi
+
+          owner_type=$(gh api "users/${OWNER}" --jq .type)
+          if [ "$owner_type" = "Organization" ]; then
+            gpr_endpoint="orgs/${OWNER}/packages/rubygems/${GEM_NAME}/versions"
+          else
+            gpr_endpoint="users/${OWNER}/packages/rubygems/${GEM_NAME}/versions"
+          fi
+
+          gpr_status=$(curl -s -o /tmp/gpr_versions.json -w '%{http_code}' \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/${gpr_endpoint}")
+          if [ "$gpr_status" = "200" ]; then
+            if jq -e --arg v "$PLAIN_VERSION" 'any(.[]; .name == $v)' /tmp/gpr_versions.json >/dev/null; then
+              echo "gpr_exists=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "gpr_exists=false" >> "$GITHUB_OUTPUT"
+            fi
+          elif [ "$gpr_status" = "404" ]; then
+            echo "gpr_exists=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Unexpected GitHub Packages API status: $gpr_status" >&2
+            exit 1
+          fi
+
+      - name: Publish to GPR
+        if: steps.version_file.outputs.changed == 'true' && steps.existing.outputs.gpr_exists == 'false'
         run: |
           mkdir -p $HOME/.gem
           touch $HOME/.gem/credentials
           chmod 0600 $HOME/.gem/credentials
-          printf -- "---\n:github: ${GEM_HOST_API_KEY}\n" > $HOME/.gem/credentials
+          printf -- "---\n:github: Bearer ${GEM_HOST_API_KEY}\n" > $HOME/.gem/credentials
           gem build *.gemspec
           gem push --KEY github --host https://rubygems.pkg.github.com/${OWNER} *.gem
         env:
@@ -59,18 +109,18 @@ jobs:
           OWNER: ${{ github.repository_owner }}
 
       - name: Configure RubyGems trusted publishing credentials
-        if: steps.version_file.outputs.changed == 'true'
+        if: steps.version_file.outputs.changed == 'true' && steps.existing.outputs.rubygems_exists == 'false'
         uses: rubygems/configure-rubygems-credentials@v1
 
       - name: Publish to RubyGems
-        if: steps.version_file.outputs.changed == 'true'
+        if: steps.version_file.outputs.changed == 'true' && steps.existing.outputs.rubygems_exists == 'false'
         run: |
           gem build *.gemspec
           gem push *.gem
 
       - name: Publish release notes
         if: steps.version_file.outputs.changed == 'true'
-        uses: release-drafter/release-drafter@v5
+        uses: release-drafter/release-drafter@v7
         with:
           config-name: release-drafter.yml
           publish: true

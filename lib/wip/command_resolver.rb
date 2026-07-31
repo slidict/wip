@@ -1,16 +1,18 @@
 # frozen_string_literal: true
-module Wip
-  class CommandResolver
-    CANDIDATES = ["wslc.exe", "wslc", "/mnt/c/Windows/System32/wslc.exe"].freeze
 
-    def initialize(path: ENV.fetch("PATH", ""), executable: nil)
+module Wip
+  # Locates the wslc/wslc.exe executable on the current system.
+  class CommandResolver
+    CANDIDATES = ['wslc.exe', 'wslc', '/mnt/c/Windows/System32/wslc.exe'].freeze
+
+    def initialize(path: ENV.fetch('PATH', ''), executable: nil)
       @path = path
       @executable = executable || method(:executable?)
     end
 
-    def resolve(configured = "auto")
-      return configured if configured != "auto" && @executable.call(configured)
-      return raise_not_found if configured != "auto"
+    def resolve(configured = 'auto')
+      return configured if configured != 'auto' && @executable.call(configured)
+      return raise_not_found if configured != 'auto'
 
       CANDIDATES.find { |candidate| @executable.call(candidate) } || raise_not_found
     end

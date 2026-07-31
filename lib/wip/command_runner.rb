@@ -1,8 +1,10 @@
 # frozen_string_literal: true
-require "open3"
-require "shellwords"
+
+require 'open3'
+require 'shellwords'
 
 module Wip
+  # Executes a built command, pumping its I/O and returning the exit status.
   class CommandRunner
     def initialize(stdin: $stdin, stdout: $stdout, stderr: $stderr, interpreter: ErrorInterpreter.new)
       @stdin = stdin
@@ -12,8 +14,8 @@ module Wip
     end
 
     def run(command, env: {})
-      @stderr.puts "+ #{Shellwords.join(command)}" if ENV["WIP_DEBUG"]
-      captured = +""
+      @stderr.puts "+ #{Shellwords.join(command)}" if ENV['WIP_DEBUG']
+      captured = +''
       status = nil
       Open3.popen3(env, *command) do |input, output, error, wait|
         input.close

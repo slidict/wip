@@ -1,7 +1,9 @@
 # frozen_string_literal: true
-require "shellwords"
+
+require 'shellwords'
 
 module Wip
+  # Builds the argument arrays for wslc build/exec/run/custom invocations.
   class CommandBuilder
     def initialize(wslc:, config:, environment: Environment.new)
       @wslc = wslc
@@ -11,46 +13,46 @@ module Wip
 
     def exec(arguments, settings: {}, interactive: true)
       values = @config.defaults.merge(settings)
-      command = [@wslc, "exec"]
-      command << "-it" if tty?(interactive)
+      command = [@wslc, 'exec']
+      command << '-it' if tty?(interactive)
       command.concat(options(values, include_container: true)).concat(arguments)
     end
 
     def run(arguments, settings: {}, interactive: true)
       values = @config.defaults.merge(settings)
-      command = [@wslc, "run"]
-      command << "--rm" if values["remove"]
-      command << "-it" if tty?(interactive)
-      command.concat(options(values)).push(required(values, "image")).concat(arguments)
+      command = [@wslc, 'run']
+      command << '--rm' if values['remove']
+      command << '-it' if tty?(interactive)
+      command.concat(options(values)).push(required(values, 'image')).concat(arguments)
     end
 
     def build(settings:, extra: [])
       values = @config.defaults.merge(settings)
-      context = values["context"] || "."
-      tag = values["tag"] || values["image"]
-      raise ConfigError, "Build image/tag must not be empty" if tag.to_s.empty?
+      context = values['context'] || '.'
+      tag = values['tag'] || values['image']
+      raise ConfigError, 'Build image/tag must not be empty' if tag.to_s.empty?
 
-      [@wslc, "build", "-t", tag, *extra, context]
+      [@wslc, 'build', '-t', tag, *extra, context]
     end
 
     def custom(name, arguments)
       values = @config.command(name) || raise(ConfigError, "Unknown command: #{name}")
-      type = values["type"] || (name.to_s == "build" ? "build" : "exec")
-      base = Shellwords.split(values["command"].to_s)
-      return build(settings: values, extra: arguments) if type == "build"
+      type = values['type'] || (name.to_s == 'build' ? 'build' : 'exec')
+      base = Shellwords.split(values['command'].to_s)
+      return build(settings: values, extra: arguments) if type == 'build'
 
-      public_send(type, base + arguments, settings: values, interactive: values.fetch("interactive", false))
+      public_send(type, base + arguments, settings: values, interactive: values.fetch('interactive', false))
     end
 
     private
 
     def options(values, include_container: false)
       result = []
-      result.concat(["-w", values["workdir"]]) unless values["workdir"].to_s.empty?
-      values.fetch("env", {}).each { |key, value| result.concat(["-e", "#{key}=#{value}"]) }
-      Array(values["ports"]).each { |port| result.concat(["-p", port.to_s]) }
-      Array(values["volumes"]).each { |volume| result.concat(["-v", volume.to_s]) }
-      result << required(values, "container") if include_container
+      result.push('-w', values['workdir']) unless values['workdir'].to_s.empty?
+      values.fetch('env', {}).each { |key, value| result.push('-e', "#{key}=#{value}") }
+      Array(values['ports']).each { |port| result.push('-p', port.to_s) }
+      Array(values['volumes']).each { |volume| result.push('-v', volume.to_s) }
+      result << required(values, 'container') if include_container
       result
     end
 

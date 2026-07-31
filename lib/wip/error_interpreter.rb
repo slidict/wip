@@ -1,5 +1,7 @@
 # frozen_string_literal: true
+
 module Wip
+  # Translates raw WSLC error output into friendlier hints.
   class ErrorInterpreter
     def initialize(architecture: Environment.new.architecture)
       @architecture = architecture
@@ -8,7 +10,7 @@ module Wip
     def interpret(output)
       case output
       when /pull access denied|insufficient_scope|authorization failed/i then registry_message
-      when /no matching manifest for linux\/(?:amd64|arm64)/i then architecture_message
+      when %r{no matching manifest for linux/(?:amd64|arm64)}i then architecture_message
       end
     end
 

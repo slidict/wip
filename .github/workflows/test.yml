@@ -2,6 +2,12 @@ name: Test
 
 on:
   pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
 
 jobs:
   ruby:
@@ -9,6 +15,7 @@ jobs:
     runs-on: ubuntu-latest
 
     strategy:
+      fail-fast: false
       matrix:
         ruby-version: ["3.2", "3.3", "3.4", "4.0"]
 
@@ -26,6 +33,9 @@ jobs:
 
       - name: Run test suite
         run: bundle exec rake spec
+
+      - name: Run RuboCop
+        run: bundle exec rake rubocop
 
       - name: Smoke test CLI
         run: |

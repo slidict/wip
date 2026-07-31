@@ -1,10 +1,12 @@
 # frozen_string_literal: true
-require "pathname"
-require "yaml"
+
+require 'pathname'
+require 'yaml'
 
 module Wip
+  # Finds and parses wip.yml, searching parent directories when unset.
   class ConfigLoader
-    FILENAME = "wip.yml"
+    FILENAME = 'wip.yml'
 
     def initialize(start_dir: Dir.pwd, path: nil)
       @start_dir = Pathname(start_dir).expand_path

@@ -79,10 +79,10 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git checkout -B bump-version
+          git checkout -B "bump-version-v${NEXT_VERSION}"
           git add lib/wip/version.rb
           git commit -m "chore: bump version to v${NEXT_VERSION}"
-          git push --force-with-lease origin bump-version
+          git push --force-with-lease origin "bump-version-v${NEXT_VERSION}"
 
       - name: Create pull request
         env:
@@ -91,6 +91,6 @@ jobs:
         run: |
           gh pr create \
             --base "${GITHUB_REF_NAME}" \
-            --head bump-version \
+            --head "bump-version-v${NEXT_VERSION}" \
             --title "chore: bump version to v${NEXT_VERSION}" \
             --body "Bump wslc-wip gem version to v${NEXT_VERSION}."
