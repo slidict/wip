@@ -5,6 +5,8 @@
 [![License: MIT](https://img.shields.io/github/license/slidict/wip.svg)](LICENSE)
 [![Ruby](https://img.shields.io/badge/ruby-%3E%3D%203.2-red.svg)](wslc-wip.gemspec)
 
+Homepage: https://wslc-wip.slidict.com/
+
 `wip` is a Ruby-built OSS CLI wrapper that brings a [`dip`](https://github.com/bibendi/dip)-like
 workflow to Microsoft WSLC. It collects a project's container, image, environment variables, and
 commands into a single `wip.yml`, and forwards them to `wslc.exe` / `wslc` as safe argument arrays
@@ -127,8 +129,32 @@ dependencies down (the network itself is left in place). Each dependency entry a
 | `wip NAME ARGS...` | Run `commands.NAME`, appending any extra arguments |
 
 TTY allocation is decided by combining the command's config, the CLI option, and whether both
-stdin and stdout are real TTYs. Set `WIP_DEBUG=1` to print the `Shellwords`-joined command before
-running it.
+stdin and stdout are real TTYs.
+
+Pass `--debug` (or set `WIP_DEBUG=1`) to see where time is going: wip prints each step it takes —
+checking for an existing network/container/dependency, and running the resolved `wslc`/`docker`
+command — along with how long that step took, e.g.:
+
+```console
+$ wip rails c --debug
+wip: [debug] running: wslc.exe exec -it -w /app app bin/rails c
++ wslc.exe exec -it -w /app app bin/rails c
+...
+wip: [debug] done in 4.32s: running: wslc.exe exec -it -w /app app bin/rails c
+```
+
+For long-running interactive commands (like `rails c`), the "done" line only prints after you
+exit, but the timestamp of the `+ ...` line tells you when wip finished its own setup and handed
+off to `wslc`/`docker` — useful for telling wip-side overhead apart from time spent booting inside
+the container.
+
+While a step is still running, wip also prints a host resource snapshot (load average, memory
+used, and the top CPU-consuming processes) every 5 seconds, so a hang is visible even before the
+command has produced any output of its own:
+
+```console
+wip: [debug] still running (load 3.42 2.10 1.05 | mem 6.1G/15.6G | top: wslc.exe(8842) cpu 61.0%/mem 3.2%, ...): running: wslc.exe exec -it -w /app app bin/rails c
+```
 
 ## doctor
 

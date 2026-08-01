@@ -31,6 +31,18 @@ RSpec.describe Wip::CLI do
     described_class.start(%w[rails c])
   end
 
+  it 'prints step-by-step progress and timing when --debug is passed' do
+    runner = instance_double(Wip::CommandRunner, run: 0)
+    allow(Wip::CommandRunner).to receive(:new).and_return(runner)
+    allow(Wip::CommandResolver).to receive(:new).and_return(instance_double(Wip::CommandResolver,
+                                                                            resolve: 'wslc.exe'))
+
+    expect { described_class.start(%w[rails c --debug]) }.to output(
+      a_string_matching(%r{\[debug\] running: wslc\.exe exec.*bin/rails c})
+        .and(a_string_matching(/\[debug\] done in \d+\.\d{2}s/))
+    ).to_stderr
+  end
+
   it 'creates the container when `up` finds none existing via a quiet `wslc list` probe' do
     runner = instance_double(Wip::CommandRunner)
     allow(Wip::CommandRunner).to receive(:new) do |**kwargs|

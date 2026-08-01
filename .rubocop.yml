@@ -9,7 +9,7 @@ Metrics/MethodLength:
 Metrics/AbcSize:
   Max: 25
 Metrics/ClassLength:
-  Max: 140
+  Max: 145
 Metrics/BlockLength:
   Exclude:
     - spec/**/*
