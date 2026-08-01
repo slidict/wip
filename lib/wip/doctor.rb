@@ -15,9 +15,8 @@ module Wip
 
     def call
       results = []
-      results << result(@environment.wsl2? ? :ok : :fail, 'Running on WSL2', 'Not running on WSL2')
-      results << result(@environment.windows_interop? ? :ok : :fail, 'Windows executable interoperability is enabled',
-                        'Windows executable interoperability is disabled')
+      results << result(@environment.wsl2? ? :ok : :fail, *wsl2_messages)
+      results << interop_result unless @environment.windows?
       results << Result.new(:ok, "Architecture: #{@environment.architecture}")
       config = load_config(results)
       command = resolve(config, results) if config
@@ -28,6 +27,17 @@ module Wip
     end
 
     private
+
+    def wsl2_messages
+      return ['WSL2 is available', 'WSL2 is not available'] if @environment.windows?
+
+      ['Running on WSL2', 'Not running on WSL2']
+    end
+
+    def interop_result
+      result(@environment.windows_interop? ? :ok : :fail, 'Windows executable interoperability is enabled',
+             'Windows executable interoperability is disabled')
+    end
 
     def load_config(results)
       config = @loader.load
