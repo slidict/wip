@@ -148,13 +148,29 @@ exit, but the timestamp of the `+ ...` line tells you when wip finished its own 
 off to `wslc`/`docker` — useful for telling wip-side overhead apart from time spent booting inside
 the container.
 
-While a step is still running, wip also prints a host resource snapshot (load average, memory
-used, and the top CPU-consuming processes) every 5 seconds, so a hang is visible even before the
-command has produced any output of its own:
+While a step is still running, wip also prints a host resource snapshot (load average, memory,
+disk I/O, and the top CPU-consuming processes) every 5 seconds, so a hang is visible even before
+the command has produced any output of its own:
 
 ```console
-wip: [debug] still running (load 3.42 2.10 1.05 | mem 6.1G/15.6G | top: wslc.exe(8842) cpu 61.0%/mem 3.2%, ...): running: wslc.exe exec -it -w /app app bin/rails c
+wip: [debug] still running (load 3.42 2.10 1.05 | mem 6.1G/15.6G | io read 12000KB/s write 400KB/s | top: wslc.exe(8842) cpu 61.0%/mem 3.2%, ...): running: wslc.exe exec -it -w /app app bin/rails c
 ```
+
+The disk I/O figure is worth watching first if the host's CPU and memory look idle — a slow
+`bundle`/`rails` boot is often WSL2's bind-mounted (`.:/app`-style) volumes doing a lot of small
+reads, not the container starving for CPU.
+
+For commands that hand the real terminal to the child (`-it`, e.g. `rails c`), these periodic
+snapshots go to a log file instead of your terminal — wip prints the path once at the start —
+since writing into a terminal the child controls in raw mode would garble both outputs. Commands
+that don't need a TTY still get the snapshots printed live.
+
+Override that choice with `--debug-log`:
+
+- `--debug-log=-` forces snapshots inline even for `-it` commands (only useful if you know your
+  terminal/pager can tolerate the interleaving).
+- `--debug-log=PATH` always writes snapshots to `PATH`, including for non-TTY commands, e.g. to
+  keep every run's snapshots in one place: `wip rails c --debug --debug-log=/tmp/wip-debug.log`.
 
 ## doctor
 
