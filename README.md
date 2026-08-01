@@ -245,8 +245,47 @@ checklist.
 
 Full Compose compatibility (multiple networks, `depends_on` ordering/health checks, profiles), a
 resident/daemon process, a GUI, PowerShell-specific tuning, direct registry API/manifest parsing,
-self-update, and plugins are all unimplemented. Likely future additions: a richer config schema,
-lifecycle hooks, platform selection, and more detailed diagnostics.
+self-update, and plugins are all unimplemented.
+
+## Roadmap
+
+`wip` already covers most of what [`dip`](https://github.com/bibendi/dip) adds on top of Compose —
+named commands (`commands:`), `run`/`exec` hidden behind a single verb, `.env` passthrough, and
+sidecar services via `dependencies:` + `defaults.network`. The gaps that remain are mostly on the
+Compose side: multi-service orchestration is still per-container rather than declarative and
+project-scoped. Planned next, roughly in priority order:
+
+1. **`depends_on`-style startup ordering & health checks** — `wip up` currently starts
+   `dependencies` in declaration order with no readiness gate. Add an optional `depends_on` /
+   `healthcheck` per dependency (e.g. poll a TCP port or exec a command) so `wip up` can wait for
+   `mysql` before starting `app`, instead of racing.
+2. **`wip logs [-f] [NAME...]`** — aggregate output from the main container and any dependencies,
+   the most-missed single Compose command when working with sidecars.
+3. **`wip provision`** — a dip-style one-shot bootstrap hook (build → up deps → install deps →
+   create/migrate/seed DB) so a new contributor can go from `git clone` to a working environment
+   in two commands (`wip provision && wip up`).
+4. **Profiles** — an optional `profiles:` tag on `dependencies` entries plus `wip up --profile
+   NAME`, so debug-only sidecars (mailpit, a queue UI, ...) don't start by default.
+5. **Config file merging** — `--config` currently accepts one file; support layering
+   (`wip.yml` + `wip.override.yml`, or a `WIP_CONFIG` list) for dev/CI/debug variants without
+   duplicating the whole file, plus a `wip config --resolved` view of the merged result.
+6. **Named volume helpers** — `wip volumes ls|rm` for volumes declared under `dependencies`, so
+   they're discoverable/removable without dropping to raw `wslc`/`docker` commands.
+7. **Service scaling** — a `--scale NAME=N` flag for `wip up`, mirroring `docker compose up
+   --scale`, for dependencies that can safely run more than one instance.
+8. **Bind-mount boot time (`rails c`, `bundle`, ...)** — commands like `wip rails c` still start
+   noticeably slower than the equivalent under `docker compose`, mostly from WSL2 bind-mounted
+   (`.:/app`-style) volumes doing many small reads for gems/`node_modules` (use `--debug` to
+   confirm it's disk I/O and not `wip`'s own overhead). This isn't really `wip`'s responsibility —
+   the fix has to come from either the mount layer or the project's own volume layout — but `wip`
+   can still push in that direction: e.g. a documented pattern (or config shorthand) for routing
+   `vendor/bundle`/`node_modules` through a named volume instead of the bind mount, once named
+   volume support (item 6) exists. We're also hoping for improvements on the `wslc` side itself
+   (faster bind-mount/cache behavior); `wip` will pick those up for free as soon as they land.
+
+Each of these should stay additive to the existing `wip.yml` shape — no breaking changes to
+`defaults`, `commands`, or `dependencies` are planned. Full N-network topologies, a resident
+daemon, and a GUI remain out of scope; see "Not in the initial release" above.
 
 ## License
 
