@@ -10,6 +10,7 @@ module Wip
   class CLI < Thor
     class_option :config, type: :string, desc: 'Path to wip.yml'
     class_option :debug, type: :boolean, default: false, desc: 'Print progress and timing for each step'
+    class_option :debug_log, type: :string, desc: 'Where --debug snapshots go: a file path, or "-" for inline'
     default_task :dispatch
 
     def self.exit_on_failure? = true
@@ -121,7 +122,7 @@ module Wip
 
     def execute(command, interactive: false, exit_on_failure: true)
       runner = CommandRunner.new(debug: debug?)
-      code = reporter.step("running: #{CommandDisplay.for_debug(command)}") do
+      code = reporter.step("running: #{CommandDisplay.for_debug(command)}", live: !interactive) do
         runner.run(command, interactive: interactive)
       end
       exit(code) if exit_on_failure && !code.zero?
@@ -143,7 +144,7 @@ module Wip
     end
 
     def debug? = options[:debug] || !ENV['WIP_DEBUG'].to_s.empty?
-    def reporter = @reporter ||= DebugReporter.new(enabled: debug?)
+    def reporter = @reporter ||= DebugReporter.new(enabled: debug?, log: options[:debug_log])
 
     def ensure_network
       network = load_config.network

@@ -2,6 +2,7 @@
 
 require 'spec_helper'
 require 'tmpdir'
+require 'fileutils'
 
 RSpec.describe Wip::CLI do
   around do |example|
@@ -41,6 +42,19 @@ RSpec.describe Wip::CLI do
       a_string_matching(%r{\[debug\] running: wslc\.exe exec.*bin/rails c})
         .and(a_string_matching(/\[debug\] done in \d+\.\d{2}s/))
     ).to_stderr
+  end
+
+  it 'forwards --debug-log to the DebugReporter' do
+    runner = instance_double(Wip::CommandRunner, run: 0)
+    allow(Wip::CommandRunner).to receive(:new).and_return(runner)
+    allow(Wip::CommandResolver).to receive(:new).and_return(instance_double(Wip::CommandResolver,
+                                                                            resolve: 'wslc.exe'))
+    log_path = File.join(Dir.mktmpdir, 'custom.log')
+    expect(Wip::DebugReporter).to receive(:new).with(enabled: true, log: log_path).and_call_original
+
+    described_class.start(['rails', 'c', '--debug', "--debug-log=#{log_path}"])
+  ensure
+    FileUtils.rm_rf(File.dirname(log_path)) if log_path
   end
 
   it 'creates the container when `up` finds none existing via a quiet `wslc list` probe' do
