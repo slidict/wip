@@ -103,6 +103,22 @@ commands:
 credential, or auth. Keep real secrets out of the config file and in your runtime environment
 instead.
 
+### .env
+
+Like `docker compose`, `wip` automatically loads a `.env` file next to `wip.yml` (one `KEY=VALUE`
+per line; `#` comments, blank lines, `export` prefixes, and quoted values are all supported) and
+passes its keys through as container environment variables on `build`, `up`, `run`, `exec`, and
+custom commands. `.env` only fills in keys that aren't already set by `defaults.env` or a
+command/dependency's own `env` — those always win on conflict. Pass `--env-file PATH` to load a
+different file instead.
+
+### .dockerignore
+
+`wip build` reads `.dockerignore` from the build context and stages a filtered copy of the
+context (skipping anything it matches) before handing it to `wslc build`, since `wslc` sends the
+context as-is otherwise. If there's no `.dockerignore`, the original context directory is used
+directly with no copying.
+
 ### Dependency containers
 
 If your app needs sidecar services (a database, Redis, ...), declare them under `dependencies`
