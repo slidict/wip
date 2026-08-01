@@ -6,15 +6,17 @@ require 'shellwords'
 module Wip
   # Executes a built command, pumping its I/O and returning the exit status.
   class CommandRunner
-    def initialize(stdin: $stdin, stdout: $stdout, stderr: $stderr, interpreter: ErrorInterpreter.new)
+    def initialize(stdin: $stdin, stdout: $stdout, stderr: $stderr, interpreter: ErrorInterpreter.new,
+                   debug: !ENV['WIP_DEBUG'].to_s.empty?)
       @stdin = stdin
       @stdout = stdout
       @stderr = stderr
       @interpreter = interpreter
+      @debug = debug
     end
 
     def run(command, env: {}, interactive: false)
-      @stderr.puts "+ #{Shellwords.join(command)}" if ENV['WIP_DEBUG']
+      @stderr.puts "+ #{Shellwords.join(command)}" if @debug
       return run_attached(command, env) if interactive
 
       captured = +''

@@ -4,11 +4,13 @@ require 'thor'
 require 'yaml'
 require 'json'
 require 'stringio'
+require 'shellwords'
 
 module Wip
   # Thor-based command-line interface for wip.
   class CLI < Thor
     class_option :config, type: :string, desc: 'Path to wip.yml'
+    class_option :debug, type: :boolean, default: false, desc: 'Print progress and timing for each step'
     default_task :dispatch
 
     def self.exit_on_failure? = true
@@ -119,18 +121,28 @@ module Wip
     def builder = CommandBuilder.new(wslc: resolver.resolve(load_config.wslc_command), config: load_config)
 
     def execute(command, interactive: false, exit_on_failure: true)
-      code = CommandRunner.new.run(command, interactive: interactive)
+      runner = CommandRunner.new(debug: debug?)
+      code = reporter.step("running: #{Shellwords.join(command)}") { runner.run(command, interactive: interactive) }
       exit(code) if exit_on_failure && !code.zero?
       code
     end
 
     def resource_exists?(find_command)
-      out = StringIO.new
-      code = CommandRunner.new(stdout: out, stderr: StringIO.new).run(find_command)
-      code.zero? && !JSON.parse(out.string).empty?
+      code, output = probe(find_command)
+      code.zero? && !JSON.parse(output).empty?
     rescue JSON::ParserError
       false
     end
+
+    def probe(command)
+      out = StringIO.new
+      runner = CommandRunner.new(stdout: out, stderr: StringIO.new, debug: debug?)
+      code = reporter.step("checking: #{Shellwords.join(command)}") { runner.run(command) }
+      [code, out.string]
+    end
+
+    def debug? = options[:debug] || !ENV['WIP_DEBUG'].to_s.empty?
+    def reporter = @reporter ||= DebugReporter.new(enabled: debug?)
 
     def ensure_network
       network = load_config.network
@@ -142,11 +154,8 @@ module Wip
     end
 
     def network_exists?(network)
-      out = StringIO.new
-      code = CommandRunner.new(stdout: out, stderr: StringIO.new).run(builder.network_list)
-      return false unless code.zero?
-
-      JSON.parse(out.string).any? { |entry| entry['Name'] == network }
+      code, output = probe(builder.network_list)
+      code.zero? && JSON.parse(output).any? { |entry| entry['Name'] == network }
     rescue JSON::ParserError
       false
     end
