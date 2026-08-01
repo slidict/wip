@@ -273,6 +273,15 @@ project-scoped. Planned next, roughly in priority order:
    they're discoverable/removable without dropping to raw `wslc`/`docker` commands.
 7. **Service scaling** — a `--scale NAME=N` flag for `wip up`, mirroring `docker compose up
    --scale`, for dependencies that can safely run more than one instance.
+8. **Bind-mount boot time (`rails c`, `bundle`, ...)** — commands like `wip rails c` still start
+   noticeably slower than the equivalent under `docker compose`, mostly from WSL2 bind-mounted
+   (`.:/app`-style) volumes doing many small reads for gems/`node_modules` (use `--debug` to
+   confirm it's disk I/O and not `wip`'s own overhead). This isn't really `wip`'s responsibility —
+   the fix has to come from either the mount layer or the project's own volume layout — but `wip`
+   can still push in that direction: e.g. a documented pattern (or config shorthand) for routing
+   `vendor/bundle`/`node_modules` through a named volume instead of the bind mount, once named
+   volume support (item 6) exists. We're also hoping for improvements on the `wslc` side itself
+   (faster bind-mount/cache behavior); `wip` will pick those up for free as soon as they land.
 
 Each of these should stay additive to the existing `wip.yml` shape — no breaking changes to
 `defaults`, `commands`, or `dependencies` are planned. Full N-network topologies, a resident
