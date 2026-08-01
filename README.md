@@ -135,7 +135,7 @@ Pass `--debug` (or set `WIP_DEBUG=1`) to see where time is going: wip prints eac
 checking for an existing network/container/dependency, and running the resolved `wslc`/`docker`
 command — along with how long that step took, e.g.:
 
-```
+```console
 $ wip rails c --debug
 wip: [debug] running: wslc.exe exec -it -w /app app bin/rails c
 + wslc.exe exec -it -w /app app bin/rails c
@@ -152,7 +152,7 @@ While a step is still running, wip also prints a host resource snapshot (load av
 used, and the top CPU-consuming processes) every 5 seconds, so a hang is visible even before the
 command has produced any output of its own:
 
-```
+```console
 wip: [debug] still running (load 3.42 2.10 1.05 | mem 6.1G/15.6G | top: wslc.exe(8842) cpu 61.0%/mem 3.2%, ...): running: wslc.exe exec -it -w /app app bin/rails c
 ```
 

@@ -4,7 +4,6 @@ require 'thor'
 require 'yaml'
 require 'json'
 require 'stringio'
-require 'shellwords'
 
 module Wip
   # Thor-based command-line interface for wip.
@@ -122,7 +121,9 @@ module Wip
 
     def execute(command, interactive: false, exit_on_failure: true)
       runner = CommandRunner.new(debug: debug?)
-      code = reporter.step("running: #{Shellwords.join(command)}") { runner.run(command, interactive: interactive) }
+      code = reporter.step("running: #{CommandDisplay.for_debug(command)}") do
+        runner.run(command, interactive: interactive)
+      end
       exit(code) if exit_on_failure && !code.zero?
       code
     end
@@ -137,7 +138,7 @@ module Wip
     def probe(command)
       out = StringIO.new
       runner = CommandRunner.new(stdout: out, stderr: StringIO.new, debug: debug?)
-      code = reporter.step("checking: #{Shellwords.join(command)}") { runner.run(command) }
+      code = reporter.step("checking: #{CommandDisplay.for_debug(command)}") { runner.run(command) }
       [code, out.string]
     end
 

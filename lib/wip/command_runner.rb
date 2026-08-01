@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
 require 'open3'
-require 'shellwords'
 
 module Wip
   # Executes a built command, pumping its I/O and returning the exit status.
@@ -16,7 +15,7 @@ module Wip
     end
 
     def run(command, env: {}, interactive: false)
-      @stderr.puts "+ #{Shellwords.join(command)}" if @debug
+      @stderr.puts "+ #{CommandDisplay.for_debug(command)}" if @debug
       return run_attached(command, env) if interactive
 
       captured = +''
