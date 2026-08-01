@@ -5,6 +5,8 @@
 [![License: MIT](https://img.shields.io/github/license/slidict/wip.svg)](LICENSE)
 [![Ruby](https://img.shields.io/badge/ruby-%3E%3D%203.2-red.svg)](wslc-wip.gemspec)
 
+Homepage: https://wslc-wip.slidict.com/
+
 `wip` is a Ruby-built OSS CLI wrapper that brings a [`dip`](https://github.com/bibendi/dip)-like
 workflow to Microsoft WSLC. It collects a project's container, image, environment variables, and
 commands into a single `wip.yml`, and forwards them to `wslc.exe` / `wslc` as safe argument arrays
