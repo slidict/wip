@@ -5,10 +5,11 @@ require 'shellwords'
 module Wip
   # Builds the argument arrays for wslc build/exec/run/custom invocations.
   class CommandBuilder
-    def initialize(wslc:, config:, environment: Environment.new)
+    def initialize(wslc:, config:, environment: Environment.new, dotenv: {})
       @wslc = wslc
       @config = config
       @environment = environment
+      @dotenv = dotenv
     end
 
     def exec(arguments, settings: {}, interactive: true)
@@ -115,7 +116,7 @@ module Wip
     def options(values, include_container: false, include_publish: true)
       result = []
       result.push('-w', values['workdir']) unless values['workdir'].to_s.empty?
-      values.fetch('env', {}).each { |key, value| result.push('-e', "#{key}=#{value}") }
+      merged_env(values).each { |key, value| result.push('-e', "#{key}=#{value}") }
       if include_publish
         Array(values['ports']).each { |port| result.push('-p', port.to_s) }
         Array(values['volumes']).each { |volume| result.push('-v', volume.to_s) }
@@ -123,6 +124,9 @@ module Wip
       result << required(values, 'container') if include_container
       result
     end
+
+    # .env supplies defaults; env set in wip.yml (defaults or per-command) wins on conflict.
+    def merged_env(values) = @dotenv.merge(values.fetch('env', {}))
 
     def required(values, key)
       value = values[key]

@@ -135,4 +135,67 @@ RSpec.describe Wip::CLI do
     ]
     expect(fake_runner.calls.map(&:first)).to eq(expected_commands)
   end
+
+  it 'auto-loads .env next to wip.yml and injects it as container env, without overriding wip.yml env' do
+    File.write('wip.yml', <<~YAML)
+      version: 1
+      defaults:
+        container: app
+        image: example:dev
+        env:
+          PORT: "3000"
+    YAML
+    File.write('.env', "PORT=9999\nRAILS_ENV=development\n")
+
+    runner = instance_double(Wip::CommandRunner)
+    allow(Wip::CommandRunner).to receive(:new) do |**kwargs|
+      kwargs[:stdout]&.write('[]')
+      runner
+    end
+    allow(Wip::CommandResolver).to receive(:new).and_return(instance_double(Wip::CommandResolver,
+                                                                            resolve: 'wslc.exe'))
+    allow(runner).to receive(:run).with(%w[wslc.exe list --all --filter name=app --format json]).and_return(0)
+    expect(runner).to receive(:run).with(
+      %w[wslc.exe run --name app -w /app -e PORT=3000 -e RAILS_ENV=development example:dev], interactive: false
+    ).and_return(0)
+
+    described_class.start(%w[up])
+  end
+
+  it 'excludes files matched by .dockerignore from the build context' do
+    FileUtils.mkdir_p('node_modules')
+    File.write(File.join('node_modules', 'pkg.js'), '')
+    File.write('.dockerignore', "node_modules\n")
+    File.write('Dockerfile', "FROM scratch\n")
+    File.write('wip.yml', <<~YAML)
+      version: 1
+      defaults:
+        container: app
+        image: example:dev
+      commands:
+        build:
+          type: build
+          tag: example:dev
+          context: .
+    YAML
+
+    runner = instance_double(Wip::CommandRunner, run: 0)
+    allow(Wip::CommandRunner).to receive(:new).and_return(runner)
+    allow(Wip::CommandResolver).to receive(:new).and_return(instance_double(Wip::CommandResolver,
+                                                                            resolve: 'wslc.exe'))
+    staged_context = nil
+    dockerfile_present = node_modules_present = nil
+    expect(runner).to receive(:run) do |command, **_kwargs|
+      staged_context = command.last
+      dockerfile_present = File.exist?(File.join(staged_context, 'Dockerfile'))
+      node_modules_present = File.exist?(File.join(staged_context, 'node_modules'))
+      0
+    end
+
+    described_class.start(%w[build])
+
+    expect(staged_context).not_to eq(Dir.pwd)
+    expect(dockerfile_present).to be true
+    expect(node_modules_present).to be false
+  end
 end

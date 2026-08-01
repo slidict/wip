@@ -9,6 +9,7 @@ module Wip
   # Thor-based command-line interface for wip.
   class CLI < Thor
     class_option :config, type: :string, desc: 'Path to wip.yml'
+    class_option :env_file, type: :string, desc: 'Path to a dotenv file (default: .env next to wip.yml)'
     class_option :debug, type: :boolean, default: false, desc: 'Print progress and timing for each step'
     class_option :debug_log, type: :string, desc: 'Where --debug snapshots go: a file path, or "-" for inline'
     default_task :dispatch
@@ -52,7 +53,11 @@ module Wip
     desc 'build [OPTIONS]', 'Build the configured image'
     def build(*extra)
       extra.shift if extra.first == '--'
-      execute(builder.build(settings: load_config.command('build') || {}, extra: extra))
+      settings = load_config.command('build') || {}
+      context = settings['context'] || load_config.defaults['context'] || '.'
+      BuildContext.new(context).stage do |staged_context|
+        execute(builder.build(settings: settings.merge('context' => staged_context), extra: extra))
+      end
     end
 
     desc 'up', 'Start the configured container and its dependencies, creating them if necessary'
@@ -118,7 +123,16 @@ module Wip
     def loader = ConfigLoader.new(path: options[:config])
     def load_config = (@load_config ||= loader.load)
     def resolver = CommandResolver.new
-    def builder = CommandBuilder.new(wslc: resolver.resolve(load_config.wslc_command), config: load_config)
+
+    def dotenv_path
+      options[:env_file] ? Pathname(options[:env_file]).expand_path : Pathname(load_config.path).dirname.join('.env')
+    end
+
+    def dotenv = @dotenv ||= DotenvLoader.new(dotenv_path).load
+
+    def builder
+      CommandBuilder.new(wslc: resolver.resolve(load_config.wslc_command), config: load_config, dotenv: dotenv)
+    end
 
     def execute(command, interactive: false, exit_on_failure: true)
       runner = CommandRunner.new(debug: debug?)

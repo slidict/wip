@@ -115,4 +115,16 @@ RSpec.describe Wip::CommandBuilder do
       expect { builder.dependency_up('unknown') }.to raise_error(Wip::ConfigError, /Unknown dependency: unknown/)
     end
   end
+
+  describe 'dotenv support' do
+    subject(:builder) do
+      described_class.new(wslc: 'wslc.exe', config: config, environment: environment,
+                          dotenv: { 'RAILS_ENV' => 'development', 'PORT' => '4000' })
+    end
+
+    it 'injects dotenv values that are not already set' do
+      expect(builder.exec(%w[bin/rails c], settings: { 'env' => { 'PORT' => '3000' } }, interactive: false))
+        .to eq(%w[wslc.exe exec -w /app -e RAILS_ENV=development -e PORT=3000 app bin/rails c])
+    end
+  end
 end
