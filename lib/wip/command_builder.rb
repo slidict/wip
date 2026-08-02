@@ -13,14 +13,17 @@ module Wip
     end
 
     def exec(arguments, settings: {}, interactive: true)
-      values = @config.defaults.merge(settings)
+      # dependencies: entries don't carry their own name (it's the hash key), so the
+      # exec target defaults to @config.container; a commands: entry can still
+      # redirect it by setting its own `container:`.
+      values = primary_values.merge('container' => @config.container).merge(settings)
       command = [@wslc, 'exec']
       command << '-it' if tty?(interactive)
       command.concat(options(values, include_container: true, include_publish: false)).concat(arguments)
     end
 
     def run(arguments, settings: {}, interactive: true)
-      values = @config.defaults.merge(settings)
+      values = primary_values.merge(settings)
       command = [@wslc, 'run']
       command << '--rm' if values['remove']
       command << '-it' if tty?(interactive)
@@ -28,25 +31,24 @@ module Wip
     end
 
     def up(detach: false)
-      values = @config.defaults
-      command = [@wslc, 'run', '--name', required(values, 'container')]
+      values = primary_values
+      command = [@wslc, 'run', '--name', @config.container]
       command.push('--network', @config.network) if @config.network
       command << '-d' if detach
       command << '-it' if !detach && tty?(true)
       command.concat(options(values)).push(required(values, 'image'))
-      command.concat(Shellwords.split(@config.up_command.to_s)) if @config.up_command
+      command.concat(Shellwords.split(values['command'].to_s)) unless values['command'].to_s.empty?
       command
     end
 
     def start(detach: false)
-      command = [@wslc, 'start', required(@config.defaults, 'container')]
+      command = [@wslc, 'start', @config.container]
       command.push('-a', '-i') unless detach
       command
     end
 
     def find
-      container = required(@config.defaults, 'container')
-      [@wslc, 'list', '--all', '--filter', "name=#{container}", '--format', 'json']
+      [@wslc, 'list', '--all', '--filter', "name=#{@config.container}", '--format', 'json']
     end
 
     # Mirrors into the volume from a throwaway container. Used for sync.mode:
@@ -56,7 +58,7 @@ module Wip
       sync = required_sync
       command = [@wslc, 'run', '--rm']
       sync.volume_specs.each { |spec| command.push('-v', spec) }
-      command.push(required(@config.defaults, 'image')).concat(sync.mirror_command)
+      command.push(required(primary_values, 'image')).concat(sync.mirror_command)
     end
 
     # Mirrors from inside the already-running container. Only valid for
@@ -64,15 +66,15 @@ module Wip
     # itself booted is guaranteed to have both the read-only source mount and
     # the volume attached.
     def sync_exec
-      [@wslc, 'exec', required(@config.defaults, 'container'), *required_sync.mirror_command]
+      [@wslc, 'exec', @config.container, *required_sync.mirror_command]
     end
 
     def down
-      [@wslc, 'stop', required(@config.defaults, 'container')]
+      [@wslc, 'stop', @config.container]
     end
 
     def remove
-      [@wslc, 'remove', '-f', required(@config.defaults, 'container')]
+      [@wslc, 'remove', '-f', @config.container]
     end
 
     def network_create
@@ -110,7 +112,7 @@ module Wip
     end
 
     def build(settings:, extra: [])
-      values = @config.defaults.merge(settings)
+      values = primary_values.merge(settings)
       context = values['context'] || '.'
       tag = values['tag'] || values['image']
       raise ConfigError, 'Build image/tag must not be empty' if tag.to_s.empty?
@@ -154,7 +156,7 @@ module Wip
       specs.reject { |spec| settings.replaces?(spec) } + settings.volume_specs
     end
 
-    # .env supplies defaults; env set in wip.yml (defaults or per-command) wins on conflict.
+    # .env supplies defaults; env set in wip.yml (primary or per-command) wins on conflict.
     def merged_env(values) = @dotenv.merge(values.fetch('env', {}))
 
     def required(values, key)
@@ -177,6 +179,11 @@ module Wip
 
     def dependency_values(name)
       @config.dependency(name) || raise(ConfigError, "Unknown dependency: #{name}")
+    end
+
+    def primary_values
+      @config.primary || raise(ConfigError, "No dependencies.#{@config.container} entry " \
+                                            '(set container: to name a different one)')
     end
   end
 end

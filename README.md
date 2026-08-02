@@ -48,24 +48,23 @@ version: 1
 mode: container # or compose; picks the orchestration path `up`/`down`/`sync`/etc. take (default: container)
 wslc:
   command: auto # tries wslc.exe, wslc, then System32; an absolute path also works
-defaults:
-  container: app
-  image: slidict/slidict:development
-  workdir: /app
-  interactive: false
-  remove: true
-  network: app-tier # optional; shared with `dependencies` so containers can resolve each other by name
-  env:
-    RAILS_ENV: development
-    PORT: "3000"
-  ports:
-    - "3000:3000"
-  volumes:
-    - ".:/app"
-up:
-  command: server # command `wip up` passes to the image when it creates the container
-                   # (omit to use the image's default CMD)
+container: app # optional; which dependencies: entry `up`/`exec`/`run`/`build`/`commands:` target (default: app)
+network: app-tier # optional; shared by every dependencies: entry so containers can resolve each other by name
 dependencies:
+  app: # container: points here — the one container wip execs into and runs commands in
+    image: slidict/slidict:development
+    workdir: /app
+    interactive: false
+    remove: true
+    command: server # extra args appended when `wip up` creates the container
+                     # (omit to use the image's default CMD)
+    env:
+      RAILS_ENV: development
+      PORT: "3000"
+    ports:
+      - "3000:3000"
+    volumes:
+      - ".:/app"
   redis:
     image: redis:latest
   development.mysql:
@@ -115,9 +114,9 @@ instead.
 Like `docker compose`, `wip` automatically loads a `.env` file next to `wip.yml` (one `KEY=VALUE`
 per line; `#` comments, blank lines, `export` prefixes, and quoted values are all supported) and
 passes its keys through as container environment variables on `build`, `up`, `run`, `exec`, and
-custom commands. `.env` only fills in keys that aren't already set by `defaults.env` or a
-command/dependency's own `env` — those always win on conflict. Pass `--env-file PATH` to load a
-different file instead.
+custom commands. `.env` only fills in keys that aren't already set by the primary container's
+`env` or a command/dependency's own `env` — those always win on conflict. Pass `--env-file PATH`
+to load a different file instead.
 
 ### .dockerignore
 
@@ -128,13 +127,19 @@ directly with no copying.
 
 ### Dependency containers
 
-If your app needs sidecar services (a database, Redis, ...), declare them under `dependencies`
-and set `defaults.network`. `wip up` creates the network first (if it doesn't exist), then brings
-up each dependency by name before the main container — so `bin/rails c` (or anything else run
-inside the main container) can reach `development.mysql`/`redis`/etc. by their dependency name,
-the same way Compose's service names resolve. `wip down` tears the main container and all
-dependencies down (the network itself is left in place). Each dependency entry accepts `image`
-(required), `command`, `env`, `ports`, `volumes`, and `workdir` — the same shape as `defaults`.
+`dependencies:` holds every container uniformly — the primary one `container:` points at (`app`
+by default) and any sidecar services (a database, Redis, ...) alongside it. Each entry accepts
+`image` (required), `command`, `env`, `ports`, `volumes`, and `workdir`; there's no separate,
+differently-shaped block for "the one you exec into."
+
+What sets the primary entry apart is operational, not structural: `wip up` brings up every other
+entry by name first (creating `network:` beforehand if it doesn't exist and set), then boots or
+starts the primary one — so `bin/rails c` (or anything else run inside it) can reach
+`development.mysql`/`redis`/etc. by their dependency name, the same way Compose's service names
+resolve. `wip down` tears the primary container and all sidecars down (the network itself is left
+in place). Only the primary container is a target for `exec`/`run`/`build`/`commands:` — sidecars
+are only ever started and stopped, matching Compose's own service-vs-you-exec-into-one-of-them
+split.
 
 ### Source sync
 
@@ -147,8 +152,8 @@ mirrors one into the other with `rsync`.
 ```yaml
 sync:
   source: .          # host path, relative to wip.yml (default: the wip.yml directory)
-  target: /app       # container path served by the volume (default: defaults.workdir, else /app)
-  volume: app-src    # named volume holding the mirror (default: "<defaults.container>-src")
+  target: /app       # container path served by the volume (default: the primary container's workdir, else /app)
+  volume: app-src    # named volume holding the mirror (default: "<container>-src")
   mount: /host-src   # where the source is bind-mounted read-only (default: /host-src)
   exclude:           # rsync --exclude patterns
     - .git
@@ -164,10 +169,10 @@ sync:
 
 Everything below `sync:` is optional — `sync: {}` alone already works. With it in place:
 
-- Any `defaults.volumes` entry mounting `target` (the usual `.:/app`) is replaced by
-  `<source>:/host-src:ro` plus `app-src:/app`, so the running app only ever touches the volume.
-  Other volumes (`bundle:/usr/local/bundle`, ...) are passed through untouched, and
-  `dependencies:` keep mounting whatever they declare.
+- Any `volumes` entry on the primary container mounting `target` (the usual `.:/app`) is replaced
+  by `<source>:/host-src:ro` plus `app-src:/app`, so the running app only ever touches the volume.
+  Other volumes (`bundle:/usr/local/bundle`, ...) are passed through untouched, and sidecar
+  `dependencies:` entries keep mounting whatever they declare.
 - `wip up` mirrors the source into the volume before the container boots; `wip up --no-sync`
   skips that step.
 - `wip sync` mirrors on demand: `sync.mode: exec` (the default under `mode: container`) execs
@@ -208,9 +213,9 @@ compose:
   project: myapp            # optional; omitted lets the compose tool pick its own default
 ```
 
-`compose:` is mutually exclusive with `dependencies:`/`defaults.network` — pick one orchestration
-path per project. In compose mode, `wip` becomes a thin bridge to an external compose-for-`wslc`
-CLI rather than reimplementing Compose itself.
+`compose:` is mutually exclusive with `dependencies:`/`network` — pick one orchestration path per
+project. In compose mode, `wip` becomes a thin bridge to an external compose-for-`wslc` CLI rather
+than reimplementing Compose itself.
 
 `wslc` itself has no native Compose support yet (tracked upstream in
 [microsoft/WSL#40948](https://github.com/microsoft/WSL/issues/40948)), and until it does,
@@ -244,8 +249,8 @@ found, its version, and which compose file `wip` resolved.
 | `wip doctor` | Diagnose WSL2, interop, WSLC, config, architecture, and Git |
 | `wip config` | Print the effective configuration (secrets masked) |
 | `wip build -- --no-cache` | Build the image from the `build` definition |
-| `wip up [-d] [--no-sync]` | Start `defaults.container` and its `dependencies` (creating any that are missing, on `defaults.network` if set). `-d` runs the main container in the background; with `sync:` configured, the source is mirrored into the volume first unless `--no-sync` |
-| `wip down` | Stop and remove `defaults.container` and its `dependencies` |
+| `wip up [-d] [--no-sync]` | Start the primary `dependencies:` entry (`container:`, default `app`) and its sidecars (creating any that are missing, on `network:` if set). `-d` runs the main container in the background; with `sync:` configured, the source is mirrored into the volume first unless `--no-sync` |
+| `wip down` | Stop and remove the primary container and its sidecar `dependencies:` |
 | `wip exec [--no-interactive] COMMAND...` | Run a command in the existing container |
 | `wip run [--no-interactive] COMMAND...` | Run a command in a new `--rm` container (compose mode: `exec`s into `compose.service` instead) |
 | `wip shell` | Open the configured shell, falling back to `bash` then `sh` |
@@ -377,7 +382,7 @@ plugins are all unimplemented.
 
 `wip` already covers most of what [`dip`](https://github.com/bibendi/dip) adds on top of Compose —
 named commands (`commands:`), `run`/`exec` hidden behind a single verb, `.env` passthrough, and
-sidecar services via `dependencies:` + `defaults.network`. Fuller Compose semantics
+sidecar services via `dependencies:` + `network:`. Fuller Compose semantics
 (`depends_on` ordering/health checks, log aggregation, named volumes, profiles, scaling) are now
 handled by delegating to a separate compose-for-`wslc` tool in [compose mode](#compose-mode)
 rather than being reimplemented in `wip` itself. Which of those actually work is entirely up to
@@ -404,8 +409,8 @@ for `wip`, roughly in priority order:
    soon as they land.
 
 Each of these should stay additive to the existing `wip.yml` shape — no breaking changes to
-`defaults`, `commands`, `dependencies`, or `compose` are planned. A resident daemon and a GUI
-remain out of scope; see "Not in the initial release" above.
+`container`, `network`, `commands`, `dependencies`, or `compose` are planned. A resident daemon
+and a GUI remain out of scope; see "Not in the initial release" above.
 
 ## License
 

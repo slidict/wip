@@ -42,13 +42,20 @@ module Wip
 
     def load_config(results)
       config = @loader.load
-      invalid = config.compose? ? [] : %w[container image].select { |key| config.defaults[key].to_s.empty? }
-      results << Result.new(invalid.empty? ? :ok : :fail,
-                            invalid.empty? ? 'Loaded wip.yml' : "Empty defaults: #{invalid.join(', ')}")
+      results << Result.new(*container_result(config))
       config
     rescue ConfigError => e
       results << Result.new(:fail, e.message)
       nil
+    end
+
+    # dependencies.<container> having an empty image is already a load-time
+    # ConfigError (validate_dependency!), so the only way to reach here with a
+    # broken primary container is `container:` naming an entry that isn't defined.
+    def container_result(config)
+      return [:ok, 'Loaded wip.yml'] if config.compose? || config.primary
+
+      [:fail, "No dependencies.#{config.container} entry"]
     end
 
     def check_config(config, results)

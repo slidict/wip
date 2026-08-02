@@ -57,8 +57,8 @@ module Wip
     # named volume where the app actually runs.
     def volume_specs = ["#{source}:#{mount}:ro", "#{volume}:#{target}"]
 
-    # True for a configured volume that sync replaces, so `.:/app` in
-    # `defaults.volumes` quietly becomes the read-only mount plus the volume.
+    # True for a configured volume that sync replaces, so `.:/app` in the
+    # primary container's `volumes` quietly becomes the read-only mount plus the volume.
     def replaces?(spec)
       [target.chomp('/'), mount.chomp('/')].include?(container_path(spec))
     end

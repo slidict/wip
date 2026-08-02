@@ -4,7 +4,7 @@ require 'spec_helper'
 RSpec.describe Wip::CommandBuilder do
   let(:environment) { instance_double(Wip::Environment, interactive?: true) }
   let(:config) do
-    Wip::Config.new('defaults' => { 'container' => 'app', 'image' => 'example:dev', 'workdir' => '/app' },
+    Wip::Config.new('dependencies' => { 'app' => { 'image' => 'example:dev', 'workdir' => '/app' } },
                     'commands' => { 'rails' => { 'command' => 'bin/rails', 'interactive' => true },
                                     'build' => { 'type' => 'build', 'tag' => 'example:dev', 'context' => '.' } })
   end
@@ -38,6 +38,12 @@ RSpec.describe Wip::CommandBuilder do
       .to eq(%w[wslc.exe exec -it -w /app app bin/rails c])
   end
 
+  it 'lets a command redirect exec to a different container name' do
+    settings = { 'container' => 'other' }
+    expect(builder.exec(%w[bin/rails c], settings: settings, interactive: false))
+      .to eq(%w[wslc.exe exec -w /app other bin/rails c])
+  end
+
   it 'builds a detached up command that names the persistent container' do
     expect(builder.up(detach: true)).to eq(%w[wslc.exe run --name app -d -w /app example:dev])
   end
@@ -63,18 +69,27 @@ RSpec.describe Wip::CommandBuilder do
     expect(builder.find).to eq(%w[wslc.exe list --all --filter name=app --format json])
   end
 
-  it 'appends the configured up command so the container stays running' do
-    with_up_command = Wip::Config.new('defaults' => { 'container' => 'app', 'image' => 'example:dev' },
-                                      'up' => { 'command' => 'local' })
-    builder = described_class.new(wslc: 'wslc.exe', config: with_up_command, environment: environment)
+  it 'appends the primary dependency command so the container stays running' do
+    with_command = Wip::Config.new('dependencies' => { 'app' => { 'image' => 'example:dev', 'workdir' => '/app',
+                                                                  'command' => 'local' } })
+    builder = described_class.new(wslc: 'wslc.exe', config: with_command, environment: environment)
 
     expect(builder.up(detach: true)).to eq(%w[wslc.exe run --name app -d -w /app example:dev local])
   end
 
+  it 'raises a clear error when container points at an undefined dependency' do
+    pointing_elsewhere = Wip::Config.new('container' => 'web',
+                                         'dependencies' => { 'app' => { 'image' => 'example:dev' } })
+    builder = described_class.new(wslc: 'wslc.exe', config: pointing_elsewhere, environment: environment)
+
+    expect { builder.up }.to raise_error(Wip::ConfigError, /No dependencies\.web entry/)
+  end
+
   describe 'network and dependency support' do
     let(:networked_config) do
-      Wip::Config.new('defaults' => { 'container' => 'app', 'image' => 'example:dev', 'network' => 'app-tier' },
-                      'dependencies' => { 'redis' => { 'image' => 'redis:latest' },
+      Wip::Config.new('network' => 'app-tier',
+                      'dependencies' => { 'app' => { 'image' => 'example:dev', 'workdir' => '/app' },
+                                          'redis' => { 'image' => 'redis:latest' },
                                           'development.mysql' => {
                                             'image' => 'mysql:8.0',
                                             'command' => '--default-authentication-plugin=mysql_native_password',
@@ -118,9 +133,9 @@ RSpec.describe Wip::CommandBuilder do
 
   describe 'sync support' do
     let(:synced_config) do
-      Wip::Config.new('defaults' => { 'container' => 'app', 'image' => 'example:dev', 'workdir' => '/app',
-                                      'volumes' => ['.:/app', 'bundle:/usr/local/bundle'] },
-                      'dependencies' => { 'redis' => { 'image' => 'redis:latest', 'volumes' => ['.:/app'] } },
+      Wip::Config.new('dependencies' => { 'app' => { 'image' => 'example:dev', 'workdir' => '/app',
+                                                     'volumes' => ['.:/app', 'bundle:/usr/local/bundle'] },
+                                          'redis' => { 'image' => 'redis:latest', 'volumes' => ['.:/app'] } },
                       'sync' => { 'exclude' => ['.git'] })
     end
     subject(:builder) { described_class.new(wslc: 'wslc.exe', config: synced_config, environment: environment) }
