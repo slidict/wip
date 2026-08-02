@@ -7,10 +7,13 @@ module Wip
   class Doctor
     Result = Data.define(:level, :message)
 
-    def initialize(loader:, resolver: CommandResolver.new, environment: Environment.new)
+    def initialize(loader:, resolver: CommandResolver.new, environment: Environment.new,
+                   compose_resolver: CommandResolver.new(candidates: [], label: 'compose command',
+                                                         install_hint: ComposeBridge::INSTALL_HINT))
       @loader = loader
       @resolver = resolver
       @environment = environment
+      @compose_resolver = compose_resolver
     end
 
     def call
@@ -19,8 +22,8 @@ module Wip
       results << interop_result unless @environment.windows?
       results << Result.new(:ok, "Architecture: #{@environment.architecture}")
       config = load_config(results)
-      command = resolve(config, results) if config
-      check_version(command, results) if command
+      check_wslc(config, results) if config
+      check_compose(config, results) if config&.compose?
       results << result(command_available?('git') ? :ok : :warn, 'Git is available',
                         'Git is not available to the WSLC build environment')
       results
@@ -41,13 +44,18 @@ module Wip
 
     def load_config(results)
       config = @loader.load
-      invalid = %w[container image].select { |key| config.defaults[key].to_s.empty? }
+      invalid = config.compose? ? [] : %w[container image].select { |key| config.defaults[key].to_s.empty? }
       results << Result.new(invalid.empty? ? :ok : :fail,
                             invalid.empty? ? 'Loaded wip.yml' : "Empty defaults: #{invalid.join(', ')}")
       config
     rescue ConfigError => e
       results << Result.new(:fail, e.message)
       nil
+    end
+
+    def check_wslc(config, results)
+      command = resolve(config, results)
+      check_version(command, results) if command
     end
 
     def resolve(config, results)
@@ -59,12 +67,20 @@ module Wip
       nil
     end
 
-    def check_version(command, results)
+    def check_version(command, results, label: 'WSLC')
       _output, status = Open3.capture2e(command, 'version')
       results << Result.new(status.success? ? :ok : :fail,
-                            status.success? ? 'WSLC is available' : 'WSLC version failed')
+                            status.success? ? "#{label} is available" : "#{label} version failed")
     rescue Errno::ENOENT
-      results << Result.new(:fail, 'WSLC version failed')
+      results << Result.new(:fail, "#{label} version failed")
+    end
+
+    def check_compose(config, results)
+      command = @compose_resolver.resolve(config.compose_command)
+      results << Result.new(:ok, "Found #{command}")
+      check_version(command, results, label: 'compose command')
+    rescue CommandNotFoundError => e
+      results << Result.new(:fail, e.message)
     end
 
     def result(condition, ok_message, fail_message)

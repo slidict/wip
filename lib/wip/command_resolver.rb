@@ -1,20 +1,29 @@
 # frozen_string_literal: true
 
 module Wip
-  # Locates the wslc/wslc.exe executable on the current system.
+  # Locates an executable on the current system, trying a list of candidates.
   class CommandResolver
     CANDIDATES = ['wslc.exe', 'wslc', '/mnt/c/Windows/System32/wslc.exe'].freeze
+    DEFAULT_INSTALL_HINT = <<~HINT.chomp
+      Install or update the WSL container tooling, then run:
 
-    def initialize(path: ENV.fetch('PATH', ''), executable: nil)
+        wip doctor
+    HINT
+
+    def initialize(path: ENV.fetch('PATH', ''), executable: nil, candidates: CANDIDATES, label: 'WSLC',
+                   install_hint: DEFAULT_INSTALL_HINT)
       @path = path
       @executable = executable || method(:executable?)
+      @candidates = candidates
+      @label = label
+      @install_hint = install_hint
     end
 
     def resolve(configured = 'auto')
       return configured if configured != 'auto' && @executable.call(configured)
-      return raise_not_found if configured != 'auto'
+      return raise_not_found([configured]) if configured != 'auto'
 
-      CANDIDATES.find { |candidate| @executable.call(candidate) } || raise_not_found
+      @candidates.find { |candidate| @executable.call(candidate) } || raise_not_found(@candidates)
     end
 
     private
@@ -25,16 +34,14 @@ module Wip
       @path.split(File::PATH_SEPARATOR).any? { |directory| File.executable?(File.join(directory, command)) }
     end
 
-    def raise_not_found
+    def raise_not_found(attempted)
       raise CommandNotFoundError, <<~MESSAGE
-        WSLC was not found.
+        #{@label} was not found.
 
         Checked:
-          #{CANDIDATES.join("\n  ")}
+          #{attempted.join("\n  ")}
 
-        Install or update the WSL container tooling, then run:
-
-          wip doctor
+        #{@install_hint}
       MESSAGE
     end
   end

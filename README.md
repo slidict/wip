@@ -129,6 +129,45 @@ the same way Compose's service names resolve. `wip down` tears the main containe
 dependencies down (the network itself is left in place). Each dependency entry accepts `image`
 (required), `command`, `env`, `ports`, `volumes`, and `workdir` — the same shape as `defaults`.
 
+### Compose mode
+
+If your project already has a real `compose.yml`, don't duplicate it in `dependencies:` — point
+`wip` at it instead:
+
+```yaml
+version: 1
+compose:
+  service: app             # required: which compose service wip run/exec/NAME target
+  command: wslc-compose    # required: the compose-for-wslc binary/path you have installed
+  file: compose.yml        # optional; auto-detected next to wip.yml otherwise
+  project: myapp            # optional; omitted lets the compose tool pick its own default
+```
+
+`compose:` is mutually exclusive with `dependencies:`/`defaults.network` — pick one orchestration
+path per project. In compose mode, `wip` becomes a thin bridge to an external compose-for-`wslc`
+CLI rather than reimplementing Compose itself.
+
+`wslc` itself has no native Compose support yet (tracked upstream in
+[microsoft/WSL#40948](https://github.com/microsoft/WSL/issues/40948)), and until it does,
+independent third-party tools fill the gap — for example
+[bacarndiaye/wslc-compose](https://github.com/bacarndiaye/wslc-compose) (Python) and
+[inuyume/wslc-compose](https://github.com/inuyume/wslc-compose) (Go), among others. `wslc` is new
+and still evolving, so expect more of these to show up (and existing ones to change) over time.
+`wip` deliberately doesn't pick a winner or default to any of them (unlike `wslc.command`, which
+defaults to `auto` and searches for `wslc.exe`/`wslc`): `compose.command` is required and treats
+every implementation equally — set it to whichever binary name or absolute path you've installed.
+Whichever one you use needs to understand `-f FILE [-p PROJECT] up|down|exec|logs`, the subset of
+the Compose CLI vocabulary `wip` drives. `wip doctor` reports whether the configured command is
+found and its version.
+
+- `wip up`/`wip down` delegate straight to `<compose command> up -d`/`down`.
+- `wip exec`/`wip NAME` (custom `commands:`) run inside `compose.service`.
+- `wip logs [-f] [SERVICE...]` is only available in compose mode.
+- `wip run` has no ephemeral-container equivalent in this exec-only vocabulary, so it falls back
+  to `exec` against the already-running `compose.service` (wip warns when this happens).
+- `commands:` entries with `type: run`/`type: build` aren't supported in compose mode — use your
+  compose tool's own `build`/`up --build` directly; compose owns builds for its own services.
+
 ## Commands
 
 | Command | Description |
@@ -140,8 +179,9 @@ dependencies down (the network itself is left in place). Each dependency entry a
 | `wip up [-d]` | Start `defaults.container` and its `dependencies` (creating any that are missing, on `defaults.network` if set). `-d` runs the main container in the background |
 | `wip down` | Stop and remove `defaults.container` and its `dependencies` |
 | `wip exec [--no-interactive] COMMAND...` | Run a command in the existing container |
-| `wip run [--no-interactive] COMMAND...` | Run a command in a new `--rm` container |
+| `wip run [--no-interactive] COMMAND...` | Run a command in a new `--rm` container (compose mode: `exec`s into `compose.service` instead) |
 | `wip shell` | Open the configured shell, falling back to `bash` then `sh` |
+| `wip logs [-f] [SERVICE...]` | Follow compose service logs (compose mode only) |
 | `wip NAME ARGS...` | Run `commands.NAME`, appending any extra arguments |
 
 TTY allocation is decided by combining the command's config, the CLI option, and whether both
@@ -243,49 +283,39 @@ checklist.
 
 ## Not in the initial release
 
-Full Compose compatibility (multiple networks, `depends_on` ordering/health checks, profiles), a
-resident/daemon process, a GUI, PowerShell-specific tuning, direct registry API/manifest parsing,
-self-update, and plugins are all unimplemented.
+Full Compose compatibility isn't reimplemented in `wip` itself, but is available by delegating to
+a third-party compose-for-`wslc` tool — see [Compose mode](#compose-mode). A resident/daemon
+process, a GUI, PowerShell-specific tuning, direct registry API/manifest parsing, self-update, and
+plugins are all unimplemented.
 
 ## Roadmap
 
 `wip` already covers most of what [`dip`](https://github.com/bibendi/dip) adds on top of Compose —
 named commands (`commands:`), `run`/`exec` hidden behind a single verb, `.env` passthrough, and
-sidecar services via `dependencies:` + `defaults.network`. The gaps that remain are mostly on the
-Compose side: multi-service orchestration is still per-container rather than declarative and
-project-scoped. Planned next, roughly in priority order:
+sidecar services via `dependencies:` + `defaults.network`. Full Compose semantics
+(`depends_on` ordering/health checks, log aggregation, named volumes, profiles, scaling) are now
+handled by delegating to a separate compose-for-`wslc` tool in [compose mode](#compose-mode)
+rather than being reimplemented in `wip` itself — see that section for what compose mode covers
+and its current limitations (`run`, and `commands:` of type `run`/`build`). What's still planned
+for `wip`, roughly in priority order:
 
-1. **`depends_on`-style startup ordering & health checks** — `wip up` currently starts
-   `dependencies` in declaration order with no readiness gate. Add an optional `depends_on` /
-   `healthcheck` per dependency (e.g. poll a TCP port or exec a command) so `wip up` can wait for
-   `mysql` before starting `app`, instead of racing.
-2. **`wip logs [-f] [NAME...]`** — aggregate output from the main container and any dependencies,
-   the most-missed single Compose command when working with sidecars.
-3. **`wip provision`** — a dip-style one-shot bootstrap hook (build → up deps → install deps →
+1. **`wip provision`** — a dip-style one-shot bootstrap hook (build → up deps → install deps →
    create/migrate/seed DB) so a new contributor can go from `git clone` to a working environment
    in two commands (`wip provision && wip up`).
-4. **Profiles** — an optional `profiles:` tag on `dependencies` entries plus `wip up --profile
-   NAME`, so debug-only sidecars (mailpit, a queue UI, ...) don't start by default.
-5. **Config file merging** — `--config` currently accepts one file; support layering
+2. **Config file merging** — `--config` currently accepts one file; support layering
    (`wip.yml` + `wip.override.yml`, or a `WIP_CONFIG` list) for dev/CI/debug variants without
    duplicating the whole file, plus a `wip config --resolved` view of the merged result.
-6. **Named volume helpers** — `wip volumes ls|rm` for volumes declared under `dependencies`, so
-   they're discoverable/removable without dropping to raw `wslc`/`docker` commands.
-7. **Service scaling** — a `--scale NAME=N` flag for `wip up`, mirroring `docker compose up
-   --scale`, for dependencies that can safely run more than one instance.
-8. **Bind-mount boot time (`rails c`, `bundle`, ...)** — commands like `wip rails c` still start
+3. **Bind-mount boot time (`rails c`, `bundle`, ...)** — commands like `wip rails c` still start
    noticeably slower than the equivalent under `docker compose`, mostly from WSL2 bind-mounted
    (`.:/app`-style) volumes doing many small reads for gems/`node_modules` (use `--debug` to
    confirm it's disk I/O and not `wip`'s own overhead). This isn't really `wip`'s responsibility —
-   the fix has to come from either the mount layer or the project's own volume layout — but `wip`
-   can still push in that direction: e.g. a documented pattern (or config shorthand) for routing
-   `vendor/bundle`/`node_modules` through a named volume instead of the bind mount, once named
-   volume support (item 6) exists. We're also hoping for improvements on the `wslc` side itself
-   (faster bind-mount/cache behavior); `wip` will pick those up for free as soon as they land.
+   the fix has to come from either the mount layer or the project's own volume layout. We're also
+   hoping for improvements on the `wslc` side itself (faster bind-mount/cache behavior); `wip`
+   will pick those up for free as soon as they land.
 
 Each of these should stay additive to the existing `wip.yml` shape — no breaking changes to
-`defaults`, `commands`, or `dependencies` are planned. Full N-network topologies, a resident
-daemon, and a GUI remain out of scope; see "Not in the initial release" above.
+`defaults`, `commands`, `dependencies`, or `compose` are planned. A resident daemon and a GUI
+remain out of scope; see "Not in the initial release" above.
 
 ## License
 

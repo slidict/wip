@@ -20,6 +20,12 @@ module Wip
     def up_command = @raw.dig('up', 'command')
     def dependencies = @raw['dependencies'] || {}
     def network = defaults['network']
+    def compose = @raw['compose']
+    def compose? = !!compose
+    def compose_service = compose && compose['service']
+    def compose_file = compose && compose['file']
+    def compose_project = compose && compose['project']
+    def compose_command = compose && compose['command']
 
     def command(name)
       entry = commands[name.to_s]
@@ -37,7 +43,7 @@ module Wip
 
     def to_h(redact: true)
       value = { 'version' => 1, 'wslc' => { 'command' => wslc_command }, 'defaults' => defaults,
-                'up' => { 'command' => up_command }, 'dependencies' => dependencies,
+                'up' => { 'command' => up_command }, 'dependencies' => dependencies, 'compose' => compose,
                 'commands' => commands.transform_values { |entry| defaults.merge('type' => 'exec').merge(entry) } }
       redact ? redact_secrets(value) : value
     end
@@ -50,6 +56,7 @@ module Wip
 
       validate_commands!
       validate_dependencies!
+      validate_compose!
     end
 
     def validate_commands!
@@ -62,6 +69,15 @@ module Wip
       raise ConfigError, 'dependencies must be a mapping' unless dependencies.is_a?(Hash)
 
       dependencies.each { |name, entry| validate_dependency!(name, entry) }
+    end
+
+    def validate_compose!
+      return unless @raw.key?('compose')
+      raise ConfigError, 'compose must be a mapping' unless compose.is_a?(Hash)
+      raise ConfigError, 'compose.service must not be empty' if compose_service.to_s.empty?
+      raise ConfigError, 'compose.command must not be empty' if compose_command.to_s.empty?
+      raise ConfigError, 'compose is mutually exclusive with dependencies' if dependencies.any?
+      raise ConfigError, 'compose is mutually exclusive with defaults.network' if network
     end
 
     def validate_command!(name, entry)

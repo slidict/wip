@@ -10,6 +10,8 @@ Metrics/AbcSize:
   Max: 25
 Metrics/ClassLength:
   Max: 160
+  Exclude:
+    - lib/wip/cli.rb
 Metrics/BlockLength:
   Exclude:
     - spec/**/*
