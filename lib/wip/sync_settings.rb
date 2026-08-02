@@ -16,9 +16,14 @@ module Wip
     DEFAULT_TARGET = '/app'
     DEFAULT_BINARY = 'rsync'
     DEFAULT_INTERVAL = 2
-    # -a preserves modes and timestamps so file watchers and bundler see a
-    # faithful copy rather than a tree that looks freshly written every sync.
-    BASE_OPTIONS = %w[-a].freeze
+    # Minimal set for a fast local-to-local mirror: -r walks the tree, -l
+    # keeps symlinks as symlinks, -t preserves mtimes so re-syncs can quick-
+    # check (size+mtime) instead of re-transferring unchanged files, and
+    # --whole-file skips the delta-transfer checksum pass that only pays off
+    # over a slow network. Owner/group/perm preservation (-o -g -p, part of
+    # -a) is left out since both sides are the same user; add them back via
+    # sync.options if a project needs them.
+    BASE_OPTIONS = %w[-r -l -t --whole-file].freeze
     # Trailing mount options wslc/docker accept after the container path.
     VOLUME_MODES = %w[ro rw z Z cached delegated consistent].freeze
 
