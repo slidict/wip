@@ -9,6 +9,7 @@ RSpec.describe Wip::CLI do
     Dir.mktmpdir do |dir|
       File.write(File.join(dir, 'wip.yml'), <<~YAML)
         version: 1
+        container: app
         dependencies:
           app:
             image: example:dev
@@ -90,6 +91,7 @@ RSpec.describe Wip::CLI do
   it 'creates the network and dependencies before bringing up the main container' do
     File.write('wip.yml', <<~YAML)
       version: 1
+      container: app
       network: app-tier
       dependencies:
         app:
@@ -140,6 +142,7 @@ RSpec.describe Wip::CLI do
   it 'auto-loads .env next to wip.yml and injects it as container env, without overriding wip.yml env' do
     File.write('wip.yml', <<~YAML)
       version: 1
+      container: app
       dependencies:
         app:
           image: example:dev
@@ -170,6 +173,7 @@ RSpec.describe Wip::CLI do
     before do
       File.write('wip.yml', <<~YAML)
         version: 1
+        container: app
         dependencies:
           app:
             image: example:dev
@@ -231,6 +235,7 @@ RSpec.describe Wip::CLI do
     it 'uses a throwaway container when sync.mode: run is configured' do
       File.write('wip.yml', <<~YAML)
         version: 1
+        container: app
         dependencies:
           app:
             image: example:dev
@@ -243,6 +248,61 @@ RSpec.describe Wip::CLI do
       expect(runner).to receive(:run).with(a_collection_including('--rm', 'rsync'), interactive: false).and_return(0)
 
       described_class.start(%w[sync])
+    end
+
+    it 'builds the sync.build image once before mirroring, using it over the primary dependency' do
+      File.write('wip.yml', <<~YAML)
+        version: 1
+        container: app
+        dependencies:
+          app:
+            image: example:dev
+        sync:
+          mode: run
+          build:
+            dockerfile: |
+              FROM alpine:latest
+              RUN apk add --no-cache rsync
+      YAML
+      runner = stub_runner('')
+      expect(runner).to receive(:run).with(a_collection_including('build', '-t', 'wip-sync-app:latest'),
+                                           interactive: false).and_return(0).ordered
+      expect(runner).to receive(:run).with(a_collection_including('--rm', 'wip-sync-app:latest', 'rsync'),
+                                           interactive: false).and_return(0).ordered
+
+      described_class.start(%w[sync])
+    end
+
+    it 'builds sync.build once per --watch run, not on every tick' do
+      File.write('wip.yml', <<~YAML)
+        version: 1
+        container: app
+        dependencies:
+          app:
+            image: example:dev
+        sync:
+          mode: run
+          build:
+            dockerfile: FROM alpine:latest
+      YAML
+      runner = stub_runner('')
+      builds = 0
+      allow(runner).to receive(:run).with(a_collection_including('build'), interactive: false) do
+        builds += 1
+        0
+      end
+      syncs = 0
+      allow(runner).to receive(:run).with(a_collection_including('--rm', 'rsync'), interactive: false) do
+        syncs += 1
+        raise Interrupt if syncs == 2
+
+        0
+      end
+
+      described_class.start(%w[sync --watch --interval 0.01])
+
+      expect(builds).to eq(1)
+      expect(syncs).to eq(2)
     end
 
     it 'keeps mirroring on an interval with --watch until interrupted' do
@@ -261,7 +321,7 @@ RSpec.describe Wip::CLI do
     end
 
     it 'requires a sync block' do
-      File.write('wip.yml', "version: 1\ndependencies:\n  app:\n    image: example:dev\n")
+      File.write('wip.yml', "version: 1\ncontainer: app\ndependencies:\n  app:\n    image: example:dev\n")
 
       expect { described_class.start(%w[sync]) }.to raise_error(Wip::ConfigError, /needs a sync: block/)
     end
@@ -276,6 +336,7 @@ RSpec.describe Wip::CLI do
     it 'points at `wip dispatch` when wip.yml defines a command the built-in shadows' do
       File.write('wip.yml', <<~YAML)
         version: 1
+        container: app
         dependencies:
           app:
             image: example:dev
@@ -299,6 +360,7 @@ RSpec.describe Wip::CLI do
     File.write('Dockerfile', "FROM scratch\n")
     File.write('wip.yml', <<~YAML)
       version: 1
+      container: app
       dependencies:
         app:
           image: example:dev
@@ -366,6 +428,7 @@ RSpec.describe Wip::CLI do
       File.write('wip.yml', <<~YAML)
         version: 1
         mode: compose
+        container: app
         compose:
           service: app
           command: wslc-compose
@@ -445,6 +508,7 @@ RSpec.describe Wip::CLI do
     it 'rejects `wip logs` outside compose mode' do
       File.write('wip.yml', <<~YAML)
         version: 1
+        container: app
         dependencies:
           app:
             image: example:dev

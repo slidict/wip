@@ -32,7 +32,7 @@ module Wip
     # compose owns its own services' mounts and never guarantees that shape.
     SYNC_MODES = %w[exec run].freeze
 
-    attr_reader :target, :mount, :volume, :exclude, :binary, :extra_options, :interval, :mode, :image
+    attr_reader :target, :mount, :volume, :exclude, :binary, :extra_options, :interval, :mode, :image, :build
 
     def initialize(raw, base: nil, workdir: nil, container: nil, compose: false)
       raise ConfigError, 'sync must be a mapping' unless raw.is_a?(Hash)
@@ -40,6 +40,7 @@ module Wip
       @base = base
       assign_paths(raw, workdir: workdir, container: container)
       assign_mirror(raw)
+      assign_build(raw)
       assign_mode(raw, compose: compose)
       validate!
     end
@@ -76,7 +77,7 @@ module Wip
     def to_h
       { 'source' => source, 'target' => target, 'mount' => mount, 'volume' => volume,
         'delete' => delete?, 'exclude' => exclude, 'command' => binary, 'options' => extra_options,
-        'interval' => interval, 'mode' => mode, 'image' => image }
+        'interval' => interval, 'mode' => mode, 'image' => image, 'build' => build }
     end
 
     private
@@ -85,7 +86,8 @@ module Wip
       @raw_source = presence(raw['source']) || '.'
       @target = presence(raw['target']) || presence(workdir) || DEFAULT_TARGET
       @mount = presence(raw['mount']) || DEFAULT_MOUNT
-      @volume = presence(raw['volume']) || "#{presence(container) || 'wip'}-src"
+      @container_name = presence(container) || 'wip'
+      @volume = presence(raw['volume']) || "#{@container_name}-src"
     end
 
     def assign_mirror(raw)
@@ -96,12 +98,29 @@ module Wip
       @interval = raw.key?('interval') ? raw['interval'] : DEFAULT_INTERVAL
     end
 
+    # sync.build lets wip build a small, dedicated mirror image itself (e.g. alpine
+    # + rsync) instead of requiring one to already exist — handy since sync.mode:
+    # run boots a fresh container per mirror and reusing the app's full image just
+    # adds startup overhead for something that only ever runs rsync.
+    def assign_build(raw)
+      build = raw['build']
+      @build = nil
+      return unless build
+
+      raise ConfigError, 'sync.build must be a mapping' unless build.is_a?(Hash)
+
+      dockerfile = presence(build['dockerfile'])
+      raise ConfigError, 'sync.build.dockerfile must not be empty' unless dockerfile
+
+      @build = { 'dockerfile' => dockerfile, 'tag' => presence(build['tag']) || "wip-sync-#{@container_name}:latest" }
+    end
+
     def assign_mode(raw, compose:)
       @mode = presence(raw['mode']) || (compose ? 'run' : 'exec')
       @image = presence(raw['image'])
       raise ConfigError, "sync.mode must be one of #{SYNC_MODES.join(', ')}" unless SYNC_MODES.include?(@mode)
 
-      validate_image!(compose)
+      validate_image_source!(compose)
       return unless compose && exec?
 
       raise ConfigError, 'sync.mode: exec needs mode: container (compose owns its services’ mounts, ' \
@@ -109,12 +128,13 @@ module Wip
     end
 
     # compose mode has no dependencies: entry to fall back to for the mirror
-    # container's image, so sync.image can't be left implicit there.
-    def validate_image!(compose)
-      return if !compose || @image
+    # container's image, so it can't be left implicit there — sync.image or
+    # sync.build must name one explicitly.
+    def validate_image_source!(compose)
+      return if !compose || @image || @build
 
-      raise ConfigError, 'sync.image is required under mode: compose (there’s no dependencies: entry ' \
-                         'to borrow the mirror container’s image from)'
+      raise ConfigError, 'sync.image or sync.build is required under mode: compose (there’s no ' \
+                         'dependencies: entry to borrow the mirror container’s image from)'
     end
 
     def validate!

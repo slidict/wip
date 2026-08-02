@@ -50,7 +50,8 @@ mode: container # default. This example is container mode end-to-end — see "Co
                 # compose: block instead; the two don't mix within one wip.yml.
 wslc:
   command: auto # tries wslc.exe, wslc, then System32; an absolute path also works
-container: app # optional; which dependencies: entry `up`/`exec`/`run`/`build`/`commands:` target (default: app)
+container: app # required once dependencies: has entries; which one `up`/`exec`/`run`/`build`/`commands:`
+               # target. No default — a project must say which entry is the primary one explicitly.
 network: app-tier # optional; shared by every dependencies: entry so containers can resolve each other by name
 dependencies:
   app: # container: points here — the one container wip execs into and runs commands in
@@ -129,10 +130,11 @@ directly with no copying.
 
 ### Dependency containers
 
-`dependencies:` holds every container uniformly — the primary one `container:` points at (`app`
-by default) and any sidecar services (a database, Redis, ...) alongside it. Each entry accepts
-`image` (required), `command`, `env`, `ports`, `volumes`, and `workdir`; there's no separate,
-differently-shaped block for "the one you exec into."
+`dependencies:` holds every container uniformly — the primary one `container:` points at and any
+sidecar services (a database, Redis, ...) alongside it. Each entry accepts `image` (required),
+`command`, `env`, `ports`, `volumes`, and `workdir`; there's no separate, differently-shaped block
+for "the one you exec into." `container:` has no default; once `dependencies:` has any entries,
+wip needs to be told explicitly which one is primary rather than guessing a name.
 
 What sets the primary entry apart is operational, not structural: `wip up` brings up every other
 entry by name first (creating `network:` beforehand if it doesn't exist and set), then boots or
@@ -167,9 +169,16 @@ sync:
   interval: 2        # seconds between syncs for `wip sync --watch` (default: 2)
   mode: exec         # exec (mirror inside the running container) or run (a throwaway one);
                       # default: exec for `mode: container`, run for `mode: compose`
-  image: null        # image for the mirror container; required under mode: compose (there's no
-                      # dependencies: entry to borrow one from there), unused under mode: container
-                      # unless set (falls back to the primary container's own image)
+  image: null        # image for the mirror container; unused under mode: container unless set
+                      # (falls back to the primary container's own image). Under mode: compose,
+                      # one of image or build is required (there's no dependencies: entry to fall
+                      # back to)
+  build:              # optional; has wip build the mirror image itself instead of requiring one to
+                       # already exist. build.tag wins over image if both are set.
+    dockerfile: |
+      FROM alpine:latest
+      RUN apk add --no-cache rsync
+    tag: null          # optional (default: "wip-sync-<container>:latest")
 ```
 
 Everything below `sync:` is optional — `sync: {}` alone already works. With it in place:
@@ -187,6 +196,8 @@ Everything below `sync:` is optional — `sync: {}` alone already works. With it
 - `wip sync --watch [--interval N]` keeps re-syncing until Ctrl-C, so host edits reach the
   container with a short delay. Run it in a second terminal alongside `wip up -d`.
 - `wip doctor` reports the resolved source, volume, and target, and fails if the source is missing.
+- With `sync.build` configured, `wip build`s that image once per `wip up`/`wip sync` invocation
+  (including once before a `--watch` loop starts, not on every tick) before mirroring with it.
 
 Like every built-in command, `wip sync` takes precedence over a `commands:` entry of the same
 name; wip says so and points at `wip dispatch sync`, which still runs yours.
@@ -215,13 +226,32 @@ or set `delete: false`.
   the compose service directly.
 - `sync.mode` defaults to `run` and can't be set to `exec` (only a container wip itself booted is
   guaranteed to have the read-only source mount attached, which compose services never do), and
-  `sync.image` becomes required, since that disposable container needs an image from somewhere —
-  under `mode: container` it borrows the primary `dependencies:` entry's image, but compose mode
-  has no such entry to borrow from.
+  `sync.image` or `sync.build` becomes required, since that disposable container needs an image
+  from somewhere — under `mode: container` it borrows the primary `dependencies:` entry's image,
+  but compose mode has no such entry to borrow from.
 
 `wip up`'s pre-boot mirror (and the `--no-sync` flag that skips it) works the same way under
 `mode: compose` as it does otherwise: the source is mirrored into the volume before
 `compose up` starts the service that mounts it.
+
+Since `sync.mode: run` boots a fresh container on every mirror, reusing your app's full image here
+just adds startup overhead for something that only ever runs `rsync`. A dedicated, minimal image is
+worth it — `wip` doesn't publish or default to one itself (same reasoning as `compose.command`:
+picking a specific third-party image for you isn't its call to make), but `sync.build` covers it
+without needing to manage a separate image yourself:
+
+```yaml
+sync:
+  build:
+    dockerfile: |
+      FROM alpine:latest
+      RUN apk add --no-cache rsync
+```
+
+wip builds this once per `wip up`/`wip sync` invocation (not on every `--watch` tick — see above)
+and uses the result, tagged `wip-sync-<container>:latest` by default (`build.tag` overrides it).
+Prefer managing the image yourself instead? Build and tag it however you like, then set `sync.image`
+to that tag directly — `sync.build`'s tag wins if both are set, so don't configure both at once.
 
 ### Compose mode
 
@@ -274,7 +304,7 @@ found, its version, and which compose file `wip` resolved.
 | `wip doctor` | Diagnose WSL2, interop, WSLC, config, architecture, and Git |
 | `wip config` | Print the effective configuration (secrets masked) |
 | `wip build -- --no-cache` | Build the image from the `build` definition |
-| `wip up [-d] [--no-sync]` | Start the primary `dependencies:` entry (`container:`, default `app`) and its sidecars (creating any that are missing, on `network:` if set). `-d` runs the main container in the background; with `sync:` configured, the source is mirrored into the volume first unless `--no-sync` |
+| `wip up [-d] [--no-sync]` | Start the primary `dependencies:` entry (`container:` names which one) and its sidecars (creating any that are missing, on `network:` if set). `-d` runs the main container in the background; with `sync:` configured, the source is mirrored into the volume first unless `--no-sync` |
 | `wip down` | Stop and remove the primary container and its sidecar `dependencies:` |
 | `wip exec [--no-interactive] COMMAND...` | Run a command in the existing container |
 | `wip run [--no-interactive] COMMAND...` | Run a command in a new `--rm` container (compose mode: `exec`s into `compose.service` instead) |

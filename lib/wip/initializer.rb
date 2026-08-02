@@ -11,9 +11,10 @@ module Wip
     CONTAINER_TEMPLATE = <<~YAML
       version: 1
       mode: container
+      container: app # TODO: rename freely, as long as it matches a key under dependencies: below
 
       dependencies:
-        app: # TODO: this is the container wip creates, execs into, and runs commands in
+        app: # this is the container wip creates, execs into, and runs commands in
           image: your/image:tag # TODO: image to run
           workdir: /app # TODO: adjust to match your image, or delete this line
 
@@ -40,6 +41,8 @@ module Wip
       <<~YAML
         version: 1
         mode: compose
+        container: app # TODO: rename freely; only used to name sync's volume ("<container>-src"),
+                        # since compose.yml — not dependencies: — owns this service's own definition
 
         compose:
           service: app # TODO: which service in #{compose_file} wip run/exec/NAME target
@@ -49,9 +52,9 @@ module Wip
       YAML
     end
 
-    # sync: needs sync.image (mode: compose has no dependencies: entry to borrow one from) and a
-    # named volume the compose service mounts, matching sync.volume ("app-src" by default). Checked
-    # against the detected compose file so the hint doesn't repeat what's already set up.
+    # sync: needs sync.image or sync.build (mode: compose has no dependencies: entry to borrow an
+    # image from) and a named volume the compose service mounts, matching sync.volume ("app-src" by
+    # default). Checked against the detected compose file so the hint doesn't repeat what's set up.
     def sync_hint
       return sync_hint_configured if compose_volume_mounted?
 
@@ -61,14 +64,17 @@ module Wip
     def sync_hint_configured
       <<~COMMENT.chomp
         # #{compose_file} already mounts a volume matching sync.volume's default (app-src).
-        # sync: # add sync.image too (required under mode: compose) — see README
+        # sync: # add sync.build or sync.image too (one's required under mode: compose) — see README
       COMMENT
     end
 
     def sync_hint_todo
       <<~COMMENT.chomp
         # sync: # optional; mirrors the source into a named volume instead of bind-mounting it live
-        #   image: your/image:tag # required under mode: compose (no dependencies: entry to borrow one from)
+        #   build: # required under mode: compose (no dependencies: entry to borrow an image from)
+        #     dockerfile: |
+        #       FROM alpine:latest
+        #       RUN apk add --no-cache rsync
         #   # the service above must also mount a volume named "app-src" (sync.volume's default) at the
         #   # path your app expects — add to #{compose_file}:
         #   #   volumes:
