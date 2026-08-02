@@ -42,12 +42,33 @@ RSpec.describe Wip::Config do
     expect(described_class.new('defaults' => { 'network' => 'app-tier' }).network).to eq('app-tier')
   end
 
+  it 'exposes mode, defaulting to container' do
+    expect(described_class.new({}).mode).to eq('container')
+    expect(described_class.new('mode' => 'compose',
+                               'compose' => { 'service' => 'app', 'command' => 'c' }).mode).to eq('compose')
+  end
+
+  it 'rejects an unknown mode' do
+    expect { described_class.new('mode' => 'nope') }.to raise_error(Wip::ConfigError, /mode must be one of/)
+  end
+
+  it 'requires a compose: block when mode: compose is set' do
+    expect { described_class.new('mode' => 'compose') }
+      .to raise_error(Wip::ConfigError, /mode: compose requires a compose: block/)
+  end
+
+  it 'requires mode: compose when a compose: block is set' do
+    expect { described_class.new('compose' => { 'service' => 'app', 'command' => 'c' }) }
+      .to raise_error(Wip::ConfigError, /a compose: block requires mode: compose/)
+  end
+
   it 'exposes compose settings, defaulting to disabled' do
     config = described_class.new({})
     expect(config.compose?).to be(false)
     expect(config.compose_service).to be_nil
 
-    composed = described_class.new('compose' => { 'service' => 'app', 'file' => 'compose.yml',
+    composed = described_class.new('mode' => 'compose',
+                                   'compose' => { 'service' => 'app', 'file' => 'compose.yml',
                                                   'project' => 'myapp', 'command' => 'my-compose-tool' })
     expect(composed.compose?).to be(true)
     expect(composed.compose_service).to eq('app')
@@ -62,26 +83,29 @@ RSpec.describe Wip::Config do
 
   it 'requires compose.service' do
     expect do
-      described_class.new('compose' => { 'file' => 'compose.yml', 'command' => 'my-compose-tool' })
+      described_class.new('mode' => 'compose',
+                          'compose' => { 'file' => 'compose.yml', 'command' => 'my-compose-tool' })
     end.to raise_error(Wip::ConfigError, /compose\.service must not be empty/)
   end
 
   it 'requires compose.command' do
     expect do
-      described_class.new('compose' => { 'service' => 'app' })
+      described_class.new('mode' => 'compose', 'compose' => { 'service' => 'app' })
     end.to raise_error(Wip::ConfigError, /compose\.command must not be empty/)
   end
 
   it 'rejects compose combined with dependencies' do
     expect do
-      described_class.new('compose' => { 'service' => 'app', 'command' => 'my-compose-tool' },
+      described_class.new('mode' => 'compose',
+                          'compose' => { 'service' => 'app', 'command' => 'my-compose-tool' },
                           'dependencies' => { 'redis' => { 'image' => 'redis:latest' } })
     end.to raise_error(Wip::ConfigError, /compose is mutually exclusive with dependencies/)
   end
 
   it 'rejects compose combined with defaults.network' do
     expect do
-      described_class.new('compose' => { 'service' => 'app', 'command' => 'my-compose-tool' },
+      described_class.new('mode' => 'compose',
+                          'compose' => { 'service' => 'app', 'command' => 'my-compose-tool' },
                           'defaults' => { 'network' => 'app-tier' })
     end.to raise_error(Wip::ConfigError, /compose is mutually exclusive with defaults\.network/)
   end
@@ -102,10 +126,19 @@ RSpec.describe Wip::Config do
     expect(config.sync.volume).to eq('web-src')
   end
 
-  it 'rejects sync combined with compose' do
+  it 'allows sync alongside compose, defaulting sync.mode to run' do
+    config = described_class.new('mode' => 'compose',
+                                 'compose' => { 'service' => 'app', 'command' => 'my-compose-tool' },
+                                 'sync' => {})
+    expect(config.sync.mode).to eq('run')
+  end
+
+  it 'rejects sync.mode: exec alongside compose' do
     expect do
-      described_class.new('compose' => { 'service' => 'app', 'command' => 'my-compose-tool' }, 'sync' => {})
-    end.to raise_error(Wip::ConfigError, /sync is mutually exclusive with compose/)
+      described_class.new('mode' => 'compose',
+                          'compose' => { 'service' => 'app', 'command' => 'my-compose-tool' },
+                          'sync' => { 'mode' => 'exec' })
+    end.to raise_error(Wip::ConfigError, /sync\.mode: exec needs mode: container/)
   end
 
   it 'includes the resolved sync settings in the effective configuration' do

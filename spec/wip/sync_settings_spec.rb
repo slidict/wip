@@ -51,4 +51,19 @@ RSpec.describe Wip::SyncSettings do
     expect { described_class.new({ 'interval' => 0 }) }.to raise_error(Wip::ConfigError, /positive number/)
     expect { described_class.new('nope') }.to raise_error(Wip::ConfigError, /must be a mapping/)
   end
+
+  it 'defaults mode to exec outside compose, and to run under compose' do
+    expect(described_class.new({}).mode).to eq('exec')
+    expect(described_class.new({}, compose: true).mode).to eq('run')
+  end
+
+  it 'lets sync.mode override the default explicitly' do
+    expect(described_class.new({ 'mode' => 'run' }).mode).to eq('run')
+  end
+
+  it 'rejects an unknown sync.mode and exec under compose' do
+    expect { described_class.new({ 'mode' => 'nope' }) }.to raise_error(Wip::ConfigError, /sync.mode must be one of/)
+    expect { described_class.new({ 'mode' => 'exec' }, compose: true) }
+      .to raise_error(Wip::ConfigError, /sync.mode: exec needs mode: container/)
+  end
 end

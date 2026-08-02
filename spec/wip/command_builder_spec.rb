@@ -147,10 +147,6 @@ RSpec.describe Wip::CommandBuilder do
                                          /host-src/ /app/])
     end
 
-    it 'builds a running-only find query' do
-      expect(builder.find_running).to eq(%w[wslc.exe list --filter name=app --format json])
-    end
-
     it 'raises when sync commands are built without a sync block' do
       expect { described_class.new(wslc: 'wslc.exe', config: config, environment: environment).sync_run }
         .to raise_error(Wip::ConfigError, /No sync: block/)

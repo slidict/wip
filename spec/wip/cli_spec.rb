@@ -215,9 +215,8 @@ RSpec.describe Wip::CLI do
       described_class.start(%w[up -d --no-sync])
     end
 
-    it 'runs a one-shot mirror inside the container when it is already running' do
-      runner = stub_runner('[{"Name":"app"}]')
-      allow(runner).to receive(:run).with(%w[wslc.exe list --filter name=app --format json]).and_return(0)
+    it 'runs a one-shot mirror inside the running container (sync.mode: exec, the default)' do
+      runner = stub_runner('')
       expect(runner).to receive(:run).with(
         %w[wslc.exe exec app rsync -r -l -t --whole-file --delete --exclude=.git /host-src/ /app/],
         interactive: false
@@ -226,17 +225,25 @@ RSpec.describe Wip::CLI do
       described_class.start(%w[sync])
     end
 
-    it 'falls back to a throwaway container when the app container is not running' do
-      runner = stub_runner('[]')
-      allow(runner).to receive(:run).with(%w[wslc.exe list --filter name=app --format json]).and_return(0)
+    it 'uses a throwaway container when sync.mode: run is configured' do
+      File.write('wip.yml', <<~YAML)
+        version: 1
+        defaults:
+          container: app
+          image: example:dev
+        sync:
+          exclude:
+            - .git
+          mode: run
+      YAML
+      runner = stub_runner('')
       expect(runner).to receive(:run).with(a_collection_including('--rm', 'rsync'), interactive: false).and_return(0)
 
       described_class.start(%w[sync])
     end
 
     it 'keeps mirroring on an interval with --watch until interrupted' do
-      runner = stub_runner('[{"Name":"app"}]')
-      allow(runner).to receive(:run).with(%w[wslc.exe list --filter name=app --format json]).and_return(0)
+      runner = stub_runner('')
       syncs = 0
       allow(runner).to receive(:run).with(a_collection_including('rsync'), interactive: false) do
         syncs += 1
@@ -324,6 +331,7 @@ RSpec.describe Wip::CLI do
       Dir.mktmpdir do |dir|
         File.write(File.join(dir, 'wip.yml'), <<~YAML)
           version: 1
+          mode: compose
           compose:
             service: app
             command: wslc-compose

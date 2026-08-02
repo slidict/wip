@@ -44,6 +44,7 @@ Put a `wip.yml` in your project root. Running from a subdirectory walks up to fi
 
 ```yaml
 version: 1
+mode: container # or compose; picks the orchestration path `up`/`down`/`sync`/etc. take (default: container)
 wslc:
   command: auto # tries wslc.exe, wslc, then System32; an absolute path also works
 defaults:
@@ -156,6 +157,8 @@ sync:
   command: rsync     # binary that does the mirroring (default: rsync)
   options: []        # extra flags appended to the rsync invocation
   interval: 2        # seconds between syncs for `wip sync --watch` (default: 2)
+  mode: exec         # exec (mirror inside the running container) or run (a throwaway one);
+                      # default: exec for `mode: container`, run for `mode: compose`
 ```
 
 Everything below `sync:` is optional — `sync: {}` alone already works. With it in place:
@@ -166,8 +169,10 @@ Everything below `sync:` is optional — `sync: {}` alone already works. With it
   `dependencies:` keep mounting whatever they declare.
 - `wip up` mirrors the source into the volume before the container boots; `wip up --no-sync`
   skips that step.
-- `wip sync` mirrors on demand — `wslc exec`ing rsync inside the container when it's running, and
-  falling back to a throwaway container with the same mounts when it isn't.
+- `wip sync` mirrors on demand: `sync.mode: exec` (the default under `mode: container`) execs
+  rsync inside the already-running container; `sync.mode: run` always uses a throwaway container
+  with the same mounts instead. Which one runs is fixed by config, not guessed at from whether a
+  container happens to be up.
 - `wip sync --watch [--interval N]` keeps re-syncing until Ctrl-C, so host edits reach the
   container with a short delay. Run it in a second terminal alongside `wip up -d`.
 - `wip doctor` reports the resolved source, volume, and target, and fails if the source is missing.
@@ -181,8 +186,11 @@ image already has. And the mirror is one-way (host → volume): anything the app
 `target` is removed by the next `--delete` pass unless you `exclude` it, give it its own volume,
 or set `delete: false`.
 
-`sync:` is mutually exclusive with `compose:` — in compose mode the compose file owns the volume
-layout.
+`sync:` works alongside `mode: compose` too. Compose still owns the volume layout — a compose
+service must mount the same named volume `sync.volume` names — but wip's mirror runs as its own
+throwaway container (`sync.mode` defaults to `run` and can't be set to `exec` under `mode:
+compose`, since only a container wip itself booted is guaranteed to have the read-only source
+mount attached).
 
 ### Compose mode
 
@@ -191,6 +199,7 @@ If your project already has a real `compose.yml`, don't duplicate it in `depende
 
 ```yaml
 version: 1
+mode: compose              # required to enable compose mode; a compose: block with no mode: compose is an error
 compose:
   service: app             # required: which compose service wip run/exec/NAME target
   command: wslc-compose    # required: the compose-for-wslc binary/path you have installed

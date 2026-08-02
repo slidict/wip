@@ -271,14 +271,13 @@ module Wip
            "run it with `wip dispatch #{name}`"
     end
 
-    # Inside the running container the mirror is a plain `exec`; otherwise it
-    # takes a throwaway container that mounts the same source and volume.
+    # sync.mode picks the path explicitly (default: exec for mode: container,
+    # run for mode: compose) rather than probing whether a container happens
+    # to be running under a matching name.
     def run_sync(exit_on_failure: true)
-      command = container_running? ? builder.sync_exec : builder.sync_run
+      command = sync_settings!.exec? ? builder.sync_exec : builder.sync_run
       execute(command, exit_on_failure: exit_on_failure)
     end
-
-    def container_running? = resource_exists?(builder.find_running)
 
     def sync_before_boot
       settings = load_config.sync
