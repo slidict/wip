@@ -30,7 +30,9 @@ RSpec.describe Wip::DebugReporter do
       reporter.step('interactive work', live: false) { :done }
 
       expect(out.string).to match(%r{streaming resource snapshots to #{Regexp.escape(dir)}/wip-debug-.*\.log})
-      expect(Dir.glob(File.join(dir, 'wip-debug-*.log'))).not_to be_empty
+      log = Dir.glob(File.join(dir, 'wip-debug-*.log')).first
+      expect(log).not_to be_nil
+      expect(File.stat(log).mode & 0o777).to eq(0o600)
     end
   end
 

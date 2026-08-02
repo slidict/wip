@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'tmpdir'
+require 'tempfile'
 
 module Wip
   # Prints each step wip takes and how long it took, when debug mode is enabled.
@@ -45,8 +46,10 @@ module Wip
       return open_log(@log, "streaming resource snapshots to #{@log}") if @log
       return nil if live
 
-      path = File.join(Dir.tmpdir, "wip-debug-#{Process.pid}-#{Time.now.to_i}.log")
-      open_log(path, "command owns the terminal; streaming resource snapshots to #{path}")
+      file = Tempfile.new(['wip-debug-', '.log'])
+      file.sync = true
+      @out.puts "wip: [debug] command owns the terminal; streaming resource snapshots to #{file.path}"
+      file
     end
 
     def open_log(path, notice)
