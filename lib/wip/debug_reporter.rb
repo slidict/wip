@@ -46,7 +46,11 @@ module Wip
       return open_log(@log, "streaming resource snapshots to #{@log}") if @log
       return nil if live
 
-      file = Tempfile.new(['wip-debug-', '.log'])
+      # `Tempfile.create`, unlike `Tempfile.new`, leaves the file on disk after
+      # we close it, so the path printed just below is still there to read.
+      # It still creates with O_EXCL and 0600, which is what stops a
+      # predictable name in a shared /tmp from being pre-created as a symlink.
+      file = Tempfile.create(['wip-debug-', '.log'])
       file.sync = true
       @out.puts "wip: [debug] command owns the terminal; streaming resource snapshots to #{file.path}"
       file
