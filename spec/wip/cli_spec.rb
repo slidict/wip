@@ -198,4 +198,85 @@ RSpec.describe Wip::CLI do
     expect(dockerfile_present).to be true
     expect(node_modules_present).to be false
   end
+
+  context 'in compose mode' do
+    around do |example|
+      Dir.mktmpdir do |dir|
+        File.write(File.join(dir, 'wip.yml'), <<~YAML)
+          version: 1
+          compose:
+            service: app
+            command: wslc-compose
+        YAML
+        File.write(File.join(dir, 'compose.yml'), "services:\n  app:\n    image: example:dev\n")
+        Dir.chdir(dir) { example.run }
+      end
+    end
+
+    let(:compose_file) { File.expand_path('compose.yml') }
+
+    before do
+      allow(Wip::CommandResolver).to receive(:new) do |**kwargs|
+        command = kwargs[:label] == 'compose command' ? 'wslc-compose' : 'wslc.exe'
+        instance_double(Wip::CommandResolver, resolve: command)
+      end
+    end
+
+    it 'delegates up to wslc-compose' do
+      runner = instance_double(Wip::CommandRunner, run: 0)
+      allow(Wip::CommandRunner).to receive(:new).and_return(runner)
+      expect(runner).to receive(:run).with(['wslc-compose', '-f', compose_file, 'up', '-d'],
+                                           interactive: false).and_return(0)
+
+      described_class.start(%w[up -d])
+    end
+
+    it 'attaches to an un-detached compose up when the terminal is interactive' do
+      allow(Wip::Environment).to receive(:new).and_return(instance_double(Wip::Environment, interactive?: true))
+      runner = instance_double(Wip::CommandRunner, run: 0)
+      allow(Wip::CommandRunner).to receive(:new).and_return(runner)
+      expect(runner).to receive(:run).with(['wslc-compose', '-f', compose_file, 'up'],
+                                           interactive: true).and_return(0)
+
+      described_class.start(%w[up])
+    end
+
+    it 'delegates down to wslc-compose' do
+      runner = instance_double(Wip::CommandRunner, run: 0)
+      allow(Wip::CommandRunner).to receive(:new).and_return(runner)
+      expect(runner).to receive(:run).with(['wslc-compose', '-f', compose_file, 'down'],
+                                           interactive: false).and_return(0)
+
+      described_class.start(%w[down])
+    end
+
+    it 'delegates exec to the configured compose service' do
+      runner = instance_double(Wip::CommandRunner, run: 0)
+      allow(Wip::CommandRunner).to receive(:new).and_return(runner)
+      expect(runner).to receive(:run).with(['wslc-compose', '-f', compose_file, 'exec', 'app', 'bin/rails', 'c'],
+                                           interactive: false).and_return(0)
+
+      described_class.start(%w[exec bin/rails c])
+    end
+
+    it 'delegates logs to wslc-compose' do
+      runner = instance_double(Wip::CommandRunner, run: 0)
+      allow(Wip::CommandRunner).to receive(:new).and_return(runner)
+      expect(runner).to receive(:run).with(['wslc-compose', '-f', compose_file, 'logs', '-f'],
+                                           interactive: true).and_return(0)
+
+      described_class.start(%w[logs])
+    end
+
+    it 'rejects `wip logs` outside compose mode' do
+      File.write('wip.yml', <<~YAML)
+        version: 1
+        defaults:
+          container: app
+          image: example:dev
+      YAML
+
+      expect { described_class.start(%w[logs]) }.to raise_error(Wip::ConfigError, /compose mode/)
+    end
+  end
 end

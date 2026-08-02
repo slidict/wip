@@ -4,6 +4,7 @@ require 'thor'
 require 'yaml'
 require 'json'
 require 'stringio'
+require 'shellwords'
 
 module Wip
   # Thor-based command-line interface for wip.
@@ -63,6 +64,10 @@ module Wip
     desc 'up', 'Start the configured container and its dependencies, creating them if necessary'
     option :detach, type: :boolean, default: false, aliases: '-d'
     def up
+      if load_config.compose?
+        return execute(compose_bridge.up(detach: options[:detach]), interactive: tty?(!options[:detach]))
+      end
+
       ensure_network
       load_config.dependencies.each_key { |name| ensure_dependency(name) }
       ensure_container
@@ -70,6 +75,8 @@ module Wip
 
     desc 'down', 'Stop and remove the configured container and its dependencies'
     def down
+      return execute(compose_bridge.down, exit_on_failure: false) if load_config.compose?
+
       execute(builder.down, exit_on_failure: false)
       execute(builder.remove, exit_on_failure: false)
       load_config.dependencies.each_key do |name|
@@ -81,41 +88,51 @@ module Wip
     desc 'exec COMMAND...', 'Execute a command in the running container'
     option :interactive, type: :boolean, default: true
     def exec(*command)
-      tty = builder.tty?(options[:interactive])
-      execute(builder.exec(command, interactive: options[:interactive]), interactive: tty)
+      execute(exec_target(command, interactive: options[:interactive]), interactive: tty?(options[:interactive]))
     end
 
     desc 'run COMMAND...', 'Run a command in a new container'
     option :interactive, type: :boolean, default: true
     def run_command(*command)
-      tty = builder.tty?(options[:interactive])
-      execute(builder.run(command, interactive: options[:interactive]), interactive: tty)
+      if load_config.compose?
+        warn "wip: compose mode has no ephemeral 'run'; executing in the running " \
+             "'#{load_config.compose_service}' service instead"
+        return execute(exec_target(command, interactive: options[:interactive]),
+                       interactive: tty?(options[:interactive]))
+      end
+
+      execute(builder.run(command, interactive: options[:interactive]), interactive: tty?(options[:interactive]))
     end
     map 'run' => :run_command
 
     desc 'shell', 'Open a shell in the configured container'
     def shell_command
       configured = load_config.command('shell')
-      if configured
-        tty = builder.tty?(configured.fetch('interactive', false))
-        return execute(builder.custom('shell', []), interactive: tty)
-      end
+      return dispatch('shell') if configured
 
-      tty = builder.tty?(true)
-      code = execute(builder.exec(['bash'], settings: { 'interactive' => true }, interactive: true),
-                     interactive: tty, exit_on_failure: false)
+      code = execute(exec_target(['bash'], interactive: true), interactive: tty?(true), exit_on_failure: false)
       return if code.zero?
 
-      execute(builder.exec(['sh'], settings: { 'interactive' => true }, interactive: true), interactive: tty)
+      execute(exec_target(['sh'], interactive: true), interactive: tty?(true))
     end
     map 'shell' => :shell_command
+
+    desc 'logs [SERVICE...]', 'Follow logs from compose services (compose mode only)'
+    option :follow, type: :boolean, default: true, aliases: '-f'
+    def logs(*services)
+      raise ConfigError, '`wip logs` is only available in compose mode' unless load_config.compose?
+
+      execute(compose_bridge.logs(services: services, follow: options[:follow]), interactive: true)
+    end
 
     desc 'dispatch COMMAND [ARGS...]', 'Run a command defined in wip.yml'
     def dispatch(name = nil, *arguments)
       raise ConfigError, 'A command is required' unless name
 
       values = load_config.command(name) || raise(ConfigError, "Unknown command: #{name}")
-      execute(builder.custom(name, arguments), interactive: builder.tty?(values.fetch('interactive', false)))
+      return dispatch_compose(name, values, arguments) if load_config.compose?
+
+      execute(builder.custom(name, arguments), interactive: tty?(values.fetch('interactive', false)))
     end
 
     private
@@ -132,6 +149,31 @@ module Wip
 
     def builder
       CommandBuilder.new(wslc: resolver.resolve(load_config.wslc_command), config: load_config, dotenv: dotenv)
+    end
+
+    def compose_bridge = @compose_bridge ||= ComposeBridge.for(load_config)
+
+    def tty?(requested) = requested && Environment.new.interactive?
+
+    def exec_target(arguments, interactive:)
+      if load_config.compose?
+        return compose_bridge.exec(load_config.compose_service, arguments,
+                                   interactive: interactive)
+      end
+
+      builder.exec(arguments, interactive: interactive)
+    end
+
+    def dispatch_compose(name, values, arguments)
+      type = values['type'] || 'exec'
+      unless type == 'exec'
+        raise ConfigError, "commands.#{name}: type '#{type}' is not supported in compose mode " \
+                           '(use `wslc-compose build`/`up --build` directly)'
+      end
+
+      command = Shellwords.split(values['command'].to_s) + arguments
+      interactive = values.fetch('interactive', false)
+      execute(exec_target(command, interactive: interactive), interactive: tty?(interactive))
     end
 
     def execute(command, interactive: false, exit_on_failure: true)
@@ -188,7 +230,7 @@ module Wip
 
     def ensure_container
       container = load_config.defaults['container']
-      interactive = builder.tty?(!options[:detach])
+      interactive = tty?(!options[:detach])
       if resource_exists?(builder.find)
         warn "wip: starting existing container '#{container}'"
         execute(builder.start(detach: options[:detach]), interactive: interactive)

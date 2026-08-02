@@ -22,4 +22,18 @@ RSpec.describe Wip::CommandResolver do
   it 'reports all checked commands' do
     expect { resolver([]).resolve }.to raise_error(Wip::CommandNotFoundError, /Checked:.*wslc\.exe.*wslc.*System32/m)
   end
+
+  it 'supports custom candidates, label, and install hint' do
+    custom = described_class.new(executable: ->(_name) { false }, candidates: %w[wslc-compose],
+                                 label: 'wslc-compose', install_hint: 'pip install wslc-compose')
+
+    expect { custom.resolve }.to raise_error(Wip::CommandNotFoundError,
+                                             /wslc-compose was not found.*Checked:.*wslc-compose.*pip install/m)
+  end
+
+  it 'finds a custom candidate when available' do
+    custom = described_class.new(executable: ->(name) { name == 'wslc-compose' }, candidates: %w[wslc-compose])
+
+    expect(custom.resolve).to eq('wslc-compose')
+  end
 end

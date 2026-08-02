@@ -41,4 +41,48 @@ RSpec.describe Wip::Config do
     expect(described_class.new({}).network).to be_nil
     expect(described_class.new('defaults' => { 'network' => 'app-tier' }).network).to eq('app-tier')
   end
+
+  it 'exposes compose settings, defaulting to disabled' do
+    config = described_class.new({})
+    expect(config.compose?).to be(false)
+    expect(config.compose_service).to be_nil
+
+    composed = described_class.new('compose' => { 'service' => 'app', 'file' => 'compose.yml',
+                                                  'project' => 'myapp', 'command' => 'my-compose-tool' })
+    expect(composed.compose?).to be(true)
+    expect(composed.compose_service).to eq('app')
+    expect(composed.compose_file).to eq('compose.yml')
+    expect(composed.compose_project).to eq('myapp')
+    expect(composed.compose_command).to eq('my-compose-tool')
+  end
+
+  it 'has no default compose.command: every implementation must be named explicitly' do
+    expect(described_class.new({}).compose_command).to be_nil
+  end
+
+  it 'requires compose.service' do
+    expect do
+      described_class.new('compose' => { 'file' => 'compose.yml', 'command' => 'my-compose-tool' })
+    end.to raise_error(Wip::ConfigError, /compose\.service must not be empty/)
+  end
+
+  it 'requires compose.command' do
+    expect do
+      described_class.new('compose' => { 'service' => 'app' })
+    end.to raise_error(Wip::ConfigError, /compose\.command must not be empty/)
+  end
+
+  it 'rejects compose combined with dependencies' do
+    expect do
+      described_class.new('compose' => { 'service' => 'app', 'command' => 'my-compose-tool' },
+                          'dependencies' => { 'redis' => { 'image' => 'redis:latest' } })
+    end.to raise_error(Wip::ConfigError, /compose is mutually exclusive with dependencies/)
+  end
+
+  it 'rejects compose combined with defaults.network' do
+    expect do
+      described_class.new('compose' => { 'service' => 'app', 'command' => 'my-compose-tool' },
+                          'defaults' => { 'network' => 'app-tier' })
+    end.to raise_error(Wip::ConfigError, /compose is mutually exclusive with defaults\.network/)
+  end
 end
