@@ -138,12 +138,13 @@ RSpec.describe Wip::CommandBuilder do
 
     it 'mirrors from a throwaway container when the app container is not running' do
       expect(builder.sync_run).to eq(['wslc.exe', 'run', '--rm', '-v', '.:/host-src:ro', '-v', 'app-src:/app',
-                                      'example:dev', 'rsync', '-a', '--delete', '--exclude=.git',
-                                      '/host-src/', '/app/'])
+                                      'example:dev', 'rsync', '-r', '-l', '-t', '--whole-file', '--delete',
+                                      '--exclude=.git', '/host-src/', '/app/'])
     end
 
     it 'mirrors inside the running container' do
-      expect(builder.sync_exec).to eq(%w[wslc.exe exec app rsync -a --delete --exclude=.git /host-src/ /app/])
+      expect(builder.sync_exec).to eq(%w[wslc.exe exec app rsync -r -l -t --whole-file --delete --exclude=.git
+                                         /host-src/ /app/])
     end
 
     it 'builds a running-only find query' do

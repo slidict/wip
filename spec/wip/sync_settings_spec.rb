@@ -11,7 +11,7 @@ RSpec.describe Wip::SyncSettings do
     expect(sync.mount).to eq('/host-src')
     expect(sync.volume).to eq('app-src')
     expect(sync.interval).to eq(2)
-    expect(sync.mirror_command).to eq(%w[rsync -a --delete /host-src/ /app/])
+    expect(sync.mirror_command).to eq(%w[rsync -r -l -t --whole-file --delete /host-src/ /app/])
   end
 
   it 'falls back to the configured workdir for the target' do
@@ -34,7 +34,7 @@ RSpec.describe Wip::SyncSettings do
                                      'options' => ['--info=stats0'], 'delete' => false })
 
     expect(settings.mirror_command)
-      .to eq(%w[rsync-3 -a --exclude=.git --exclude=tmp/ --info=stats0 /host-src/ /app/])
+      .to eq(%w[rsync-3 -r -l -t --whole-file --exclude=.git --exclude=tmp/ --info=stats0 /host-src/ /app/])
   end
 
   it 'recognizes the volumes it replaces, including mode suffixes and Windows-style hosts' do

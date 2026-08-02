@@ -195,7 +195,8 @@ RSpec.describe Wip::CLI do
       allow(runner).to receive(:run).with(%w[wslc.exe list --all --filter name=app --format json]).and_return(0)
       expect(runner).to receive(:run).with(
         ['wslc.exe', 'run', '--rm', '-v', "#{source}:/host-src:ro", '-v', 'app-src:/app', 'example:dev',
-         'rsync', '-a', '--delete', '--exclude=.git', '/host-src/', '/app/'], interactive: false
+         'rsync', '-r', '-l', '-t', '--whole-file', '--delete', '--exclude=.git', '/host-src/', '/app/'],
+        interactive: false
       ).and_return(0).ordered
       expect(runner).to receive(:run).with(
         ['wslc.exe', 'run', '--name', 'app', '-d', '-w', '/app', '-v', "#{source}:/host-src:ro", '-v',
@@ -218,7 +219,8 @@ RSpec.describe Wip::CLI do
       runner = stub_runner('[{"Name":"app"}]')
       allow(runner).to receive(:run).with(%w[wslc.exe list --filter name=app --format json]).and_return(0)
       expect(runner).to receive(:run).with(
-        %w[wslc.exe exec app rsync -a --delete --exclude=.git /host-src/ /app/], interactive: false
+        %w[wslc.exe exec app rsync -r -l -t --whole-file --delete --exclude=.git /host-src/ /app/],
+        interactive: false
       ).and_return(0)
 
       described_class.start(%w[sync])
