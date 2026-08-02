@@ -26,19 +26,26 @@ module Wip
     BASE_OPTIONS = %w[-r -l -t --whole-file].freeze
     # Trailing mount options wslc/docker accept after the container path.
     VOLUME_MODES = %w[ro rw z Z cached delegated consistent].freeze
+    # exec mirrors inside the already-running, wip-managed container (fast,
+    # but only correct when wip itself created that container with the sync
+    # mounts attached). run always mirrors from a disposable container, since
+    # compose owns its own services' mounts and never guarantees that shape.
+    SYNC_MODES = %w[exec run].freeze
 
-    attr_reader :target, :mount, :volume, :exclude, :binary, :extra_options, :interval
+    attr_reader :target, :mount, :volume, :exclude, :binary, :extra_options, :interval, :mode
 
-    def initialize(raw, base: nil, workdir: nil, container: nil)
+    def initialize(raw, base: nil, workdir: nil, container: nil, compose: false)
       raise ConfigError, 'sync must be a mapping' unless raw.is_a?(Hash)
 
       @base = base
       assign_paths(raw, workdir: workdir, container: container)
       assign_mirror(raw)
+      assign_mode(raw, compose: compose)
       validate!
     end
 
     def delete? = !!@delete
+    def exec? = mode == 'exec'
 
     # Expanded against the wip.yml directory so the mirror covers the same tree
     # no matter which subdirectory wip was invoked from.
@@ -69,7 +76,7 @@ module Wip
     def to_h
       { 'source' => source, 'target' => target, 'mount' => mount, 'volume' => volume,
         'delete' => delete?, 'exclude' => exclude, 'command' => binary, 'options' => extra_options,
-        'interval' => interval }
+        'interval' => interval, 'mode' => mode }
     end
 
     private
@@ -87,6 +94,15 @@ module Wip
       @binary = presence(raw['command']) || DEFAULT_BINARY
       @extra_options = Array(raw['options']).map(&:to_s)
       @interval = raw.key?('interval') ? raw['interval'] : DEFAULT_INTERVAL
+    end
+
+    def assign_mode(raw, compose:)
+      @mode = presence(raw['mode']) || (compose ? 'run' : 'exec')
+      raise ConfigError, "sync.mode must be one of #{SYNC_MODES.join(', ')}" unless SYNC_MODES.include?(@mode)
+      return unless compose && exec?
+
+      raise ConfigError, 'sync.mode: exec needs mode: container (compose owns its services’ mounts, ' \
+                         'so it can’t guarantee the running container has the sync mounts attached)'
     end
 
     def validate!

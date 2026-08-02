@@ -6,6 +6,10 @@ module Wip
     DEFAULTS = { 'container' => 'app', 'workdir' => '/app', 'interactive' => false,
                  'remove' => true, 'env' => {}, 'ports' => [], 'volumes' => [] }.freeze
     SECRET_PATTERN = /token|password|secret|credential|auth/i
+    # Which orchestration path `up`/`down`/`sync`/etc. take. Explicit rather than
+    # inferred from a `compose:` block's presence, so a config reader doesn't have
+    # to know that rule to predict which mode wip runs in.
+    MODES = %w[container compose].freeze
     attr_reader :path
 
     def initialize(raw, path = nil)
@@ -20,8 +24,9 @@ module Wip
     def up_command = @raw.dig('up', 'command')
     def dependencies = @raw['dependencies'] || {}
     def network = defaults['network']
+    def mode = @raw['mode'] || 'container'
     def compose = @raw['compose']
-    def compose? = !!compose
+    def compose? = mode == 'compose'
     def compose_service = compose && compose['service']
     def compose_file = compose && compose['file']
     def compose_project = compose && compose['project']
@@ -50,8 +55,8 @@ module Wip
 
     def to_h(redact: true)
       value = { 'version' => 1, 'wslc' => { 'command' => wslc_command }, 'defaults' => defaults,
-                'up' => { 'command' => up_command }, 'dependencies' => dependencies, 'compose' => compose,
-                'sync' => sync&.to_h,
+                'up' => { 'command' => up_command }, 'mode' => mode, 'dependencies' => dependencies,
+                'compose' => compose, 'sync' => sync&.to_h,
                 'commands' => commands.transform_values { |entry| defaults.merge('type' => 'exec').merge(entry) } }
       redact ? redact_secrets(value) : value
     end
@@ -62,6 +67,7 @@ module Wip
       raise ConfigError, "Unsupported configuration version: #{@raw['version']}" unless (@raw['version'] || 1) == 1
       raise ConfigError, 'up must be a mapping' if @raw.key?('up') && !@raw['up'].is_a?(Hash)
 
+      validate_mode!
       validate_commands!
       validate_dependencies!
       validate_compose!
@@ -70,12 +76,20 @@ module Wip
 
     def build_sync
       SyncSettings.new(@raw['sync'], base: path && File.dirname(path.to_s),
-                                     workdir: defaults['workdir'], container: defaults['container'])
+                                     workdir: defaults['workdir'], container: defaults['container'],
+                                     compose: compose?)
     end
 
+    def validate_mode!
+      raise ConfigError, "mode must be one of #{MODES.join(', ')}" unless MODES.include?(mode)
+      raise ConfigError, 'mode: compose requires a compose: block' if compose? && !@raw.key?('compose')
+      raise ConfigError, 'a compose: block requires mode: compose' if @raw.key?('compose') && !compose?
+    end
+
+    # Forces SyncSettings to build (and so run its own validation, including
+    # sync.mode vs. mode) at load time instead of on first access.
     def validate_sync!
-      return unless sync
-      raise ConfigError, 'sync is mutually exclusive with compose' if compose?
+      sync if @raw.key?('sync')
     end
 
     def validate_commands!

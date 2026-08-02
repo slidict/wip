@@ -47,15 +47,15 @@ RSpec.describe Wip::ComposeBridge do
     end
 
     it 'uses the explicit compose.file override when set' do
-      config = Wip::Config.new({ 'compose' => { 'service' => 'app', 'file' => 'custom.yml',
-                                                'command' => 'my-compose-tool' } }, 'wip.yml')
+      config = Wip::Config.new({ 'mode' => 'compose', 'compose' => { 'service' => 'app', 'file' => 'custom.yml',
+                                                                     'command' => 'my-compose-tool' } }, 'wip.yml')
       expect(described_class.file_path(config)).to eq(Pathname('custom.yml').expand_path)
     end
 
     it 'resolves a relative compose.file against wip.yml, not the current directory' do
       FileUtils.mkdir_p('project/config')
-      config = Wip::Config.new({ 'compose' => { 'service' => 'app', 'file' => 'config/custom.yml',
-                                                'command' => 'my-compose-tool' } },
+      config = Wip::Config.new({ 'mode' => 'compose', 'compose' => { 'service' => 'app', 'file' => 'config/custom.yml',
+                                                                     'command' => 'my-compose-tool' } },
                                File.expand_path('project/wip.yml'))
       expected = Pathname(File.expand_path('project/config/custom.yml'))
 
@@ -64,21 +64,23 @@ RSpec.describe Wip::ComposeBridge do
 
     it 'keeps an absolute compose.file as-is' do
       absolute = File.expand_path('elsewhere/custom.yml')
-      config = Wip::Config.new({ 'compose' => { 'service' => 'app', 'file' => absolute,
-                                                'command' => 'my-compose-tool' } },
+      config = Wip::Config.new({ 'mode' => 'compose', 'compose' => { 'service' => 'app', 'file' => absolute,
+                                                                     'command' => 'my-compose-tool' } },
                                File.expand_path('project/wip.yml'))
       expect(described_class.file_path(config)).to eq(Pathname(absolute))
     end
 
     it 'auto-detects a compose file next to wip.yml' do
       File.write('compose.yaml', "services:\n  app:\n    image: example:dev\n")
-      config = Wip::Config.new({ 'compose' => { 'service' => 'app', 'command' => 'my-compose-tool' } },
+      config = Wip::Config.new({ 'mode' => 'compose',
+                                 'compose' => { 'service' => 'app', 'command' => 'my-compose-tool' } },
                                File.expand_path('wip.yml'))
       expect(described_class.file_path(config)).to eq(Pathname(File.expand_path('compose.yaml')))
     end
 
     it 'raises when no compose file can be found' do
-      config = Wip::Config.new({ 'compose' => { 'service' => 'app', 'command' => 'my-compose-tool' } },
+      config = Wip::Config.new({ 'mode' => 'compose',
+                                 'compose' => { 'service' => 'app', 'command' => 'my-compose-tool' } },
                                File.expand_path('wip.yml'))
       expect { described_class.file_path(config) }.to raise_error(Wip::ConfigError, /no compose file found/)
     end
@@ -86,7 +88,8 @@ RSpec.describe Wip::ComposeBridge do
 
   describe '.for' do
     it 'resolves the compose command and builds a bridge for the config' do
-      config = Wip::Config.new({ 'compose' => { 'service' => 'app', 'file' => 'compose.yml', 'project' => 'myapp',
+      config = Wip::Config.new({ 'mode' => 'compose',
+                                 'compose' => { 'service' => 'app', 'file' => 'compose.yml', 'project' => 'myapp',
                                                 'command' => 'wslc-compose' } }, 'wip.yml')
       resolver = instance_double(Wip::CommandResolver, resolve: 'wslc-compose')
 
@@ -97,8 +100,8 @@ RSpec.describe Wip::ComposeBridge do
     end
 
     it 'resolves whatever compose.command names, not a hardcoded implementation' do
-      config = Wip::Config.new({ 'compose' => { 'service' => 'app', 'file' => 'compose.yml',
-                                                'command' => 'my-compose-tool' } }, 'wip.yml')
+      config = Wip::Config.new({ 'mode' => 'compose', 'compose' => { 'service' => 'app', 'file' => 'compose.yml',
+                                                                     'command' => 'my-compose-tool' } }, 'wip.yml')
       resolver = instance_double(Wip::CommandResolver)
       expect(resolver).to receive(:resolve).with('my-compose-tool').and_return('my-compose-tool')
 
@@ -106,8 +109,8 @@ RSpec.describe Wip::ComposeBridge do
     end
 
     it 'reports the configured command, not a default candidate list, when nothing is found' do
-      config = Wip::Config.new({ 'compose' => { 'service' => 'app', 'file' => 'compose.yml',
-                                                'command' => 'my-compose-tool' } }, 'wip.yml')
+      config = Wip::Config.new({ 'mode' => 'compose', 'compose' => { 'service' => 'app', 'file' => 'compose.yml',
+                                                                     'command' => 'my-compose-tool' } }, 'wip.yml')
       resolver = Wip::CommandResolver.new(executable: ->(_name) { false }, candidates: [],
                                           label: 'compose command')
 

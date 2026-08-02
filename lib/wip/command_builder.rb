@@ -49,13 +49,9 @@ module Wip
       [@wslc, 'list', '--all', '--filter', "name=#{container}", '--format', 'json']
     end
 
-    def find_running
-      container = required(@config.defaults, 'container')
-      [@wslc, 'list', '--filter', "name=#{container}", '--format', 'json']
-    end
-
-    # Mirrors into the volume from a throwaway container, for when the app
-    # container isn't running yet (or at all) — e.g. just before `up` boots it.
+    # Mirrors into the volume from a throwaway container. Used for sync.mode:
+    # run (compose's default, and mode: container's fallback for when the app
+    # container isn't running yet — e.g. just before `up` boots it).
     def sync_run
       sync = required_sync
       command = [@wslc, 'run', '--rm']
@@ -63,8 +59,10 @@ module Wip
       command.push(required(@config.defaults, 'image')).concat(sync.mirror_command)
     end
 
-    # Mirrors from inside the running container, which already has both the
-    # read-only source mount and the volume attached.
+    # Mirrors from inside the already-running container. Only valid for
+    # sync.mode: exec (mode: container's default), since only a container wip
+    # itself booted is guaranteed to have both the read-only source mount and
+    # the volume attached.
     def sync_exec
       [@wslc, 'exec', required(@config.defaults, 'container'), *required_sync.mirror_command]
     end
