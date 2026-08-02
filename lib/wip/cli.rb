@@ -63,6 +63,7 @@ module Wip
 
     desc 'up', 'Start the configured container and its dependencies, creating them if necessary'
     option :detach, type: :boolean, default: false, aliases: '-d'
+    option :sync, type: :boolean, default: true, desc: 'Mirror the source into the sync volume first (--no-sync skips)'
     def up
       if load_config.compose?
         return execute(compose_bridge.up(detach: options[:detach]), interactive: tty?(!options[:detach]))
@@ -70,7 +71,26 @@ module Wip
 
       ensure_network
       load_config.dependencies.each_key { |name| ensure_dependency(name) }
+      sync_before_boot if options[:sync]
       ensure_container
+    end
+
+    desc 'sync', 'Mirror the source tree into the sync volume'
+    option :watch, type: :boolean, default: false, aliases: '-w', desc: 'Keep re-syncing until interrupted'
+    option :interval, type: :numeric, desc: 'Seconds between syncs when watching (default: sync.interval)'
+    def sync
+      settings = sync_settings!
+      return run_sync unless options[:watch]
+
+      interval = options[:interval] || settings.interval
+      warn "wip: syncing #{settings.source} -> #{settings.volume}:#{settings.target} " \
+           "every #{interval}s (Ctrl-C to stop)"
+      loop do
+        run_sync(exit_on_failure: false)
+        sleep interval
+      end
+    rescue Interrupt
+      warn "\nwip: sync stopped"
     end
 
     desc 'down', 'Stop and remove the configured container and its dependencies'
@@ -226,6 +246,28 @@ module Wip
         warn "wip: dependency '#{name}' not found, creating it"
         execute(builder.dependency_up(name))
       end
+    end
+
+    def sync_settings!
+      load_config.sync || raise(ConfigError, '`wip sync` needs a sync: block in wip.yml')
+    end
+
+    # Inside the running container the mirror is a plain `exec`; otherwise it
+    # takes a throwaway container that mounts the same source and volume.
+    def run_sync(exit_on_failure: true)
+      command = container_running? ? builder.sync_exec : builder.sync_run
+      execute(command, exit_on_failure: exit_on_failure)
+    end
+
+    def container_running? = resource_exists?(builder.find_running)
+
+    def sync_before_boot
+      settings = load_config.sync
+      return unless settings
+
+      warn "wip: syncing #{settings.source} -> #{settings.volume}:#{settings.target}"
+      execute(builder.sync_run)
+      warn "wip: run `wip sync --watch` in another terminal to keep #{settings.target} up to date"
     end
 
     def ensure_container

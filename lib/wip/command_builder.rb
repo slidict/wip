@@ -49,6 +49,26 @@ module Wip
       [@wslc, 'list', '--all', '--filter', "name=#{container}", '--format', 'json']
     end
 
+    def find_running
+      container = required(@config.defaults, 'container')
+      [@wslc, 'list', '--filter', "name=#{container}", '--format', 'json']
+    end
+
+    # Mirrors into the volume from a throwaway container, for when the app
+    # container isn't running yet (or at all) — e.g. just before `up` boots it.
+    def sync_run
+      sync = required_sync
+      command = [@wslc, 'run', '--rm']
+      sync.volume_specs.each { |spec| command.push('-v', spec) }
+      command.push(required(@config.defaults, 'image')).concat(sync.mirror_command)
+    end
+
+    # Mirrors from inside the running container, which already has both the
+    # read-only source mount and the volume attached.
+    def sync_exec
+      [@wslc, 'exec', required(@config.defaults, 'container'), *required_sync.mirror_command]
+    end
+
     def down
       [@wslc, 'stop', required(@config.defaults, 'container')]
     end
@@ -70,7 +90,7 @@ module Wip
       command = [@wslc, 'run', '--name', name.to_s]
       command.push('--network', @config.network) if @config.network
       command << '-d' if detach
-      command.concat(options(values)).push(required(values, 'image'))
+      command.concat(options(values, sync: false)).push(required(values, 'image'))
       command.concat(Shellwords.split(values['command'].to_s)) unless values['command'].to_s.empty?
       command
     end
@@ -113,16 +133,27 @@ module Wip
 
     private
 
-    def options(values, include_container: false, include_publish: true)
+    def options(values, include_container: false, include_publish: true, sync: true)
       result = []
       result.push('-w', values['workdir']) unless values['workdir'].to_s.empty?
       merged_env(values).each { |key, value| result.push('-e', "#{key}=#{value}") }
       if include_publish
         Array(values['ports']).each { |port| result.push('-p', port.to_s) }
-        Array(values['volumes']).each { |volume| result.push('-v', volume.to_s) }
+        volume_specs(values, sync: sync).each { |volume| result.push('-v', volume) }
       end
       result << required(values, 'container') if include_container
       result
+    end
+
+    # With sync configured, a live bind mount of the target (`.:/app`) is
+    # swapped for the read-only source mount plus the named volume, so the
+    # running app only ever touches the volume.
+    def volume_specs(values, sync: true)
+      specs = Array(values['volumes']).map(&:to_s)
+      settings = sync ? @config.sync : nil
+      return specs unless settings
+
+      specs.reject { |spec| settings.replaces?(spec) } + settings.volume_specs
     end
 
     # .env supplies defaults; env set in wip.yml (defaults or per-command) wins on conflict.
@@ -140,6 +171,10 @@ module Wip
       raise ConfigError, 'Configured network must not be empty' if network.to_s.empty?
 
       network
+    end
+
+    def required_sync
+      @config.sync || raise(ConfigError, 'No sync: block configured in wip.yml')
     end
 
     def dependency_values(name)

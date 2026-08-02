@@ -21,9 +21,7 @@ module Wip
       results << result(@environment.wsl2? ? :ok : :fail, *wsl2_messages)
       results << interop_result unless @environment.windows?
       results << Result.new(:ok, "Architecture: #{@environment.architecture}")
-      config = load_config(results)
-      check_wslc(config, results) if config
-      check_compose(config, results) if config&.compose?
+      check_config(load_config(results), results)
       results << result(command_available?('git') ? :ok : :warn, 'Git is available',
                         'Git is not available to the WSLC build environment')
       results
@@ -51,6 +49,14 @@ module Wip
     rescue ConfigError => e
       results << Result.new(:fail, e.message)
       nil
+    end
+
+    def check_config(config, results)
+      return unless config
+
+      check_wslc(config, results)
+      check_compose(config, results) if config.compose?
+      check_sync(config, results) if config.sync?
     end
 
     def check_wslc(config, results)
@@ -96,6 +102,13 @@ module Wip
                         "Compose file not found: #{path}")
     rescue ConfigError => e
       results << Result.new(:fail, e.message)
+    end
+
+    def check_sync(config, results)
+      sync = config.sync
+      results << result(File.directory?(sync.source) ? :ok : :fail,
+                        "Sync source #{sync.source} mirrors into volume #{sync.volume} at #{sync.target}",
+                        "Sync source not found: #{sync.source}")
     end
 
     def result(condition, ok_message, fail_message)

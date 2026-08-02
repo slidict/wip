@@ -116,6 +116,46 @@ RSpec.describe Wip::CommandBuilder do
     end
   end
 
+  describe 'sync support' do
+    let(:synced_config) do
+      Wip::Config.new('defaults' => { 'container' => 'app', 'image' => 'example:dev', 'workdir' => '/app',
+                                      'volumes' => ['.:/app', 'bundle:/usr/local/bundle'] },
+                      'dependencies' => { 'redis' => { 'image' => 'redis:latest', 'volumes' => ['.:/app'] } },
+                      'sync' => { 'exclude' => ['.git'] })
+    end
+    subject(:builder) { described_class.new(wslc: 'wslc.exe', config: synced_config, environment: environment) }
+
+    it 'replaces the live bind mount with the read-only source and the named volume' do
+      expect(builder.up(detach: true)).to eq(['wslc.exe', 'run', '--name', 'app', '-d', '-w', '/app', '-v',
+                                              'bundle:/usr/local/bundle', '-v', '.:/host-src:ro', '-v',
+                                              'app-src:/app', 'example:dev'])
+    end
+
+    it 'leaves dependency containers mounting the host directly' do
+      expect(builder.dependency_up('redis'))
+        .to eq(%w[wslc.exe run --name redis -d -v .:/app redis:latest])
+    end
+
+    it 'mirrors from a throwaway container when the app container is not running' do
+      expect(builder.sync_run).to eq(['wslc.exe', 'run', '--rm', '-v', '.:/host-src:ro', '-v', 'app-src:/app',
+                                      'example:dev', 'rsync', '-a', '--delete', '--exclude=.git',
+                                      '/host-src/', '/app/'])
+    end
+
+    it 'mirrors inside the running container' do
+      expect(builder.sync_exec).to eq(%w[wslc.exe exec app rsync -a --delete --exclude=.git /host-src/ /app/])
+    end
+
+    it 'builds a running-only find query' do
+      expect(builder.find_running).to eq(%w[wslc.exe list --filter name=app --format json])
+    end
+
+    it 'raises when sync commands are built without a sync block' do
+      expect { described_class.new(wslc: 'wslc.exe', config: config, environment: environment).sync_run }
+        .to raise_error(Wip::ConfigError, /No sync: block/)
+    end
+  end
+
   describe 'dotenv support' do
     subject(:builder) do
       described_class.new(wslc: 'wslc.exe', config: config, environment: environment,

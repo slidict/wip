@@ -2,6 +2,7 @@
 
 require_relative 'wip/version'
 require_relative 'wip/errors'
+require_relative 'wip/sync_settings'
 require_relative 'wip/config'
 require_relative 'wip/config_loader'
 require_relative 'wip/environment'
