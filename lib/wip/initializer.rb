@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require 'yaml'
+
 module Wip
   # Builds a starter wip.yml. Detects an existing compose file next to the
   # target (the same filenames ComposeBridge auto-detects) to decide between
@@ -42,7 +44,46 @@ module Wip
         compose:
           service: app # TODO: which service in #{compose_file} wip run/exec/NAME target
           command: wslc-compose # TODO: the compose-for-wslc binary/path you have installed
+
+        #{sync_hint}
       YAML
+    end
+
+    # sync: needs sync.image (mode: compose has no dependencies: entry to borrow one from) and a
+    # named volume the compose service mounts, matching sync.volume ("app-src" by default). Checked
+    # against the detected compose file so the hint doesn't repeat what's already set up.
+    def sync_hint
+      return sync_hint_configured if compose_volume_mounted?
+
+      sync_hint_todo
+    end
+
+    def sync_hint_configured
+      <<~COMMENT.chomp
+        # #{compose_file} already mounts a volume matching sync.volume's default (app-src).
+        # sync: # add sync.image too (required under mode: compose) — see README
+      COMMENT
+    end
+
+    def sync_hint_todo
+      <<~COMMENT.chomp
+        # sync: # optional; mirrors the source into a named volume instead of bind-mounting it live
+        #   image: your/image:tag # required under mode: compose (no dependencies: entry to borrow one from)
+        #   # the service above must also mount a volume named "app-src" (sync.volume's default) at the
+        #   # path your app expects — add to #{compose_file}:
+        #   #   volumes:
+        #   #     - app-src:/app
+        #   # and, alongside services:
+        #   # volumes:
+        #   #   app-src:
+      COMMENT
+    end
+
+    def compose_volume_mounted?
+      services = YAML.safe_load_file(File.join(@dir, compose_file), aliases: true)&.fetch('services', nil) || {}
+      services.values.any? { |service| Array(service['volumes']).any? { |v| v.to_s.start_with?('app-src:') } }
+    rescue StandardError
+      false
     end
   end
 end

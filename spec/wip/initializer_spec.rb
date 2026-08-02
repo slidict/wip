@@ -24,10 +24,30 @@ RSpec.describe Wip::Initializer do
         initializer = described_class.new(dir: dir)
 
         expect(initializer.compose?).to be(true)
-        parsed = YAML.safe_load(initializer.call)
+        output = initializer.call
+        parsed = YAML.safe_load(output)
         expect(parsed).to include('version' => 1, 'mode' => 'compose')
         expect(parsed['compose']).to include('service', 'command')
+        expect(output).to include('required under mode: compose').and include('app-src')
       end
+    end
+  end
+
+  it 'points at README when the compose file already mounts a volume matching sync.volume' do
+    Dir.mktmpdir do |dir|
+      File.write(File.join(dir, 'compose.yml'), <<~YAML)
+        services:
+          app:
+            image: example:dev
+            volumes:
+              - app-src:/app
+        volumes:
+          app-src:
+      YAML
+      output = described_class.new(dir: dir).call
+
+      expect(output).to include('already mounts a volume matching').and include('see README')
+      expect(output).not_to include('path your app expects')
     end
   end
 end
