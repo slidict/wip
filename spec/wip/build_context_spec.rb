@@ -30,4 +30,32 @@ RSpec.describe Wip::BuildContext do
       expect(staged_files.grep(/^node_modules/)).to be_empty
     end
   end
+
+  it 'preserves symlinks instead of copying files from outside the context' do
+    Dir.mktmpdir do |parent|
+      context = File.join(parent, 'context')
+      FileUtils.mkdir_p(context)
+      File.write(File.join(context, '.dockerignore'), "ignored\n")
+      secret = File.join(parent, 'secret')
+      File.write(secret, 'host secret')
+      File.symlink(secret, File.join(context, 'linked-secret'))
+
+      described_class.new(context).stage do |staged|
+        staged_link = File.join(staged, 'linked-secret')
+        expect(File).to be_symlink(staged_link)
+        expect(File.readlink(staged_link)).to eq(secret)
+      end
+    end
+  end
+
+  it 'preserves broken symlinks' do
+    Dir.mktmpdir do |dir|
+      File.write(File.join(dir, '.dockerignore'), "ignored\n")
+      File.symlink('missing', File.join(dir, 'broken'))
+
+      described_class.new(dir).stage do |staged|
+        expect(File).to be_symlink(File.join(staged, 'broken'))
+      end
+    end
+  end
 end

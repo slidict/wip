@@ -29,7 +29,10 @@ module Wip
       each_included_file do |relative_path|
         target = destination.join(relative_path)
         FileUtils.mkdir_p(target.dirname)
-        FileUtils.cp(@root.join(relative_path), target)
+        # Keep links as links. Dereferencing a link here could copy arbitrary
+        # host files outside the build context (for example, ~/.ssh/id_rsa)
+        # into the staged directory and expose them to the image build.
+        FileUtils.copy_entry(@root.join(relative_path), target, false, false, false)
       end
     end
 
@@ -38,7 +41,7 @@ module Wip
         next if %w[. ..].include?(entry)
 
         path = @root.join(entry)
-        next unless path.file?
+        next unless path.file? || path.symlink?
         next if @ignore.ignored?(entry)
 
         yield entry
