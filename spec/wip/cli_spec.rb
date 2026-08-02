@@ -407,4 +407,38 @@ RSpec.describe Wip::CLI do
       expect { described_class.start(%w[logs]) }.to raise_error(Wip::ConfigError, /compose mode/)
     end
   end
+
+  describe 'init' do
+    around do |example|
+      Dir.mktmpdir { |dir| Dir.chdir(dir) { example.run } }
+    end
+
+    it 'writes a mode: container wip.yml when no compose file is present' do
+      described_class.start(%w[init])
+
+      expect(YAML.safe_load_file('wip.yml')).to include('mode' => 'container')
+    end
+
+    it 'writes a mode: compose wip.yml when a compose file is present' do
+      File.write('compose.yml', "services:\n  app:\n    image: example:dev\n")
+
+      described_class.start(%w[init])
+
+      expect(YAML.safe_load_file('wip.yml')).to include('mode' => 'compose')
+    end
+
+    it 'refuses to overwrite an existing wip.yml without --force' do
+      File.write('wip.yml', "version: 1\n")
+
+      expect { described_class.start(%w[init]) }.to raise_error(Wip::Error, /already exists/)
+    end
+
+    it 'overwrites an existing wip.yml with --force' do
+      File.write('wip.yml', "version: 1\n")
+
+      described_class.start(%w[init --force])
+
+      expect(YAML.safe_load_file('wip.yml')).to include('mode' => 'container')
+    end
+  end
 end
