@@ -2,11 +2,13 @@
 
 require 'spec_helper'
 RSpec.describe Wip::Config do
-  it 'applies defaults and converts environment values to strings' do
+  it 'merges custom commands onto the primary container and converts environment values to strings' do
     config = described_class.new('version' => 1,
+                                 'dependencies' => { 'app' => { 'image' => 'example:dev', 'workdir' => '/app' } },
                                  'commands' => { 'web' => { 'command' => 'server',
                                                             'env' => { 'PORT' => 3000 } } })
-    expect(config.command('web')).to include('container' => 'app', 'workdir' => '/app', 'env' => { 'PORT' => '3000' })
+    expect(config.command('web')).to include('image' => 'example:dev', 'workdir' => '/app',
+                                             'env' => { 'PORT' => '3000' })
   end
 
   it 'redacts secret-like settings' do
@@ -14,20 +16,28 @@ RSpec.describe Wip::Config do
     expect(config.to_h.dig('commands', 'x', 'env', 'API_TOKEN')).to eq('[REDACTED]')
   end
 
-  it 'exposes the up command, defaulting to nil' do
-    expect(described_class.new({}).up_command).to be_nil
-    expect(described_class.new('up' => { 'command' => 'local' }).up_command).to eq('local')
+  it 'exposes container, defaulting to app, and the primary dependency it points at' do
+    config = described_class.new('dependencies' => { 'app' => { 'image' => 'example:dev', 'command' => 'local' } })
+    expect(config.container).to eq('app')
+    expect(config.primary).to include('image' => 'example:dev', 'command' => 'local')
   end
 
-  it 'rejects a non-mapping up section' do
-    expect { described_class.new('up' => 'local') }.to raise_error(Wip::ConfigError, /up must be a mapping/)
+  it 'lets container point at a differently-named dependency' do
+    config = described_class.new('container' => 'web', 'dependencies' => { 'web' => { 'image' => 'example:dev' } })
+    expect(config.primary).to include('image' => 'example:dev')
   end
 
-  it 'exposes dependencies with defaulted settings' do
+  it 'has no primary entry when the pointed-at dependency is missing' do
+    expect(described_class.new({}).primary).to be_nil
+    expect(described_class.new('dependencies' => { 'redis' => { 'image' => 'redis:latest' } }).primary).to be_nil
+  end
+
+  it 'exposes dependencies with defaulted settings, uniformly for the primary and sidecars' do
     config = described_class.new('dependencies' => { 'redis' => { 'image' => 'redis:latest' } })
 
-    expect(config.dependency('redis')).to include('image' => 'redis:latest', 'env' => {}, 'ports' => [],
-                                                  'volumes' => [])
+    expect(config.dependency('redis')).to include('image' => 'redis:latest', 'workdir' => nil,
+                                                  'interactive' => false, 'remove' => true,
+                                                  'env' => {}, 'ports' => [], 'volumes' => [])
     expect(config.dependency('unknown')).to be_nil
   end
 
@@ -37,9 +47,9 @@ RSpec.describe Wip::Config do
     end.to raise_error(Wip::ConfigError, /dependencies\.redis must set image/)
   end
 
-  it 'exposes defaults.network, defaulting to nil' do
+  it 'exposes network, defaulting to nil' do
     expect(described_class.new({}).network).to be_nil
-    expect(described_class.new('defaults' => { 'network' => 'app-tier' }).network).to eq('app-tier')
+    expect(described_class.new('network' => 'app-tier').network).to eq('app-tier')
   end
 
   it 'exposes mode, defaulting to container' do
@@ -102,12 +112,12 @@ RSpec.describe Wip::Config do
     end.to raise_error(Wip::ConfigError, /compose is mutually exclusive with dependencies/)
   end
 
-  it 'rejects compose combined with defaults.network' do
+  it 'rejects compose combined with network' do
     expect do
       described_class.new('mode' => 'compose',
                           'compose' => { 'service' => 'app', 'command' => 'my-compose-tool' },
-                          'defaults' => { 'network' => 'app-tier' })
-    end.to raise_error(Wip::ConfigError, /compose is mutually exclusive with defaults\.network/)
+                          'network' => 'app-tier')
+    end.to raise_error(Wip::ConfigError, /compose is mutually exclusive with network/)
   end
 
   it 'has no sync settings unless a sync block is present' do
@@ -116,8 +126,11 @@ RSpec.describe Wip::Config do
     expect(config.sync).to be_nil
   end
 
-  it 'derives sync settings from defaults and the config location' do
-    config = described_class.new({ 'defaults' => { 'container' => 'web', 'workdir' => '/srv/app' }, 'sync' => {} },
+  it 'derives sync settings from the primary container and the config location' do
+    config = described_class.new({ 'container' => 'web',
+                                   'dependencies' => { 'web' => { 'image' => 'example:dev',
+                                                                  'workdir' => '/srv/app' } },
+                                   'sync' => {} },
                                  '/home/me/project/wip.yml')
 
     expect(config.sync?).to be(true)
@@ -129,21 +142,39 @@ RSpec.describe Wip::Config do
   it 'allows sync alongside compose, defaulting sync.mode to run' do
     config = described_class.new('mode' => 'compose',
                                  'compose' => { 'service' => 'app', 'command' => 'my-compose-tool' },
-                                 'sync' => {})
+                                 'sync' => { 'image' => 'example:dev' })
     expect(config.sync.mode).to eq('run')
+  end
+
+  it 'requires sync.image alongside compose' do
+    expect do
+      described_class.new('mode' => 'compose',
+                          'compose' => { 'service' => 'app', 'command' => 'my-compose-tool' },
+                          'sync' => {})
+    end.to raise_error(Wip::ConfigError, /sync\.image is required under mode: compose/)
   end
 
   it 'rejects sync.mode: exec alongside compose' do
     expect do
       described_class.new('mode' => 'compose',
                           'compose' => { 'service' => 'app', 'command' => 'my-compose-tool' },
-                          'sync' => { 'mode' => 'exec' })
+                          'sync' => { 'mode' => 'exec', 'image' => 'example:dev' })
     end.to raise_error(Wip::ConfigError, /sync\.mode: exec needs mode: container/)
   end
 
   it 'includes the resolved sync settings in the effective configuration' do
-    config = described_class.new('defaults' => { 'container' => 'app' }, 'sync' => { 'exclude' => ['.git'] })
+    config = described_class.new('dependencies' => { 'app' => { 'image' => 'example:dev' } },
+                                 'sync' => { 'exclude' => ['.git'] })
 
     expect(config.to_h['sync']).to include('volume' => 'app-src', 'target' => '/app', 'exclude' => ['.git'])
+  end
+
+  it 'includes container and network in the effective configuration, with no defaults or up block' do
+    config = described_class.new('network' => 'app-tier',
+                                 'dependencies' => { 'app' => { 'image' => 'example:dev' } })
+
+    expect(config.to_h).to include('container' => 'app', 'network' => 'app-tier')
+    expect(config.to_h).not_to have_key('defaults')
+    expect(config.to_h).not_to have_key('up')
   end
 end

@@ -9,9 +9,10 @@ RSpec.describe Wip::CLI do
     Dir.mktmpdir do |dir|
       File.write(File.join(dir, 'wip.yml'), <<~YAML)
         version: 1
-        defaults:
-          container: app
-          image: example:dev
+        dependencies:
+          app:
+            image: example:dev
+            workdir: /app
         commands:
           rails:
             command: bin/rails
@@ -89,11 +90,11 @@ RSpec.describe Wip::CLI do
   it 'creates the network and dependencies before bringing up the main container' do
     File.write('wip.yml', <<~YAML)
       version: 1
-      defaults:
-        container: app
-        image: example:dev
-        network: app-tier
+      network: app-tier
       dependencies:
+        app:
+          image: example:dev
+          workdir: /app
         redis:
           image: redis:latest
     YAML
@@ -139,11 +140,12 @@ RSpec.describe Wip::CLI do
   it 'auto-loads .env next to wip.yml and injects it as container env, without overriding wip.yml env' do
     File.write('wip.yml', <<~YAML)
       version: 1
-      defaults:
-        container: app
-        image: example:dev
-        env:
-          PORT: "3000"
+      dependencies:
+        app:
+          image: example:dev
+          workdir: /app
+          env:
+            PORT: "3000"
     YAML
     File.write('.env', "PORT=9999\nRAILS_ENV=development\n")
 
@@ -168,11 +170,12 @@ RSpec.describe Wip::CLI do
     before do
       File.write('wip.yml', <<~YAML)
         version: 1
-        defaults:
-          container: app
-          image: example:dev
-          volumes:
-            - ".:/app"
+        dependencies:
+          app:
+            image: example:dev
+            workdir: /app
+            volumes:
+              - ".:/app"
         sync:
           exclude:
             - .git
@@ -228,9 +231,9 @@ RSpec.describe Wip::CLI do
     it 'uses a throwaway container when sync.mode: run is configured' do
       File.write('wip.yml', <<~YAML)
         version: 1
-        defaults:
-          container: app
-          image: example:dev
+        dependencies:
+          app:
+            image: example:dev
         sync:
           exclude:
             - .git
@@ -258,7 +261,7 @@ RSpec.describe Wip::CLI do
     end
 
     it 'requires a sync block' do
-      File.write('wip.yml', "version: 1\ndefaults:\n  container: app\n  image: example:dev\n")
+      File.write('wip.yml', "version: 1\ndependencies:\n  app:\n    image: example:dev\n")
 
       expect { described_class.start(%w[sync]) }.to raise_error(Wip::ConfigError, /needs a sync: block/)
     end
@@ -273,9 +276,9 @@ RSpec.describe Wip::CLI do
     it 'points at `wip dispatch` when wip.yml defines a command the built-in shadows' do
       File.write('wip.yml', <<~YAML)
         version: 1
-        defaults:
-          container: app
-          image: example:dev
+        dependencies:
+          app:
+            image: example:dev
         sync: {}
         commands:
           sync:
@@ -296,9 +299,9 @@ RSpec.describe Wip::CLI do
     File.write('Dockerfile', "FROM scratch\n")
     File.write('wip.yml', <<~YAML)
       version: 1
-      defaults:
-        container: app
-        image: example:dev
+      dependencies:
+        app:
+          image: example:dev
       commands:
         build:
           type: build
@@ -359,6 +362,49 @@ RSpec.describe Wip::CLI do
       described_class.start(%w[up -d])
     end
 
+    it 'mirrors into the volume before compose starts the container when sync is enabled' do
+      File.write('wip.yml', <<~YAML)
+        version: 1
+        mode: compose
+        compose:
+          service: app
+          command: wslc-compose
+        sync:
+          image: example:dev
+      YAML
+      runner = instance_double(Wip::CommandRunner, run: 0)
+      allow(Wip::CommandRunner).to receive(:new).and_return(runner)
+      source = File.expand_path('.')
+      expect(runner).to receive(:run).with(
+        ['wslc.exe', 'run', '--rm', '-v', "#{source}:/host-src:ro", '-v', 'app-src:/app', 'example:dev',
+         'rsync', '-r', '-l', '-t', '--whole-file', '--delete', '/host-src/', '/app/'],
+        interactive: false
+      ).and_return(0).ordered
+      expect(runner).to receive(:run).with(['wslc-compose', '-f', compose_file, 'up', '-d'],
+                                           interactive: false).and_return(0).ordered
+
+      described_class.start(%w[up -d])
+    end
+
+    it 'skips the pre-boot mirror when --no-sync is passed, even with sync configured' do
+      File.write('wip.yml', <<~YAML)
+        version: 1
+        mode: compose
+        compose:
+          service: app
+          command: wslc-compose
+        sync:
+          image: example:dev
+      YAML
+      runner = instance_double(Wip::CommandRunner, run: 0)
+      allow(Wip::CommandRunner).to receive(:new).and_return(runner)
+      expect(runner).not_to receive(:run).with(a_collection_including('rsync'), any_args)
+      expect(runner).to receive(:run).with(['wslc-compose', '-f', compose_file, 'up', '-d'],
+                                           interactive: false).and_return(0)
+
+      described_class.start(%w[up -d --no-sync])
+    end
+
     it 'attaches to an un-detached compose up when the terminal is interactive' do
       allow(Wip::Environment).to receive(:new).and_return(instance_double(Wip::Environment, interactive?: true))
       runner = instance_double(Wip::CommandRunner, run: 0)
@@ -399,9 +445,9 @@ RSpec.describe Wip::CLI do
     it 'rejects `wip logs` outside compose mode' do
       File.write('wip.yml', <<~YAML)
         version: 1
-        defaults:
-          container: app
-          image: example:dev
+        dependencies:
+          app:
+            image: example:dev
       YAML
 
       expect { described_class.start(%w[logs]) }.to raise_error(Wip::ConfigError, /compose mode/)

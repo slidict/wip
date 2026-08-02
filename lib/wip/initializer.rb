@@ -10,10 +10,10 @@ module Wip
       version: 1
       mode: container
 
-      defaults:
-        container: app # TODO: name of the container wip creates
-        image: your/image:tag # TODO: image to run
-        workdir: /app
+      dependencies:
+        app: # TODO: this is the container wip creates, execs into, and runs commands in
+          image: your/image:tag # TODO: image to run
+          workdir: /app # TODO: adjust to match your image, or delete this line
 
       sync: {} # optional; mirrors the source into a named volume instead of bind-mounting it live
     YAML

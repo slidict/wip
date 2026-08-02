@@ -66,7 +66,7 @@ module Wip
     def build(*extra)
       extra.shift if extra.first == '--'
       settings = load_config.command('build') || {}
-      context = settings['context'] || load_config.defaults['context'] || '.'
+      context = settings['context'] || '.'
       BuildContext.new(context).stage do |staged_context|
         execute(builder.build(settings: settings.merge('context' => staged_context), extra: extra))
       end
@@ -77,11 +77,12 @@ module Wip
     option :sync, type: :boolean, default: true, desc: 'Mirror the source into the sync volume first (--no-sync skips)'
     def up
       if load_config.compose?
+        sync_before_boot if options[:sync]
         return execute(compose_bridge.up(detach: options[:detach]), interactive: tty?(!options[:detach]))
       end
 
       ensure_network
-      load_config.dependencies.each_key { |name| ensure_dependency(name) }
+      sidecar_names.each { |name| ensure_dependency(name) }
       sync_before_boot if options[:sync]
       ensure_container
     end
@@ -111,7 +112,7 @@ module Wip
 
       execute(builder.down, exit_on_failure: false)
       execute(builder.remove, exit_on_failure: false)
-      load_config.dependencies.each_key do |name|
+      sidecar_names.each do |name|
         execute(builder.dependency_down(name), exit_on_failure: false)
         execute(builder.dependency_remove(name), exit_on_failure: false)
       end
@@ -250,6 +251,11 @@ module Wip
       false
     end
 
+    # dependencies: holds every container uniformly, including the primary one
+    # `container:` points at; that one gets its own up/down/start/find via
+    # ensure_container, so it's excluded here to avoid double-starting it.
+    def sidecar_names = load_config.dependencies.keys - [load_config.container]
+
     def ensure_dependency(name)
       if resource_exists?(builder.dependency_find(name))
         warn "wip: starting existing dependency '#{name}'"
@@ -300,7 +306,7 @@ module Wip
     end
 
     def ensure_container
-      container = load_config.defaults['container']
+      container = load_config.container
       interactive = tty?(!options[:detach])
       if resource_exists?(builder.find)
         warn "wip: starting existing container '#{container}'"

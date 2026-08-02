@@ -54,7 +54,17 @@ RSpec.describe Wip::SyncSettings do
 
   it 'defaults mode to exec outside compose, and to run under compose' do
     expect(described_class.new({}).mode).to eq('exec')
-    expect(described_class.new({}, compose: true).mode).to eq('run')
+    expect(described_class.new({ 'image' => 'example:dev' }, compose: true).mode).to eq('run')
+  end
+
+  it 'requires sync.image under compose, since there is no dependencies: entry to borrow it from' do
+    expect { described_class.new({}, compose: true) }
+      .to raise_error(Wip::ConfigError, /sync\.image is required under mode: compose/)
+    expect(described_class.new({ 'image' => 'example:dev' }, compose: true).image).to eq('example:dev')
+  end
+
+  it 'leaves sync.image unset outside compose, where it is optional' do
+    expect(described_class.new({}).image).to be_nil
   end
 
   it 'lets sync.mode override the default explicitly' do
@@ -63,7 +73,7 @@ RSpec.describe Wip::SyncSettings do
 
   it 'rejects an unknown sync.mode and exec under compose' do
     expect { described_class.new({ 'mode' => 'nope' }) }.to raise_error(Wip::ConfigError, /sync.mode must be one of/)
-    expect { described_class.new({ 'mode' => 'exec' }, compose: true) }
+    expect { described_class.new({ 'mode' => 'exec', 'image' => 'example:dev' }, compose: true) }
       .to raise_error(Wip::ConfigError, /sync.mode: exec needs mode: container/)
   end
 end
