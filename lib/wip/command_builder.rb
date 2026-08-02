@@ -16,7 +16,7 @@ module Wip
       # dependencies: entries don't carry their own name (it's the hash key), so the
       # exec target defaults to @config.container; a commands: entry can still
       # redirect it by setting its own `container:`.
-      values = primary_values.merge('container' => @config.container).merge(settings)
+      values = primary_values.merge('container' => required_container).merge(settings)
       command = [@wslc, 'exec']
       command << '-it' if tty?(interactive)
       command.concat(options(values, include_container: true, include_publish: false)).concat(arguments)
@@ -32,7 +32,7 @@ module Wip
 
     def up(detach: false)
       values = primary_values
-      command = [@wslc, 'run', '--name', @config.container]
+      command = [@wslc, 'run', '--name', required_container]
       command.push('--network', @config.network) if @config.network
       command << '-d' if detach
       command << '-it' if !detach && tty?(true)
@@ -42,13 +42,13 @@ module Wip
     end
 
     def start(detach: false)
-      command = [@wslc, 'start', @config.container]
+      command = [@wslc, 'start', required_container]
       command.push('-a', '-i') unless detach
       command
     end
 
     def find
-      [@wslc, 'list', '--all', '--filter', "name=#{@config.container}", '--format', 'json']
+      [@wslc, 'list', '--all', '--filter', "name=#{required_container}", '--format', 'json']
     end
 
     # Mirrors into the volume from a throwaway container. Used for sync.mode:
@@ -81,15 +81,15 @@ module Wip
     # itself booted is guaranteed to have both the read-only source mount and
     # the volume attached.
     def sync_exec
-      [@wslc, 'exec', @config.container, *required_sync.mirror_command]
+      [@wslc, 'exec', required_container, *required_sync.mirror_command]
     end
 
     def down
-      [@wslc, 'stop', @config.container]
+      [@wslc, 'stop', required_container]
     end
 
     def remove
-      [@wslc, 'remove', '-f', @config.container]
+      [@wslc, 'remove', '-f', required_container]
     end
 
     def network_create
@@ -196,9 +196,17 @@ module Wip
       @config.dependency(name) || raise(ConfigError, "Unknown dependency: #{name}")
     end
 
+    def required_container
+      container = @config.container
+      raise ConfigError, 'container: must be set in wip.yml' if container.to_s.empty?
+
+      container
+    end
+
     def primary_values
-      @config.primary || raise(ConfigError, "No dependencies.#{@config.container} entry " \
-                                            '(set container: to name a different one)')
+      container = required_container
+      @config.dependency(container) || raise(ConfigError, "No dependencies.#{container} entry " \
+                                                          '(check container: in wip.yml)')
     end
   end
 end

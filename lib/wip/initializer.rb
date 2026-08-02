@@ -11,9 +11,10 @@ module Wip
     CONTAINER_TEMPLATE = <<~YAML
       version: 1
       mode: container
+      container: app # TODO: rename freely, as long as it matches a key under dependencies: below
 
       dependencies:
-        app: # TODO: this is the container wip creates, execs into, and runs commands in
+        app: # this is the container wip creates, execs into, and runs commands in
           image: your/image:tag # TODO: image to run
           workdir: /app # TODO: adjust to match your image, or delete this line
 
@@ -40,6 +41,8 @@ module Wip
       <<~YAML
         version: 1
         mode: compose
+        container: app # TODO: rename freely; only used to name sync's volume ("<container>-src"),
+                        # since compose.yml — not dependencies: — owns this service's own definition
 
         compose:
           service: app # TODO: which service in #{compose_file} wip run/exec/NAME target

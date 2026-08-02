@@ -25,8 +25,11 @@ module Wip
     def dependencies = @raw['dependencies'] || {}
     # Which dependencies: entry `up`/`down`/`exec`/`run`/`build`/`commands:` target
     # by default — the one container wip itself considers "the app." Everything
-    # else in dependencies: is a sidecar wip only starts and stops.
-    def container = presence(@raw['container']) || 'app'
+    # else in dependencies: is a sidecar wip only starts and stops. No default:
+    # guessing a name here (the old default was "app") either matches by luck or
+    # fails in a way that doesn't point at the real problem (a differently-named
+    # entry), so a project with any dependencies: must say which one explicitly.
+    def container = presence(@raw['container'])
     def network = @raw['network']
     def mode = @raw['mode'] || 'container'
     def compose = @raw['compose']
@@ -107,6 +110,13 @@ module Wip
 
     def validate_dependencies!
       raise ConfigError, 'dependencies must be a mapping' unless dependencies.is_a?(Hash)
+      # Under compose mode, populated dependencies: is already an error on its own
+      # (validate_compose!, below) — this only needs to fire for the mode: container
+      # case, where dependencies: having entries but no container: is otherwise valid.
+      if dependencies.any? && !container && !compose?
+        raise ConfigError,
+              'container: must be set when dependencies: has entries'
+      end
 
       dependencies.each { |name, entry| validate_dependency!(name, entry) }
     end

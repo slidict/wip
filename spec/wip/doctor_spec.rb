@@ -16,6 +16,7 @@ RSpec.describe Wip::Doctor do
   it 'reports an invalid sync block as a failed check' do
     results = results_for(<<~YAML)
       version: 1
+      container: app
       dependencies:
         app:
           image: example:dev
@@ -30,6 +31,7 @@ RSpec.describe Wip::Doctor do
   it 'reports the resolved sync plan when the source exists' do
     results = results_for(<<~YAML)
       version: 1
+      container: app
       dependencies:
         app:
           image: example:dev
@@ -50,5 +52,18 @@ RSpec.describe Wip::Doctor do
     YAML
 
     expect(results).to include(an_object_having_attributes(level: :fail, message: 'No dependencies.web entry'))
+  end
+
+  it 'reports a missing container: as a failed check when dependencies: has entries' do
+    results = results_for(<<~YAML)
+      version: 1
+      dependencies:
+        app:
+          image: example:dev
+    YAML
+
+    expect(results).to include(an_object_having_attributes(
+                                 level: :fail, message: 'container: must be set when dependencies: has entries'
+                               ))
   end
 end

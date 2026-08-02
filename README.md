@@ -50,7 +50,8 @@ mode: container # default. This example is container mode end-to-end — see "Co
                 # compose: block instead; the two don't mix within one wip.yml.
 wslc:
   command: auto # tries wslc.exe, wslc, then System32; an absolute path also works
-container: app # optional; which dependencies: entry `up`/`exec`/`run`/`build`/`commands:` target (default: app)
+container: app # required once dependencies: has entries; which one `up`/`exec`/`run`/`build`/`commands:`
+               # target. No default — a project must say which entry is the primary one explicitly.
 network: app-tier # optional; shared by every dependencies: entry so containers can resolve each other by name
 dependencies:
   app: # container: points here — the one container wip execs into and runs commands in
@@ -129,10 +130,11 @@ directly with no copying.
 
 ### Dependency containers
 
-`dependencies:` holds every container uniformly — the primary one `container:` points at (`app`
-by default) and any sidecar services (a database, Redis, ...) alongside it. Each entry accepts
-`image` (required), `command`, `env`, `ports`, `volumes`, and `workdir`; there's no separate,
-differently-shaped block for "the one you exec into."
+`dependencies:` holds every container uniformly — the primary one `container:` points at and any
+sidecar services (a database, Redis, ...) alongside it. Each entry accepts `image` (required),
+`command`, `env`, `ports`, `volumes`, and `workdir`; there's no separate, differently-shaped block
+for "the one you exec into." `container:` has no default; once `dependencies:` has any entries,
+wip needs to be told explicitly which one is primary rather than guessing a name.
 
 What sets the primary entry apart is operational, not structural: `wip up` brings up every other
 entry by name first (creating `network:` beforehand if it doesn't exist and set), then boots or
@@ -302,7 +304,7 @@ found, its version, and which compose file `wip` resolved.
 | `wip doctor` | Diagnose WSL2, interop, WSLC, config, architecture, and Git |
 | `wip config` | Print the effective configuration (secrets masked) |
 | `wip build -- --no-cache` | Build the image from the `build` definition |
-| `wip up [-d] [--no-sync]` | Start the primary `dependencies:` entry (`container:`, default `app`) and its sidecars (creating any that are missing, on `network:` if set). `-d` runs the main container in the background; with `sync:` configured, the source is mirrored into the volume first unless `--no-sync` |
+| `wip up [-d] [--no-sync]` | Start the primary `dependencies:` entry (`container:` names which one) and its sidecars (creating any that are missing, on `network:` if set). `-d` runs the main container in the background; with `sync:` configured, the source is mirrored into the volume first unless `--no-sync` |
 | `wip down` | Stop and remove the primary container and its sidecar `dependencies:` |
 | `wip exec [--no-interactive] COMMAND...` | Run a command in the existing container |
 | `wip run [--no-interactive] COMMAND...` | Run a command in a new `--rm` container (compose mode: `exec`s into `compose.service` instead) |

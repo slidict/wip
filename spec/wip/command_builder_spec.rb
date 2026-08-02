@@ -4,7 +4,8 @@ require 'spec_helper'
 RSpec.describe Wip::CommandBuilder do
   let(:environment) { instance_double(Wip::Environment, interactive?: true) }
   let(:config) do
-    Wip::Config.new('dependencies' => { 'app' => { 'image' => 'example:dev', 'workdir' => '/app' } },
+    Wip::Config.new('container' => 'app',
+                    'dependencies' => { 'app' => { 'image' => 'example:dev', 'workdir' => '/app' } },
                     'commands' => { 'rails' => { 'command' => 'bin/rails', 'interactive' => true },
                                     'build' => { 'type' => 'build', 'tag' => 'example:dev', 'context' => '.' } })
   end
@@ -70,7 +71,8 @@ RSpec.describe Wip::CommandBuilder do
   end
 
   it 'appends the primary dependency command so the container stays running' do
-    with_command = Wip::Config.new('dependencies' => { 'app' => { 'image' => 'example:dev', 'workdir' => '/app',
+    with_command = Wip::Config.new('container' => 'app',
+                                   'dependencies' => { 'app' => { 'image' => 'example:dev', 'workdir' => '/app',
                                                                   'command' => 'local' } })
     builder = described_class.new(wslc: 'wslc.exe', config: with_command, environment: environment)
 
@@ -87,7 +89,7 @@ RSpec.describe Wip::CommandBuilder do
 
   describe 'network and dependency support' do
     let(:networked_config) do
-      Wip::Config.new('network' => 'app-tier',
+      Wip::Config.new('container' => 'app', 'network' => 'app-tier',
                       'dependencies' => { 'app' => { 'image' => 'example:dev', 'workdir' => '/app' },
                                           'redis' => { 'image' => 'redis:latest' },
                                           'development.mysql' => {
@@ -133,7 +135,8 @@ RSpec.describe Wip::CommandBuilder do
 
   describe 'sync support' do
     let(:synced_config) do
-      Wip::Config.new('dependencies' => { 'app' => { 'image' => 'example:dev', 'workdir' => '/app',
+      Wip::Config.new('container' => 'app',
+                      'dependencies' => { 'app' => { 'image' => 'example:dev', 'workdir' => '/app',
                                                      'volumes' => ['.:/app', 'bundle:/usr/local/bundle'] },
                                           'redis' => { 'image' => 'redis:latest', 'volumes' => ['.:/app'] } },
                       'sync' => { 'exclude' => ['.git'] })
@@ -168,7 +171,7 @@ RSpec.describe Wip::CommandBuilder do
     end
 
     it 'uses the sync.build tag over sync.image and the primary dependency, without needing one to exist' do
-      built_config = Wip::Config.new('mode' => 'compose',
+      built_config = Wip::Config.new('mode' => 'compose', 'container' => 'app',
                                      'compose' => { 'service' => 'app', 'command' => 'my-compose-tool' },
                                      'sync' => { 'build' => { 'dockerfile' => 'FROM alpine' } })
       builder = described_class.new(wslc: 'wslc.exe', config: built_config, environment: environment)
