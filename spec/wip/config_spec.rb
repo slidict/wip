@@ -85,4 +85,32 @@ RSpec.describe Wip::Config do
                           'defaults' => { 'network' => 'app-tier' })
     end.to raise_error(Wip::ConfigError, /compose is mutually exclusive with defaults\.network/)
   end
+
+  it 'has no sync settings unless a sync block is present' do
+    config = described_class.new({})
+    expect(config.sync?).to be(false)
+    expect(config.sync).to be_nil
+  end
+
+  it 'derives sync settings from defaults and the config location' do
+    config = described_class.new({ 'defaults' => { 'container' => 'web', 'workdir' => '/srv/app' }, 'sync' => {} },
+                                 '/home/me/project/wip.yml')
+
+    expect(config.sync?).to be(true)
+    expect(config.sync.source).to eq('/home/me/project')
+    expect(config.sync.target).to eq('/srv/app')
+    expect(config.sync.volume).to eq('web-src')
+  end
+
+  it 'rejects sync combined with compose' do
+    expect do
+      described_class.new('compose' => { 'service' => 'app', 'command' => 'my-compose-tool' }, 'sync' => {})
+    end.to raise_error(Wip::ConfigError, /sync is mutually exclusive with compose/)
+  end
+
+  it 'includes the resolved sync settings in the effective configuration' do
+    config = described_class.new('defaults' => { 'container' => 'app' }, 'sync' => { 'exclude' => ['.git'] })
+
+    expect(config.to_h['sync']).to include('volume' => 'app-src', 'target' => '/app', 'exclude' => ['.git'])
+  end
 end

@@ -26,6 +26,13 @@ module Wip
     def compose_file = compose && compose['file']
     def compose_project = compose && compose['project']
     def compose_command = compose && compose['command']
+    def sync? = !!sync
+
+    def sync
+      return @sync if defined?(@sync)
+
+      @sync = @raw.key?('sync') ? build_sync : nil
+    end
 
     def command(name)
       entry = commands[name.to_s]
@@ -44,6 +51,7 @@ module Wip
     def to_h(redact: true)
       value = { 'version' => 1, 'wslc' => { 'command' => wslc_command }, 'defaults' => defaults,
                 'up' => { 'command' => up_command }, 'dependencies' => dependencies, 'compose' => compose,
+                'sync' => sync&.to_h,
                 'commands' => commands.transform_values { |entry| defaults.merge('type' => 'exec').merge(entry) } }
       redact ? redact_secrets(value) : value
     end
@@ -57,6 +65,17 @@ module Wip
       validate_commands!
       validate_dependencies!
       validate_compose!
+      validate_sync!
+    end
+
+    def build_sync
+      SyncSettings.new(@raw['sync'], base: path && File.dirname(path.to_s),
+                                     workdir: defaults['workdir'], container: defaults['container'])
+    end
+
+    def validate_sync!
+      return unless sync
+      raise ConfigError, 'sync is mutually exclusive with compose' if compose?
     end
 
     def validate_commands!

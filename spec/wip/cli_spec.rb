@@ -162,6 +162,124 @@ RSpec.describe Wip::CLI do
     described_class.start(%w[up])
   end
 
+  describe 'sync mode' do
+    let(:source) { File.expand_path('.') }
+
+    before do
+      File.write('wip.yml', <<~YAML)
+        version: 1
+        defaults:
+          container: app
+          image: example:dev
+          volumes:
+            - ".:/app"
+        sync:
+          exclude:
+            - .git
+      YAML
+      allow(Wip::CommandResolver).to receive(:new).and_return(instance_double(Wip::CommandResolver,
+                                                                              resolve: 'wslc.exe'))
+    end
+
+    def stub_runner(probe_output)
+      runner = instance_double(Wip::CommandRunner)
+      allow(Wip::CommandRunner).to receive(:new) do |**kwargs|
+        kwargs[:stdout]&.write(probe_output)
+        runner
+      end
+      runner
+    end
+
+    it 'mirrors into the volume before booting, and boots off the volume instead of the bind mount' do
+      runner = stub_runner('[]')
+      allow(runner).to receive(:run).with(%w[wslc.exe list --all --filter name=app --format json]).and_return(0)
+      expect(runner).to receive(:run).with(
+        ['wslc.exe', 'run', '--rm', '-v', "#{source}:/host-src:ro", '-v', 'app-src:/app', 'example:dev',
+         'rsync', '-a', '--delete', '--exclude=.git', '/host-src/', '/app/'], interactive: false
+      ).and_return(0).ordered
+      expect(runner).to receive(:run).with(
+        ['wslc.exe', 'run', '--name', 'app', '-d', '-w', '/app', '-v', "#{source}:/host-src:ro", '-v',
+         'app-src:/app', 'example:dev'], interactive: false
+      ).and_return(0).ordered
+
+      described_class.start(%w[up -d])
+    end
+
+    it 'skips the pre-boot mirror when --no-sync is passed' do
+      runner = stub_runner('[]')
+      allow(runner).to receive(:run).with(%w[wslc.exe list --all --filter name=app --format json]).and_return(0)
+      expect(runner).not_to receive(:run).with(a_collection_including('rsync'), any_args)
+      expect(runner).to receive(:run).with(a_collection_including('--name', 'app'), interactive: false).and_return(0)
+
+      described_class.start(%w[up -d --no-sync])
+    end
+
+    it 'runs a one-shot mirror inside the container when it is already running' do
+      runner = stub_runner('[{"Name":"app"}]')
+      allow(runner).to receive(:run).with(%w[wslc.exe list --filter name=app --format json]).and_return(0)
+      expect(runner).to receive(:run).with(
+        %w[wslc.exe exec app rsync -a --delete --exclude=.git /host-src/ /app/], interactive: false
+      ).and_return(0)
+
+      described_class.start(%w[sync])
+    end
+
+    it 'falls back to a throwaway container when the app container is not running' do
+      runner = stub_runner('[]')
+      allow(runner).to receive(:run).with(%w[wslc.exe list --filter name=app --format json]).and_return(0)
+      expect(runner).to receive(:run).with(a_collection_including('--rm', 'rsync'), interactive: false).and_return(0)
+
+      described_class.start(%w[sync])
+    end
+
+    it 'keeps mirroring on an interval with --watch until interrupted' do
+      runner = stub_runner('[{"Name":"app"}]')
+      allow(runner).to receive(:run).with(%w[wslc.exe list --filter name=app --format json]).and_return(0)
+      syncs = 0
+      allow(runner).to receive(:run).with(a_collection_including('rsync'), interactive: false) do
+        syncs += 1
+        raise Interrupt if syncs == 2
+
+        0
+      end
+
+      expect { described_class.start(%w[sync --watch --interval 0.01]) }
+        .to output(/syncing .* every 0\.01s/).to_stderr
+      expect(syncs).to eq(2)
+    end
+
+    it 'requires a sync block' do
+      File.write('wip.yml', "version: 1\ndefaults:\n  container: app\n  image: example:dev\n")
+
+      expect { described_class.start(%w[sync]) }.to raise_error(Wip::ConfigError, /needs a sync: block/)
+    end
+
+    it 'rejects a non-positive --interval instead of letting sleep raise' do
+      stub_runner('[]')
+
+      expect { described_class.start(%w[sync --watch --interval -1]) }
+        .to raise_error(Wip::ConfigError, /--interval must be a positive number/)
+    end
+
+    it 'points at `wip dispatch` when wip.yml defines a command the built-in shadows' do
+      File.write('wip.yml', <<~YAML)
+        version: 1
+        defaults:
+          container: app
+          image: example:dev
+        sync: {}
+        commands:
+          sync:
+            command: bin/custom-sync
+      YAML
+      runner = stub_runner('[]')
+      allow(runner).to receive(:run).and_return(0)
+
+      expect { described_class.start(%w[sync]) }
+        .to output(/commands\.sync .* is shadowed by the built-in `wip sync`.*wip dispatch sync/m).to_stderr
+    end
+  end
+
   it 'excludes files matched by .dockerignore from the build context' do
     FileUtils.mkdir_p('node_modules')
     File.write(File.join('node_modules', 'pkg.js'), '')

@@ -97,6 +97,11 @@ commands:
     type: build
     context: .
     tag: slidict/slidict:development
+sync: # optional; mirror the source into a named volume instead of bind-mounting it live
+  exclude:
+    - .git
+    - tmp/
+    - node_modules/
 ```
 
 `env` values are stringified. `wip config` masks any key matching token, password, secret,
@@ -128,6 +133,56 @@ inside the main container) can reach `development.mysql`/`redis`/etc. by their d
 the same way Compose's service names resolve. `wip down` tears the main container and all
 dependencies down (the network itself is left in place). Each dependency entry accepts `image`
 (required), `command`, `env`, `ports`, `volumes`, and `workdir` — the same shape as `defaults`.
+
+### Source sync
+
+Bind-mounting the app directory (`.:/app`) is what usually makes a container boot crawl under
+wslc — see [Slow boot when the app directory is
+bind-mounted](#slow-boot-when-the-app-directory-is-bind-mounted) for why. A `sync:` block hands
+that problem to `wip`: the source is mounted read-only, the app runs off a named volume, and wip
+mirrors one into the other with `rsync`.
+
+```yaml
+sync:
+  source: .          # host path, relative to wip.yml (default: the wip.yml directory)
+  target: /app       # container path served by the volume (default: defaults.workdir, else /app)
+  volume: app-src    # named volume holding the mirror (default: "<defaults.container>-src")
+  mount: /host-src   # where the source is bind-mounted read-only (default: /host-src)
+  exclude:           # rsync --exclude patterns
+    - .git
+    - tmp/
+    - node_modules/
+  delete: true       # rsync --delete (default: true)
+  command: rsync     # binary that does the mirroring (default: rsync)
+  options: []        # extra flags appended to the rsync invocation
+  interval: 2        # seconds between syncs for `wip sync --watch` (default: 2)
+```
+
+Everything below `sync:` is optional — `sync: {}` alone already works. With it in place:
+
+- Any `defaults.volumes` entry mounting `target` (the usual `.:/app`) is replaced by
+  `<source>:/host-src:ro` plus `app-src:/app`, so the running app only ever touches the volume.
+  Other volumes (`bundle:/usr/local/bundle`, ...) are passed through untouched, and
+  `dependencies:` keep mounting whatever they declare.
+- `wip up` mirrors the source into the volume before the container boots; `wip up --no-sync`
+  skips that step.
+- `wip sync` mirrors on demand — `wslc exec`ing rsync inside the container when it's running, and
+  falling back to a throwaway container with the same mounts when it isn't.
+- `wip sync --watch [--interval N]` keeps re-syncing until Ctrl-C, so host edits reach the
+  container with a short delay. Run it in a second terminal alongside `wip up -d`.
+- `wip doctor` reports the resolved source, volume, and target, and fails if the source is missing.
+
+Like every built-in command, `wip sync` takes precedence over a `commands:` entry of the same
+name; wip says so and points at `wip dispatch sync`, which still runs yours.
+
+Two things to keep in mind. The mirror runs `rsync` *inside* the container, so the image needs it
+(`RUN apt-get update && apt-get install -y rsync`) — or point `sync.command` at a copy tool the
+image already has. And the mirror is one-way (host → volume): anything the app writes under
+`target` is removed by the next `--delete` pass unless you `exclude` it, give it its own volume,
+or set `delete: false`.
+
+`sync:` is mutually exclusive with `compose:` — in compose mode the compose file owns the volume
+layout.
 
 ### Compose mode
 
@@ -178,12 +233,13 @@ found, its version, and which compose file `wip` resolved.
 | `wip doctor` | Diagnose WSL2, interop, WSLC, config, architecture, and Git |
 | `wip config` | Print the effective configuration (secrets masked) |
 | `wip build -- --no-cache` | Build the image from the `build` definition |
-| `wip up [-d]` | Start `defaults.container` and its `dependencies` (creating any that are missing, on `defaults.network` if set). `-d` runs the main container in the background |
+| `wip up [-d] [--no-sync]` | Start `defaults.container` and its `dependencies` (creating any that are missing, on `defaults.network` if set). `-d` runs the main container in the background; with `sync:` configured, the source is mirrored into the volume first unless `--no-sync` |
 | `wip down` | Stop and remove `defaults.container` and its `dependencies` |
 | `wip exec [--no-interactive] COMMAND...` | Run a command in the existing container |
 | `wip run [--no-interactive] COMMAND...` | Run a command in a new `--rm` container (compose mode: `exec`s into `compose.service` instead) |
 | `wip shell` | Open the configured shell, falling back to `bash` then `sh` |
 | `wip logs [-f] [SERVICE...]` | Follow compose service logs (compose mode only) |
+| `wip sync [-w] [--interval N]` | Mirror the source into the sync volume once, or keep re-syncing with `--watch` (needs `sync:`) |
 | `wip NAME ARGS...` | Run `commands.NAME`, appending any extra arguments |
 
 TTY allocation is decided by combining the command's config, the CLI option, and whether both
@@ -261,12 +317,11 @@ side can look busy while almost no data is actually transferred, and the process
 for minutes with barely any resource usage to show for it.
 
 If a debug log shows a boot-time command "stuck" with low CPU/mem/IO in `resource_monitor`'s
-output, this is worth checking before assuming the app itself is broken. The workaround is to stop
-bind-mounting the source live and instead mirror it into a named volume: mount the host path
-read-only (`.:/host-src:ro`), add a named volume for `/app`, and have the container's entrypoint
-`rsync` from the read-only mount into the volume before boot, then keep syncing in the background
-(e.g. every couple of seconds) so edits still show up with a short delay. The app then only ever
-touches fast native storage once it's running.
+output, this is worth checking before assuming the app itself is broken. The fix is to stop
+bind-mounting the source live and mirror it into a named volume instead, so the app only ever
+touches fast native storage once it's running. `wip` does that for you — add a `sync:` block and
+it rewrites the mounts, mirrors before boot, and re-syncs on demand. See [Source
+sync](#source-sync).
 
 ### CPU architecture mismatch
 
@@ -330,10 +385,12 @@ for `wip`, roughly in priority order:
 3. **Bind-mount boot time (`rails c`, `bundle`, ...)** — commands like `wip rails c` still start
    noticeably slower than the equivalent under `docker compose`, mostly from WSL2 bind-mounted
    (`.:/app`-style) volumes doing many small reads for gems/`node_modules` (use `--debug` to
-   confirm it's disk I/O and not `wip`'s own overhead). This isn't really `wip`'s responsibility —
-   the fix has to come from either the mount layer or the project's own volume layout. We're also
-   hoping for improvements on the `wslc` side itself (faster bind-mount/cache behavior); `wip`
-   will pick those up for free as soon as they land.
+   confirm it's disk I/O and not `wip`'s own overhead). [Source sync](#source-sync) works around
+   this today by running the app off a named volume and mirroring the host tree into it, at the
+   cost of a one-way sync with a short delay. A tighter loop (host-side file watching instead of
+   interval polling, two-way sync) is the natural next step. We're also hoping for improvements on
+   the `wslc` side itself (faster bind-mount/cache behavior); `wip` will pick those up for free as
+   soon as they land.
 
 Each of these should stay additive to the existing `wip.yml` shape — no breaking changes to
 `defaults`, `commands`, `dependencies`, or `compose` are planned. A resident daemon and a GUI
