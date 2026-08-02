@@ -39,6 +39,17 @@ module Wip
       nil
     end
 
+    desc 'init', 'Create a starter wip.yml (detects an existing compose.yml/docker-compose.yml)'
+    option :force, type: :boolean, default: false, desc: 'Overwrite an existing wip.yml'
+    def init
+      path = Pathname(options[:config] || ConfigLoader::FILENAME).expand_path
+      raise Error, "#{path} already exists (use --force to overwrite)" if path.file? && !options[:force]
+
+      initializer = Initializer.new(dir: path.dirname)
+      path.write(initializer.call)
+      warn "wip: wrote #{path} (mode: #{initializer.compose? ? 'compose' : 'container'})"
+    end
+
     desc 'doctor', 'Diagnose the development environment'
     def doctor
       results = Doctor.new(loader: loader).call

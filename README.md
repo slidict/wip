@@ -31,6 +31,7 @@ From source: `bundle install && bundle exec exe/wip version`.
 ```bash
 gem install wslc-wip
 cd my-project
+wip init   # writes a starter wip.yml; edit the TODOs, then:
 wip doctor
 wip build
 wip up -d
@@ -238,6 +239,7 @@ found, its version, and which compose file `wip` resolved.
 
 | Command | Description |
 |---|---|
+| `wip init [--force]` | Write a starter `wip.yml`: `mode: compose` if a `compose.yml`/`docker-compose.yml` is found next to it, `mode: container` otherwise. Refuses to overwrite an existing `wip.yml` unless `--force` |
 | `wip version` | wip's version, plus WSLC's if it can be detected |
 | `wip doctor` | Diagnose WSL2, interop, WSLC, config, architecture, and Git |
 | `wip config` | Print the effective configuration (secrets masked) |
