@@ -54,15 +54,20 @@ module Wip
 
     # An Interrupt during the main thread's `join` closes these pipes out from
     # under a still-reading pump thread; treat that as a normal stop rather
-    # than an uncaught background-thread exception.
+    # than an uncaught background-thread exception. Only the read from
+    # `source` is rescued, so a genuine write failure on `destination` still
+    # surfaces.
     def pump(source, destination, captured)
       Thread.new do
-        source.each(4096) do |chunk|
+        loop do
+          chunk = begin
+            source.readpartial(4096)
+          rescue IOError # includes EOFError, raised at end of stream
+            break
+          end
           destination.write(chunk)
           captured << chunk
         end
-      rescue IOError
-        nil
       end
     end
   end
