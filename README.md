@@ -249,6 +249,23 @@ When `pull access denied` (or similar) is detected, wip suggests how to log in:
 wslc registry login -u <username> docker.io
 ```
 
+### Slow boot when the app directory is bind-mounted
+
+wslc containers run in their own VM, so a bind-mounted host directory (`.:/app`) is always shared
+in over virtiofs, even when the host path is already on WSL's native filesystem. Frameworks that
+scan large directory trees at startup (Ruby's Zeitwerk autoloader, for example) issue many small
+per-file stat/open calls, and each one is a round trip through that layer — CPU on the Windows
+side can look busy while almost no data is actually transferred, and the process can appear hung
+for minutes with barely any resource usage to show for it.
+
+If a debug log shows a boot-time command "stuck" with low CPU/mem/IO in `resource_monitor`'s
+output, this is worth checking before assuming the app itself is broken. The workaround is to stop
+bind-mounting the source live and instead mirror it into a named volume: mount the host path
+read-only (`.:/host-src:ro`), add a named volume for `/app`, and have the container's entrypoint
+`rsync` from the read-only mount into the volume before boot, then keep syncing in the background
+(e.g. every couple of seconds) so edits still show up with a short delay. The app then only ever
+touches fast native storage once it's running.
+
 ### CPU architecture mismatch
 
 Check the image and publish a multi-arch (amd64/arm64) image:
