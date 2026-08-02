@@ -231,6 +231,16 @@ RSpec.describe Wip::CLI do
       described_class.start(%w[up -d])
     end
 
+    it 'attaches to an un-detached compose up when the terminal is interactive' do
+      allow(Wip::Environment).to receive(:new).and_return(instance_double(Wip::Environment, interactive?: true))
+      runner = instance_double(Wip::CommandRunner, run: 0)
+      allow(Wip::CommandRunner).to receive(:new).and_return(runner)
+      expect(runner).to receive(:run).with(['wslc-compose', '-f', compose_file, 'up'],
+                                           interactive: true).and_return(0)
+
+      described_class.start(%w[up])
+    end
+
     it 'delegates down to wslc-compose' do
       runner = instance_double(Wip::CommandRunner, run: 0)
       allow(Wip::CommandRunner).to receive(:new).and_return(runner)

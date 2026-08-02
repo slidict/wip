@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
+require 'fileutils'
+
 RSpec.describe Wip::ComposeBridge do
   subject(:bridge) { described_class.new(compose_command: 'wslc-compose', file: 'compose.yml') }
 
@@ -48,6 +50,24 @@ RSpec.describe Wip::ComposeBridge do
       config = Wip::Config.new({ 'compose' => { 'service' => 'app', 'file' => 'custom.yml',
                                                 'command' => 'my-compose-tool' } }, 'wip.yml')
       expect(described_class.file_path(config)).to eq(Pathname('custom.yml').expand_path)
+    end
+
+    it 'resolves a relative compose.file against wip.yml, not the current directory' do
+      FileUtils.mkdir_p('project/config')
+      config = Wip::Config.new({ 'compose' => { 'service' => 'app', 'file' => 'config/custom.yml',
+                                                'command' => 'my-compose-tool' } },
+                               File.expand_path('project/wip.yml'))
+      expected = Pathname(File.expand_path('project/config/custom.yml'))
+
+      Dir.chdir('project/config') { expect(described_class.file_path(config)).to eq(expected) }
+    end
+
+    it 'keeps an absolute compose.file as-is' do
+      absolute = File.expand_path('elsewhere/custom.yml')
+      config = Wip::Config.new({ 'compose' => { 'service' => 'app', 'file' => absolute,
+                                                'command' => 'my-compose-tool' } },
+                               File.expand_path('project/wip.yml'))
+      expect(described_class.file_path(config)).to eq(Pathname(absolute))
     end
 
     it 'auto-detects a compose file next to wip.yml' do

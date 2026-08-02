@@ -76,10 +76,25 @@ module Wip
     end
 
     def check_compose(config, results)
+      command = resolve_compose(config, results)
+      check_version(command, results, label: 'compose command') if command
+      check_compose_file(config, results)
+    end
+
+    def resolve_compose(config, results)
       command = @compose_resolver.resolve(config.compose_command)
       results << Result.new(:ok, "Found #{command}")
-      check_version(command, results, label: 'compose command')
+      command
     rescue CommandNotFoundError => e
+      results << Result.new(:fail, e.message)
+      nil
+    end
+
+    def check_compose_file(config, results)
+      path = ComposeBridge.file_path(config)
+      results << result(path.file? ? :ok : :fail, "Found compose file #{path}",
+                        "Compose file not found: #{path}")
+    rescue ConfigError => e
       results << Result.new(:fail, e.message)
     end
 

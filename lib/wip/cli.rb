@@ -64,7 +64,9 @@ module Wip
     desc 'up', 'Start the configured container and its dependencies, creating them if necessary'
     option :detach, type: :boolean, default: false, aliases: '-d'
     def up
-      return execute(compose_bridge.up(detach: options[:detach])) if load_config.compose?
+      if load_config.compose?
+        return execute(compose_bridge.up(detach: options[:detach]), interactive: tty?(!options[:detach]))
+      end
 
       ensure_network
       load_config.dependencies.each_key { |name| ensure_dependency(name) }

@@ -22,10 +22,12 @@ module Wip
     end
 
     def self.file_path(config)
-      configured = config.compose_file
-      return Pathname(configured).expand_path if configured
-
       base = Pathname(config.path).dirname
+      configured = config.compose_file
+      # Relative compose.file is resolved against wip.yml, not the current directory,
+      # so `wip` behaves the same from any subdirectory (matching auto-detection below).
+      return base.join(configured).expand_path if configured
+
       FILENAMES.map { |name| base.join(name) }.find(&:file?) ||
         raise(ConfigError, "compose mode: no compose file found next to #{config.path} " \
                            "(looked for #{FILENAMES.join(', ')})")

@@ -158,10 +158,12 @@ defaults to `auto` and searches for `wslc.exe`/`wslc`): `compose.command` is req
 every implementation equally — set it to whichever binary name or absolute path you've installed.
 Whichever one you use needs to understand `-f FILE [-p PROJECT] up|down|exec|logs`, the subset of
 the Compose CLI vocabulary `wip` drives. `wip doctor` reports whether the configured command is
-found and its version.
+found, its version, and which compose file `wip` resolved.
 
 - `wip up`/`wip down` delegate straight to `<compose command> up -d`/`down`.
 - `wip exec`/`wip NAME` (custom `commands:`) run inside `compose.service`.
+- `wip shell` also goes through the bridge: unless `commands.shell` is defined in `wip.yml`, it
+  `exec`s `bash` against `compose.service`, falling back to `sh`.
 - `wip logs [-f] [SERVICE...]` is only available in compose mode.
 - `wip run` has no ephemeral-container equivalent in this exec-only vocabulary, so it falls back
   to `exec` against the already-running `compose.service` (wip warns when this happens).
@@ -309,10 +311,13 @@ plugins are all unimplemented.
 
 `wip` already covers most of what [`dip`](https://github.com/bibendi/dip) adds on top of Compose —
 named commands (`commands:`), `run`/`exec` hidden behind a single verb, `.env` passthrough, and
-sidecar services via `dependencies:` + `defaults.network`. Full Compose semantics
+sidecar services via `dependencies:` + `defaults.network`. Fuller Compose semantics
 (`depends_on` ordering/health checks, log aggregation, named volumes, profiles, scaling) are now
 handled by delegating to a separate compose-for-`wslc` tool in [compose mode](#compose-mode)
-rather than being reimplemented in `wip` itself — see that section for what compose mode covers
+rather than being reimplemented in `wip` itself. Which of those actually work is entirely up to
+the external tool you point `compose.command` at — `wip` only forwards
+`-f FILE [-p PROJECT] up|down|exec|logs`, so treat that list as what Compose offers, not as
+something `wip` guarantees. See that section for what compose mode covers
 and its current limitations (`run`, and `commands:` of type `run`/`build`). What's still planned
 for `wip`, roughly in priority order:
 
