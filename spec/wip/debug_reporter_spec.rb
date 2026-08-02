@@ -36,6 +36,21 @@ RSpec.describe Wip::DebugReporter do
     end
   end
 
+  it 'leaves the reported log file on disk after the step finishes' do
+    Dir.mktmpdir do |dir|
+      allow(Dir).to receive(:tmpdir).and_return(dir)
+      out = StringIO.new
+      reporter = described_class.new(enabled: true, out: out)
+
+      reporter.step('interactive work', live: false) { :done }
+      GC.start
+
+      path = out.string[/streaming resource snapshots to (\S+)/, 1]
+      expect(path).not_to be_nil
+      expect(File).to exist(path)
+    end
+  end
+
   it '--debug-log=- forces snapshots inline even for a non-live step' do
     out = StringIO.new
     reporter = described_class.new(enabled: true, out: out, log: '-')
