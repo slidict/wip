@@ -253,6 +253,31 @@ RSpec.describe Wip::CLI do
 
       expect { described_class.start(%w[sync]) }.to raise_error(Wip::ConfigError, /needs a sync: block/)
     end
+
+    it 'rejects a non-positive --interval instead of letting sleep raise' do
+      stub_runner('[]')
+
+      expect { described_class.start(%w[sync --watch --interval -1]) }
+        .to raise_error(Wip::ConfigError, /--interval must be a positive number/)
+    end
+
+    it 'points at `wip dispatch` when wip.yml defines a command the built-in shadows' do
+      File.write('wip.yml', <<~YAML)
+        version: 1
+        defaults:
+          container: app
+          image: example:dev
+        sync: {}
+        commands:
+          sync:
+            command: bin/custom-sync
+      YAML
+      runner = stub_runner('[]')
+      allow(runner).to receive(:run).and_return(0)
+
+      expect { described_class.start(%w[sync]) }
+        .to output(/commands\.sync .* is shadowed by the built-in `wip sync`.*wip dispatch sync/m).to_stderr
+    end
   end
 
   it 'excludes files matched by .dockerignore from the build context' do

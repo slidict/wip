@@ -3,6 +3,14 @@
 module Wip
   # Translates raw WSLC error output into friendlier hints.
   class ErrorInterpreter
+    # Shells report a missing rsync as "rsync: not found", while the container
+    # runtime names the executable either before or after its own phrasing.
+    RSYNC_MISSING = Regexp.union(
+      /rsync: (?:command )?not found/i,
+      /rsync[^\n]*executable file not found/i,
+      /executable file not found[^\n]*rsync/i
+    )
+
     def initialize(architecture: Environment.new.architecture)
       @architecture = architecture
     end
@@ -11,7 +19,7 @@ module Wip
       case output
       when /pull access denied|insufficient_scope|authorization failed/i then registry_message
       when %r{no matching manifest for linux/(?:amd64|arm64)}i then architecture_message
-      when /rsync: (?:command )?not found|executable file not found[^\n]*rsync/i then rsync_message
+      when RSYNC_MISSING then rsync_message
       end
     end
 

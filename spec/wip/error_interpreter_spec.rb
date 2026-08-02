@@ -12,4 +12,8 @@ RSpec.describe Wip::ErrorInterpreter do
   it('classifies a missing rsync in the image') {
     expect(interpreter.interpret('sh: 1: rsync: not found')).to include('wip sync', 'apt-get install -y rsync')
   }
+  it('classifies a missing rsync however the runtime words it') {
+    expect(interpreter.interpret('exec: "rsync": executable file not found in $PATH')).to include('wip sync')
+    expect(interpreter.interpret('executable file not found in $PATH: rsync')).to include('wip sync')
+  }
 end

@@ -80,9 +80,10 @@ module Wip
     option :interval, type: :numeric, desc: 'Seconds between syncs when watching (default: sync.interval)'
     def sync
       settings = sync_settings!
+      warn_shadowed_command('sync')
       return run_sync unless options[:watch]
 
-      interval = options[:interval] || settings.interval
+      interval = watch_interval(settings)
       warn "wip: syncing #{settings.source} -> #{settings.volume}:#{settings.target} " \
            "every #{interval}s (Ctrl-C to stop)"
       loop do
@@ -250,6 +251,24 @@ module Wip
 
     def sync_settings!
       load_config.sync || raise(ConfigError, '`wip sync` needs a sync: block in wip.yml')
+    end
+
+    # `sync.interval` is validated when the config loads; --interval isn't, and
+    # a negative one would only surface as an ArgumentError from `sleep`.
+    def watch_interval(settings)
+      interval = options[:interval] || settings.interval
+      raise ConfigError, '--interval must be a positive number' unless interval.positive?
+
+      interval
+    end
+
+    # A built-in command wins over a `commands:` entry of the same name, so
+    # point at `wip dispatch` rather than letting the custom one vanish.
+    def warn_shadowed_command(name)
+      return unless load_config.commands.key?(name)
+
+      warn "wip: commands.#{name} in wip.yml is shadowed by the built-in `wip #{name}`; " \
+           "run it with `wip dispatch #{name}`"
     end
 
     # Inside the running container the mirror is a plain `exec`; otherwise it

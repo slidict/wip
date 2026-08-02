@@ -172,6 +172,9 @@ Everything below `sync:` is optional — `sync: {}` alone already works. With it
   container with a short delay. Run it in a second terminal alongside `wip up -d`.
 - `wip doctor` reports the resolved source, volume, and target, and fails if the source is missing.
 
+Like every built-in command, `wip sync` takes precedence over a `commands:` entry of the same
+name; wip says so and points at `wip dispatch sync`, which still runs yours.
+
 Two things to keep in mind. The mirror runs `rsync` *inside* the container, so the image needs it
 (`RUN apt-get update && apt-get install -y rsync`) — or point `sync.command` at a copy tool the
 image already has. And the mirror is one-way (host → volume): anything the app writes under
