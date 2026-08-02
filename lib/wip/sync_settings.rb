@@ -32,7 +32,7 @@ module Wip
     # compose owns its own services' mounts and never guarantees that shape.
     SYNC_MODES = %w[exec run].freeze
 
-    attr_reader :target, :mount, :volume, :exclude, :binary, :extra_options, :interval, :mode
+    attr_reader :target, :mount, :volume, :exclude, :binary, :extra_options, :interval, :mode, :image
 
     def initialize(raw, base: nil, workdir: nil, container: nil, compose: false)
       raise ConfigError, 'sync must be a mapping' unless raw.is_a?(Hash)
@@ -76,7 +76,7 @@ module Wip
     def to_h
       { 'source' => source, 'target' => target, 'mount' => mount, 'volume' => volume,
         'delete' => delete?, 'exclude' => exclude, 'command' => binary, 'options' => extra_options,
-        'interval' => interval, 'mode' => mode }
+        'interval' => interval, 'mode' => mode, 'image' => image }
     end
 
     private
@@ -98,11 +98,23 @@ module Wip
 
     def assign_mode(raw, compose:)
       @mode = presence(raw['mode']) || (compose ? 'run' : 'exec')
+      @image = presence(raw['image'])
       raise ConfigError, "sync.mode must be one of #{SYNC_MODES.join(', ')}" unless SYNC_MODES.include?(@mode)
+
+      validate_image!(compose)
       return unless compose && exec?
 
       raise ConfigError, 'sync.mode: exec needs mode: container (compose owns its services’ mounts, ' \
                          'so it can’t guarantee the running container has the sync mounts attached)'
+    end
+
+    # compose mode has no dependencies: entry to fall back to for the mirror
+    # container's image, so sync.image can't be left implicit there.
+    def validate_image!(compose)
+      return if !compose || @image
+
+      raise ConfigError, 'sync.image is required under mode: compose (there’s no dependencies: entry ' \
+                         'to borrow the mirror container’s image from)'
     end
 
     def validate!

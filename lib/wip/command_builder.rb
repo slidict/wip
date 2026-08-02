@@ -53,12 +53,14 @@ module Wip
 
     # Mirrors into the volume from a throwaway container. Used for sync.mode:
     # run (compose's default, and mode: container's fallback for when the app
-    # container isn't running yet — e.g. just before `up` boots it).
+    # container isn't running yet — e.g. just before `up` boots it). sync.image
+    # overrides the mirror container's image; compose mode requires it, since
+    # there's no dependencies: entry to fall back to (compose owns those).
     def sync_run
       sync = required_sync
       command = [@wslc, 'run', '--rm']
       sync.volume_specs.each { |spec| command.push('-v', spec) }
-      command.push(required(primary_values, 'image')).concat(sync.mirror_command)
+      command.push(sync.image || required(primary_values, 'image')).concat(sync.mirror_command)
     end
 
     # Mirrors from inside the already-running container. Only valid for

@@ -362,6 +362,49 @@ RSpec.describe Wip::CLI do
       described_class.start(%w[up -d])
     end
 
+    it 'mirrors into the volume before compose starts the container when sync is enabled' do
+      File.write('wip.yml', <<~YAML)
+        version: 1
+        mode: compose
+        compose:
+          service: app
+          command: wslc-compose
+        sync:
+          image: example:dev
+      YAML
+      runner = instance_double(Wip::CommandRunner, run: 0)
+      allow(Wip::CommandRunner).to receive(:new).and_return(runner)
+      source = File.expand_path('.')
+      expect(runner).to receive(:run).with(
+        ['wslc.exe', 'run', '--rm', '-v', "#{source}:/host-src:ro", '-v', 'app-src:/app', 'example:dev',
+         'rsync', '-r', '-l', '-t', '--whole-file', '--delete', '/host-src/', '/app/'],
+        interactive: false
+      ).and_return(0).ordered
+      expect(runner).to receive(:run).with(['wslc-compose', '-f', compose_file, 'up', '-d'],
+                                           interactive: false).and_return(0).ordered
+
+      described_class.start(%w[up -d])
+    end
+
+    it 'skips the pre-boot mirror when --no-sync is passed, even with sync configured' do
+      File.write('wip.yml', <<~YAML)
+        version: 1
+        mode: compose
+        compose:
+          service: app
+          command: wslc-compose
+        sync:
+          image: example:dev
+      YAML
+      runner = instance_double(Wip::CommandRunner, run: 0)
+      allow(Wip::CommandRunner).to receive(:new).and_return(runner)
+      expect(runner).not_to receive(:run).with(a_collection_including('rsync'), any_args)
+      expect(runner).to receive(:run).with(['wslc-compose', '-f', compose_file, 'up', '-d'],
+                                           interactive: false).and_return(0)
+
+      described_class.start(%w[up -d --no-sync])
+    end
+
     it 'attaches to an un-detached compose up when the terminal is interactive' do
       allow(Wip::Environment).to receive(:new).and_return(instance_double(Wip::Environment, interactive?: true))
       runner = instance_double(Wip::CommandRunner, run: 0)

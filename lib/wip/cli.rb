@@ -77,6 +77,7 @@ module Wip
     option :sync, type: :boolean, default: true, desc: 'Mirror the source into the sync volume first (--no-sync skips)'
     def up
       if load_config.compose?
+        sync_before_boot if options[:sync]
         return execute(compose_bridge.up(detach: options[:detach]), interactive: tty?(!options[:detach]))
       end
 

@@ -45,7 +45,9 @@ Put a `wip.yml` in your project root. Running from a subdirectory walks up to fi
 
 ```yaml
 version: 1
-mode: container # or compose; picks the orchestration path `up`/`down`/`sync`/etc. take (default: container)
+mode: container # default. This example is container mode end-to-end — see "Compose mode" below
+                # for mode: compose, which replaces container:/network:/dependencies: with a
+                # compose: block instead; the two don't mix within one wip.yml.
 wslc:
   command: auto # tries wslc.exe, wslc, then System32; an absolute path also works
 container: app # optional; which dependencies: entry `up`/`exec`/`run`/`build`/`commands:` target (default: app)
@@ -165,6 +167,9 @@ sync:
   interval: 2        # seconds between syncs for `wip sync --watch` (default: 2)
   mode: exec         # exec (mirror inside the running container) or run (a throwaway one);
                       # default: exec for `mode: container`, run for `mode: compose`
+  image: null        # image for the mirror container; required under mode: compose (there's no
+                      # dependencies: entry to borrow one from there), unused under mode: container
+                      # unless set (falls back to the primary container's own image)
 ```
 
 Everything below `sync:` is optional — `sync: {}` alone already works. With it in place:
@@ -192,11 +197,31 @@ image already has. And the mirror is one-way (host → volume): anything the app
 `target` is removed by the next `--delete` pass unless you `exclude` it, give it its own volume,
 or set `delete: false`.
 
-`sync:` works alongside `mode: compose` too. Compose still owns the volume layout — a compose
-service must mount the same named volume `sync.volume` names — but wip's mirror runs as its own
-throwaway container (`sync.mode` defaults to `run` and can't be set to `exec` under `mode:
-compose`, since only a container wip itself booted is guaranteed to have the read-only source
-mount attached).
+`sync:` works alongside `mode: compose` too, but two things change:
+
+- Compose still owns the volume layout, so wip doesn't rewrite any mounts for you: the compose
+  service that runs your app must itself declare a named volume with the exact same name as
+  `sync.volume` (`<container>-src` by default) mounted at the path your app expects, e.g.:
+  ```yaml
+  # compose.yml
+  services:
+    app:
+      volumes:
+        - app-src:/app
+  volumes:
+    app-src:
+  ```
+  wip's mirror writes into that volume from a separate, disposable container; it never touches
+  the compose service directly.
+- `sync.mode` defaults to `run` and can't be set to `exec` (only a container wip itself booted is
+  guaranteed to have the read-only source mount attached, which compose services never do), and
+  `sync.image` becomes required, since that disposable container needs an image from somewhere —
+  under `mode: container` it borrows the primary `dependencies:` entry's image, but compose mode
+  has no such entry to borrow from.
+
+`wip up`'s pre-boot mirror (and the `--no-sync` flag that skips it) works the same way under
+`mode: compose` as it does otherwise: the source is mirrored into the volume before
+`compose up` starts the service that mounts it.
 
 ### Compose mode
 

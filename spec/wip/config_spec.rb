@@ -142,15 +142,23 @@ RSpec.describe Wip::Config do
   it 'allows sync alongside compose, defaulting sync.mode to run' do
     config = described_class.new('mode' => 'compose',
                                  'compose' => { 'service' => 'app', 'command' => 'my-compose-tool' },
-                                 'sync' => {})
+                                 'sync' => { 'image' => 'example:dev' })
     expect(config.sync.mode).to eq('run')
+  end
+
+  it 'requires sync.image alongside compose' do
+    expect do
+      described_class.new('mode' => 'compose',
+                          'compose' => { 'service' => 'app', 'command' => 'my-compose-tool' },
+                          'sync' => {})
+    end.to raise_error(Wip::ConfigError, /sync\.image is required under mode: compose/)
   end
 
   it 'rejects sync.mode: exec alongside compose' do
     expect do
       described_class.new('mode' => 'compose',
                           'compose' => { 'service' => 'app', 'command' => 'my-compose-tool' },
-                          'sync' => { 'mode' => 'exec' })
+                          'sync' => { 'mode' => 'exec', 'image' => 'example:dev' })
     end.to raise_error(Wip::ConfigError, /sync\.mode: exec needs mode: container/)
   end
 
