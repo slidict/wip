@@ -53,14 +53,27 @@ module Wip
 
     # Mirrors into the volume from a throwaway container. Used for sync.mode:
     # run (compose's default, and mode: container's fallback for when the app
-    # container isn't running yet — e.g. just before `up` boots it). sync.image
-    # overrides the mirror container's image; compose mode requires it, since
-    # there's no dependencies: entry to fall back to (compose owns those).
+    # container isn't running yet — e.g. just before `up` boots it). The image
+    # comes from sync.build's tag (once built via sync_build), else sync.image,
+    # else the primary dependencies: entry; compose mode requires one of the
+    # first two, since it has no dependencies: entry to fall back to.
     def sync_run
       sync = required_sync
       command = [@wslc, 'run', '--rm']
       sync.volume_specs.each { |spec| command.push('-v', spec) }
-      command.push(sync.image || required(primary_values, 'image')).concat(sync.mirror_command)
+      image = sync.build&.fetch('tag') || sync.image || required(primary_values, 'image')
+      command.push(image).concat(sync.mirror_command)
+    end
+
+    # Builds sync.build's image from a Dockerfile staged in `context` (a caller-
+    # managed directory, since the build only reads it once `wslc build` runs).
+    # Doesn't touch dependencies: at all, so it works the same under compose
+    # mode as it does under container mode.
+    def sync_build(context)
+      sync = required_sync
+      raise ConfigError, 'No sync.build configured in wip.yml' unless sync.build
+
+      [@wslc, 'build', '-t', sync.build['tag'], context]
     end
 
     # Mirrors from inside the already-running container. Only valid for

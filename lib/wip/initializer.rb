@@ -49,9 +49,9 @@ module Wip
       YAML
     end
 
-    # sync: needs sync.image (mode: compose has no dependencies: entry to borrow one from) and a
-    # named volume the compose service mounts, matching sync.volume ("app-src" by default). Checked
-    # against the detected compose file so the hint doesn't repeat what's already set up.
+    # sync: needs sync.image or sync.build (mode: compose has no dependencies: entry to borrow an
+    # image from) and a named volume the compose service mounts, matching sync.volume ("app-src" by
+    # default). Checked against the detected compose file so the hint doesn't repeat what's set up.
     def sync_hint
       return sync_hint_configured if compose_volume_mounted?
 
@@ -61,14 +61,17 @@ module Wip
     def sync_hint_configured
       <<~COMMENT.chomp
         # #{compose_file} already mounts a volume matching sync.volume's default (app-src).
-        # sync: # add sync.image too (required under mode: compose) — see README
+        # sync: # add sync.build or sync.image too (one's required under mode: compose) — see README
       COMMENT
     end
 
     def sync_hint_todo
       <<~COMMENT.chomp
         # sync: # optional; mirrors the source into a named volume instead of bind-mounting it live
-        #   image: your/image:tag # required under mode: compose (no dependencies: entry to borrow one from)
+        #   build: # required under mode: compose (no dependencies: entry to borrow an image from)
+        #     dockerfile: |
+        #       FROM alpine:latest
+        #       RUN apk add --no-cache rsync
         #   # the service above must also mount a volume named "app-src" (sync.volume's default) at the
         #   # path your app expects — add to #{compose_file}:
         #   #   volumes:

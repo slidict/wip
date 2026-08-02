@@ -166,6 +166,28 @@ RSpec.describe Wip::CommandBuilder do
       expect { described_class.new(wslc: 'wslc.exe', config: config, environment: environment).sync_run }
         .to raise_error(Wip::ConfigError, /No sync: block/)
     end
+
+    it 'uses the sync.build tag over sync.image and the primary dependency, without needing one to exist' do
+      built_config = Wip::Config.new('mode' => 'compose',
+                                     'compose' => { 'service' => 'app', 'command' => 'my-compose-tool' },
+                                     'sync' => { 'build' => { 'dockerfile' => 'FROM alpine' } })
+      builder = described_class.new(wslc: 'wslc.exe', config: built_config, environment: environment)
+
+      expect(builder.sync_run).to eq(['wslc.exe', 'run', '--rm', '-v', '.:/host-src:ro', '-v', 'app-src:/app',
+                                      'wip-sync-app:latest', 'rsync', '-r', '-l', '-t', '--whole-file', '--delete',
+                                      '/host-src/', '/app/'])
+    end
+
+    it 'builds the sync.build Dockerfile from a caller-supplied context' do
+      built_config = Wip::Config.new('sync' => { 'build' => { 'dockerfile' => 'FROM alpine', 'tag' => 'x:1' } })
+      builder = described_class.new(wslc: 'wslc.exe', config: built_config, environment: environment)
+
+      expect(builder.sync_build('/tmp/staged')).to eq(%w[wslc.exe build -t x:1 /tmp/staged])
+    end
+
+    it 'raises when building without a sync.build block' do
+      expect { builder.sync_build('/tmp/staged') }.to raise_error(Wip::ConfigError, /No sync\.build configured/)
+    end
   end
 
   describe 'dotenv support' do

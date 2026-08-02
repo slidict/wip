@@ -245,6 +245,59 @@ RSpec.describe Wip::CLI do
       described_class.start(%w[sync])
     end
 
+    it 'builds the sync.build image once before mirroring, using it over the primary dependency' do
+      File.write('wip.yml', <<~YAML)
+        version: 1
+        dependencies:
+          app:
+            image: example:dev
+        sync:
+          mode: run
+          build:
+            dockerfile: |
+              FROM alpine:latest
+              RUN apk add --no-cache rsync
+      YAML
+      runner = stub_runner('')
+      expect(runner).to receive(:run).with(a_collection_including('build', '-t', 'wip-sync-app:latest'),
+                                           interactive: false).and_return(0).ordered
+      expect(runner).to receive(:run).with(a_collection_including('--rm', 'wip-sync-app:latest', 'rsync'),
+                                           interactive: false).and_return(0).ordered
+
+      described_class.start(%w[sync])
+    end
+
+    it 'builds sync.build once per --watch run, not on every tick' do
+      File.write('wip.yml', <<~YAML)
+        version: 1
+        dependencies:
+          app:
+            image: example:dev
+        sync:
+          mode: run
+          build:
+            dockerfile: FROM alpine:latest
+      YAML
+      runner = stub_runner('')
+      builds = 0
+      allow(runner).to receive(:run).with(a_collection_including('build'), interactive: false) do
+        builds += 1
+        0
+      end
+      syncs = 0
+      allow(runner).to receive(:run).with(a_collection_including('--rm', 'rsync'), interactive: false) do
+        syncs += 1
+        raise Interrupt if syncs == 2
+
+        0
+      end
+
+      described_class.start(%w[sync --watch --interval 0.01])
+
+      expect(builds).to eq(1)
+      expect(syncs).to eq(2)
+    end
+
     it 'keeps mirroring on an interval with --watch until interrupted' do
       runner = stub_runner('')
       syncs = 0

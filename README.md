@@ -167,9 +167,16 @@ sync:
   interval: 2        # seconds between syncs for `wip sync --watch` (default: 2)
   mode: exec         # exec (mirror inside the running container) or run (a throwaway one);
                       # default: exec for `mode: container`, run for `mode: compose`
-  image: null        # image for the mirror container; required under mode: compose (there's no
-                      # dependencies: entry to borrow one from there), unused under mode: container
-                      # unless set (falls back to the primary container's own image)
+  image: null        # image for the mirror container; unused under mode: container unless set
+                      # (falls back to the primary container's own image). Under mode: compose,
+                      # one of image or build is required (there's no dependencies: entry to fall
+                      # back to)
+  build:              # optional; has wip build the mirror image itself instead of requiring one to
+                       # already exist. build.tag wins over image if both are set.
+    dockerfile: |
+      FROM alpine:latest
+      RUN apk add --no-cache rsync
+    tag: null          # optional (default: "wip-sync-<container>:latest")
 ```
 
 Everything below `sync:` is optional — `sync: {}` alone already works. With it in place:
@@ -187,6 +194,8 @@ Everything below `sync:` is optional — `sync: {}` alone already works. With it
 - `wip sync --watch [--interval N]` keeps re-syncing until Ctrl-C, so host edits reach the
   container with a short delay. Run it in a second terminal alongside `wip up -d`.
 - `wip doctor` reports the resolved source, volume, and target, and fails if the source is missing.
+- With `sync.build` configured, `wip build`s that image once per `wip up`/`wip sync` invocation
+  (including once before a `--watch` loop starts, not on every tick) before mirroring with it.
 
 Like every built-in command, `wip sync` takes precedence over a `commands:` entry of the same
 name; wip says so and points at `wip dispatch sync`, which still runs yours.
@@ -215,13 +224,32 @@ or set `delete: false`.
   the compose service directly.
 - `sync.mode` defaults to `run` and can't be set to `exec` (only a container wip itself booted is
   guaranteed to have the read-only source mount attached, which compose services never do), and
-  `sync.image` becomes required, since that disposable container needs an image from somewhere —
-  under `mode: container` it borrows the primary `dependencies:` entry's image, but compose mode
-  has no such entry to borrow from.
+  `sync.image` or `sync.build` becomes required, since that disposable container needs an image
+  from somewhere — under `mode: container` it borrows the primary `dependencies:` entry's image,
+  but compose mode has no such entry to borrow from.
 
 `wip up`'s pre-boot mirror (and the `--no-sync` flag that skips it) works the same way under
 `mode: compose` as it does otherwise: the source is mirrored into the volume before
 `compose up` starts the service that mounts it.
+
+Since `sync.mode: run` boots a fresh container on every mirror, reusing your app's full image here
+just adds startup overhead for something that only ever runs `rsync`. A dedicated, minimal image is
+worth it — `wip` doesn't publish or default to one itself (same reasoning as `compose.command`:
+picking a specific third-party image for you isn't its call to make), but `sync.build` covers it
+without needing to manage a separate image yourself:
+
+```yaml
+sync:
+  build:
+    dockerfile: |
+      FROM alpine:latest
+      RUN apk add --no-cache rsync
+```
+
+wip builds this once per `wip up`/`wip sync` invocation (not on every `--watch` tick — see above)
+and uses the result, tagged `wip-sync-<container>:latest` by default (`build.tag` overrides it).
+Prefer managing the image yourself instead? Build and tag it however you like, then set `sync.image`
+to that tag directly — `sync.build`'s tag wins if both are set, so don't configure both at once.
 
 ### Compose mode
 

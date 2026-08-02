@@ -146,12 +146,19 @@ RSpec.describe Wip::Config do
     expect(config.sync.mode).to eq('run')
   end
 
-  it 'requires sync.image alongside compose' do
+  it 'requires sync.image or sync.build alongside compose' do
     expect do
       described_class.new('mode' => 'compose',
                           'compose' => { 'service' => 'app', 'command' => 'my-compose-tool' },
                           'sync' => {})
-    end.to raise_error(Wip::ConfigError, /sync\.image is required under mode: compose/)
+    end.to raise_error(Wip::ConfigError, /sync\.image or sync\.build is required under mode: compose/)
+  end
+
+  it 'allows sync.build alongside compose in place of sync.image' do
+    config = described_class.new('mode' => 'compose',
+                                 'compose' => { 'service' => 'app', 'command' => 'my-compose-tool' },
+                                 'sync' => { 'build' => { 'dockerfile' => 'FROM alpine' } })
+    expect(config.sync.build['tag']).to eq('wip-sync-app:latest')
   end
 
   it 'rejects sync.mode: exec alongside compose' do

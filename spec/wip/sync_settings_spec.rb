@@ -57,10 +57,28 @@ RSpec.describe Wip::SyncSettings do
     expect(described_class.new({ 'image' => 'example:dev' }, compose: true).mode).to eq('run')
   end
 
-  it 'requires sync.image under compose, since there is no dependencies: entry to borrow it from' do
+  it 'requires sync.image or sync.build under compose, since there is no dependencies: entry to borrow one from' do
     expect { described_class.new({}, compose: true) }
-      .to raise_error(Wip::ConfigError, /sync\.image is required under mode: compose/)
+      .to raise_error(Wip::ConfigError, /sync\.image or sync\.build is required under mode: compose/)
     expect(described_class.new({ 'image' => 'example:dev' }, compose: true).image).to eq('example:dev')
+    built = described_class.new({ 'build' => { 'dockerfile' => 'FROM alpine' } }, compose: true)
+    expect(built.build).to eq('dockerfile' => 'FROM alpine', 'tag' => 'wip-sync-wip:latest')
+  end
+
+  it 'derives the build tag from the container name, or lets sync.build.tag override it' do
+    settings = described_class.new({ 'build' => { 'dockerfile' => 'FROM alpine' } }, container: 'app')
+    expect(settings.build['tag']).to eq('wip-sync-app:latest')
+
+    overridden = described_class.new({ 'build' => { 'dockerfile' => 'FROM alpine', 'tag' => 'custom:latest' } })
+    expect(overridden.build['tag']).to eq('custom:latest')
+  end
+
+  it 'rejects a non-mapping sync.build and an empty sync.build.dockerfile' do
+    expect do
+      described_class.new({ 'build' => 'nope' })
+    end.to raise_error(Wip::ConfigError, /sync\.build must be a mapping/)
+    expect { described_class.new({ 'build' => {} }) }
+      .to raise_error(Wip::ConfigError, /sync\.build\.dockerfile must not be empty/)
   end
 
   it 'leaves sync.image unset outside compose, where it is optional' do

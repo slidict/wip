@@ -5,6 +5,7 @@ require 'yaml'
 require 'json'
 require 'stringio'
 require 'shellwords'
+require 'tmpdir'
 
 module Wip
   # Thor-based command-line interface for wip.
@@ -93,6 +94,7 @@ module Wip
     def sync
       settings = sync_settings!
       warn_shadowed_command('sync')
+      ensure_sync_image(settings)
       return run_sync unless options[:watch]
 
       interval = watch_interval(settings)
@@ -270,6 +272,18 @@ module Wip
       load_config.sync || raise(ConfigError, '`wip sync` needs a sync: block in wip.yml')
     end
 
+    # Builds sync.build's image once per invocation (not per --watch tick, which
+    # would pay Docker build-cache-lookup overhead on every mirror for no reason).
+    # A no-op unless sync.build is configured.
+    def ensure_sync_image(settings)
+      return unless settings.build
+
+      Dir.mktmpdir('wip-sync-build-') do |dir|
+        File.write(File.join(dir, 'Dockerfile'), settings.build['dockerfile'])
+        execute(builder.sync_build(dir))
+      end
+    end
+
     # `sync.interval` is validated when the config loads; --interval isn't, and
     # a negative one would only surface as an ArgumentError from `sleep`.
     def watch_interval(settings)
@@ -300,6 +314,7 @@ module Wip
       settings = load_config.sync
       return unless settings
 
+      ensure_sync_image(settings)
       warn "wip: syncing #{settings.source} -> #{settings.volume}:#{settings.target}"
       execute(builder.sync_run)
       warn "wip: run `wip sync --watch` in another terminal to keep #{settings.target} up to date"
