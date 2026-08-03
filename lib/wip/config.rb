@@ -19,9 +19,10 @@ module Wip
     MODES = %w[container compose compose-native].freeze
     attr_reader :path
 
-    def initialize(raw, path = nil)
+    def initialize(raw, path = nil, env_file = nil)
       @raw = stringify(raw)
       @path = path
+      @env_file = env_file
       validate!
     end
 
@@ -202,7 +203,20 @@ module Wip
     def presence(value) = value.to_s.empty? ? nil : value.to_s
 
     def parsed_compose_file
-      @parsed_compose_file ||= ComposeFile.load(ComposeBridge.file_path(self))
+      @parsed_compose_file ||= ComposeFile.load(ComposeBridge.file_path(self), env: compose_interpolation_env)
+    end
+
+    # Compose interpolates ${VAR} references in compose.yml from the shell environment
+    # and a project .env file, shell values winning on conflict — mirror that here so
+    # `wip` doesn't need the value duplicated into wip.yml just to resolve a compose.yml
+    # reference. Uses the same dotenv file --env-file/DotenvLoader would (explicit
+    # override, else .env next to wip.yml), so compose interpolation and the env
+    # actually passed to containers never see two different .env files.
+    def compose_interpolation_env
+      env_file = @env_file || (path && Pathname(path).dirname.join('.env'))
+      return ENV.to_h unless env_file
+
+      DotenvLoader.new(env_file).load.merge(ENV.to_h)
     end
 
     def default_compose_network = path && Pathname(path).dirname.basename.to_s

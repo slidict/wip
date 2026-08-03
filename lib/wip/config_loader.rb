@@ -8,9 +8,10 @@ module Wip
   class ConfigLoader
     FILENAME = 'wip.yml'
 
-    def initialize(start_dir: Dir.pwd, path: nil)
+    def initialize(start_dir: Dir.pwd, path: nil, env_file: nil)
       @start_dir = Pathname(start_dir).expand_path
       @path = path
+      @env_file = env_file
     end
 
     def find
@@ -28,7 +29,7 @@ module Wip
       raise ConfigError, "wip.yml was not found (searched from #{@start_dir} to the filesystem root)" unless path&.file?
 
       data = YAML.safe_load_file(path, permitted_classes: [], aliases: false) || {}
-      Config.new(data, path)
+      Config.new(data, path, @env_file)
     rescue Psych::Exception => e
       raise ConfigError, "Could not parse #{path}: #{e.message}"
     end

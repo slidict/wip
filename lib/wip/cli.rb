@@ -70,6 +70,7 @@ module Wip
       extra.shift if extra.first == '--'
       settings = load_config.command('build') || {}
       context = settings['context'] || '.'
+      warn "wip: staging build context (#{context})"
       BuildContext.new(context).stage do |staged_context|
         execute(builder.build(settings: settings.merge('context' => staged_context), extra: extra))
       end
@@ -188,7 +189,11 @@ module Wip
 
     private
 
-    def loader = ConfigLoader.new(path: options[:config])
+    def loader
+      env_file = options[:env_file] && Pathname(options[:env_file]).expand_path
+      ConfigLoader.new(path: options[:config], env_file: env_file)
+    end
+
     def load_config = (@load_config ||= loader.load)
     def resolver = CommandResolver.new
 

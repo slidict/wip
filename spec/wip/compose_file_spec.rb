@@ -194,6 +194,85 @@ RSpec.describe Wip::ComposeFile do
     expect(deps['app']['user']).to eq('1000:1000')
   end
 
+  it 'interpolates ${VAR} references from the given env, like `docker compose` does' do
+    path = write_compose(<<~YAML)
+      services:
+        app:
+          image: example:dev
+          user: ${USER_ID}:${GROUP_ID}
+    YAML
+
+    deps = described_class.load(path, env: { 'USER_ID' => '1000', 'GROUP_ID' => '1000' }).to_dependencies_hash
+    expect(deps['app']['user']).to eq('1000:1000')
+  end
+
+  it 'falls back to a default for ${VAR:-default} and ${VAR-default} when unset' do
+    path = write_compose(<<~YAML)
+      services:
+        app:
+          image: example:dev
+          working_dir: ${MISSING:-/app}
+          command: ${ALSO_MISSING-fallback}
+    YAML
+
+    deps = described_class.load(path).to_dependencies_hash
+    expect(deps['app']['workdir']).to eq('/app')
+    expect(deps['app']['command']).to eq('fallback')
+  end
+
+  it 'distinguishes ${VAR:-default} (falls back on empty) from ${VAR-default} (empty stays empty)' do
+    path = write_compose(<<~YAML)
+      services:
+        app:
+          image: example:dev
+          working_dir: ${EMPTY:-/app}
+          command: "prefix-${EMPTY-fallback}-suffix"
+    YAML
+
+    deps = described_class.load(path, env: { 'EMPTY' => '' }).to_dependencies_hash
+    expect(deps['app']['workdir']).to eq('/app')
+    expect(deps['app']['command']).to eq('prefix--suffix')
+  end
+
+  it 'substitutes an unset ${VAR} with nothing, and $$ with a literal dollar sign' do
+    path = write_compose(<<~YAML)
+      services:
+        app:
+          image: example:dev
+          working_dir: /${MISSING}app
+          command: echo $$HOME
+    YAML
+
+    deps = described_class.load(path).to_dependencies_hash
+    expect(deps['app']['workdir']).to eq('/app')
+    expect(deps['app']['command']).to eq('echo $HOME')
+  end
+
+  it 'interpolates values, not mapping keys, like real Compose' do
+    path = write_compose(<<~YAML)
+      services:
+        app:
+          image: example:dev
+          environment:
+            $KEY: value
+    YAML
+
+    deps = described_class.load(path, env: { 'KEY' => 'RENAMED' }).to_dependencies_hash
+    expect(deps['app']['env']).to eq('$KEY' => 'value')
+  end
+
+  it "substitutes a value without re-parsing it as YAML, so a literal '#' doesn't become a comment" do
+    path = write_compose(<<~YAML)
+      services:
+        app:
+          image: example:dev
+          command: ${VALUE}
+    YAML
+
+    deps = described_class.load(path, env: { 'VALUE' => 'value # not a comment' }).to_dependencies_hash
+    expect(deps['app']['command']).to eq('value # not a comment')
+  end
+
   it 'rejects unsupported service keys' do
     path = write_compose(<<~YAML)
       services:
