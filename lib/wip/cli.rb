@@ -48,7 +48,7 @@ module Wip
 
       initializer = Initializer.new(dir: path.dirname)
       path.write(initializer.call)
-      warn "wip: wrote #{path} (mode: #{initializer.compose? ? 'compose' : 'container'})"
+      warn "wip: wrote #{path} (mode: #{initializer.compose? ? 'compose-native' : 'container'})"
     end
 
     desc 'doctor', 'Diagnose the development environment'
@@ -82,6 +82,7 @@ module Wip
         return execute(compose_bridge.up(detach: options[:detach]), interactive: tty?(!options[:detach]))
       end
 
+      ensure_compose_images
       ensure_network
       sidecar_names.each { |name| ensure_dependency(name) }
       sync_before_boot if options[:sync]
@@ -155,9 +156,22 @@ module Wip
     desc 'logs [SERVICE...]', 'Follow logs from compose services (compose mode only)'
     option :follow, type: :boolean, default: true, aliases: '-f'
     def logs(*services)
-      raise ConfigError, '`wip logs` is only available in compose mode' unless load_config.compose?
+      unless load_config.compose? || load_config.compose_native?
+        raise ConfigError, '`wip logs` is only available in compose mode'
+      end
+      if load_config.compose?
+        return execute(compose_bridge.logs(services: services, follow: options[:follow]),
+                       interactive: true)
+      end
 
-      execute(compose_bridge.logs(services: services, follow: options[:follow]), interactive: true)
+      # wslc has no compose-style multi-service log aggregation (see CommandBuilder#logs) —
+      # exactly one SERVICE is required, defaulting to compose.service when none is given.
+      if services.size > 1
+        raise ConfigError, '`wip logs` under mode: compose-native takes at most one SERVICE ' \
+                           '(wslc logs, unlike a real compose tool, only follows one container at a time)'
+      end
+
+      execute(builder.logs(services.first || load_config.compose_service, follow: options[:follow]), interactive: true)
     end
 
     desc 'dispatch COMMAND [ARGS...]', 'Run a command defined in wip.yml'
@@ -270,6 +284,16 @@ module Wip
 
     def sync_settings!
       load_config.sync || raise(ConfigError, '`wip sync` needs a sync: block in wip.yml')
+    end
+
+    # Builds every compose-native service with a build: (instead of image:) once per
+    # `wip up` invocation, mirroring ensure_sync_image's "build once, not every tick"
+    # approach. A no-op for mode: container/compose and for build:-less services.
+    def ensure_compose_images
+      load_config.compose_build_specs.each_value do |spec|
+        extra = spec['dockerfile'] ? ['-f', spec['dockerfile']] : []
+        execute(builder.build(settings: { 'context' => spec['context'], 'tag' => spec['tag'] }, extra: extra))
+      end
     end
 
     # Builds sync.build's image once per invocation (not per --watch tick, which

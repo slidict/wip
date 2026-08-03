@@ -518,6 +518,141 @@ RSpec.describe Wip::CLI do
     end
   end
 
+  context 'in compose-native mode' do
+    around do |example|
+      Dir.mktmpdir do |dir|
+        File.write(File.join(dir, 'wip.yml'), <<~YAML)
+          version: 1
+          mode: compose-native
+          compose:
+            service: app
+            project: myapp
+        YAML
+        File.write(File.join(dir, 'compose.yml'), <<~YAML)
+          services:
+            app:
+              image: example:dev
+              depends_on:
+                - redis
+            redis:
+              image: redis:latest
+        YAML
+        Dir.chdir(dir) { example.run }
+      end
+    end
+
+    before do
+      allow(Wip::CommandResolver).to receive(:new).and_return(instance_double(Wip::CommandResolver,
+                                                                              resolve: 'wslc.exe'))
+    end
+
+    it 'starts the compose.yml sidecar before the primary service, on wip\'s own project network' do
+      fake_runner = Class.new do
+        class << self
+          attr_accessor :calls, :responses
+        end
+        self.calls = []
+        self.responses = {
+          %w[wslc.exe network list --format json] => '[]',
+          %w[wslc.exe list --all --filter name=redis --format json] => '[]',
+          %w[wslc.exe list --all --filter name=app --format json] => '[]'
+        }
+
+        def initialize(stdout: nil, **_kwargs)
+          @stdout = stdout
+        end
+
+        def run(command, **_kwargs)
+          self.class.calls << command
+          @stdout&.write(self.class.responses.fetch(command, ''))
+          0
+        end
+      end
+      stub_const('Wip::CommandRunner', fake_runner)
+
+      described_class.start(%w[up -d])
+
+      expect(fake_runner.calls).to eq([
+                                        %w[wslc.exe network list --format json],
+                                        %w[wslc.exe network create myapp],
+                                        %w[wslc.exe list --all --filter name=redis --format json],
+                                        %w[wslc.exe run --name redis --network myapp -d redis:latest],
+                                        %w[wslc.exe list --all --filter name=app --format json],
+                                        %w[wslc.exe run --name app --network myapp -d example:dev]
+                                      ])
+    end
+
+    it 'builds a build: service before starting it' do
+      File.write('compose.yml', <<~YAML)
+        services:
+          app:
+            build: .
+            depends_on:
+              - redis
+          redis:
+            image: redis:latest
+      YAML
+      runner = instance_double(Wip::CommandRunner, run: 0)
+      allow(Wip::CommandRunner).to receive(:new).and_return(runner)
+      allow(runner).to receive(:run).and_return(0)
+
+      described_class.start(%w[up -d])
+
+      expect(runner).to have_received(:run).with(
+        ['wslc.exe', 'build', '-t', 'wip-compose-app:latest', File.expand_path('.')], interactive: false
+      )
+    end
+
+    it 'execs directly into the primary compose.yml service, with no external compose binary involved' do
+      runner = instance_double(Wip::CommandRunner, run: 0)
+      allow(Wip::CommandRunner).to receive(:new).and_return(runner)
+      expect(runner).to receive(:run).with(%w[wslc.exe exec app echo hi], interactive: false).and_return(0)
+
+      described_class.start(%w[exec echo hi])
+    end
+
+    it 'runs a real ephemeral container for `wip run`, unlike mode: compose\'s exec fallback' do
+      runner = instance_double(Wip::CommandRunner, run: 0)
+      allow(Wip::CommandRunner).to receive(:new).and_return(runner)
+      expect(runner).to receive(:run).with(%w[wslc.exe run --rm example:dev echo hi], interactive: false)
+                                     .and_return(0)
+
+      described_class.start(%w[run echo hi])
+    end
+
+    it 'stops and removes both the primary service and its sidecars' do
+      runner = instance_double(Wip::CommandRunner, run: 0)
+      allow(Wip::CommandRunner).to receive(:new).and_return(runner)
+      expect(runner).to receive(:run).with(%w[wslc.exe stop app], interactive: false).and_return(0)
+      expect(runner).to receive(:run).with(%w[wslc.exe remove -f app], interactive: false).and_return(0)
+      expect(runner).to receive(:run).with(%w[wslc.exe stop redis], interactive: false).and_return(0)
+      expect(runner).to receive(:run).with(%w[wslc.exe remove -f redis], interactive: false).and_return(0)
+
+      described_class.start(%w[down])
+    end
+
+    it 'follows logs for a single named service' do
+      runner = instance_double(Wip::CommandRunner, run: 0)
+      allow(Wip::CommandRunner).to receive(:new).and_return(runner)
+      expect(runner).to receive(:run).with(%w[wslc.exe logs -f redis], interactive: true).and_return(0)
+
+      described_class.start(%w[logs redis])
+    end
+
+    it 'defaults logs to compose.service when no SERVICE is given' do
+      runner = instance_double(Wip::CommandRunner, run: 0)
+      allow(Wip::CommandRunner).to receive(:new).and_return(runner)
+      expect(runner).to receive(:run).with(%w[wslc.exe logs -f app], interactive: true).and_return(0)
+
+      described_class.start(%w[logs])
+    end
+
+    it 'rejects more than one SERVICE for logs — wslc logs follows a single container' do
+      expect { described_class.start(%w[logs app redis]) }
+        .to raise_error(Wip::ConfigError, /takes at most one SERVICE/)
+    end
+  end
+
   describe 'init' do
     around do |example|
       Dir.mktmpdir { |dir| Dir.chdir(dir) { example.run } }
@@ -529,12 +664,12 @@ RSpec.describe Wip::CLI do
       expect(YAML.safe_load_file('wip.yml')).to include('mode' => 'container')
     end
 
-    it 'writes a mode: compose wip.yml when a compose file is present' do
+    it 'writes a mode: compose-native wip.yml when a compose file is present' do
       File.write('compose.yml', "services:\n  app:\n    image: example:dev\n")
 
       described_class.start(%w[init])
 
-      expect(YAML.safe_load_file('wip.yml')).to include('mode' => 'compose')
+      expect(YAML.safe_load_file('wip.yml')).to include('mode' => 'compose-native')
     end
 
     it 'refuses to overwrite an existing wip.yml without --force' do

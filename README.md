@@ -295,11 +295,51 @@ found, its version, and which compose file `wip` resolved.
 - `commands:` entries with `type: run`/`type: build` aren't supported in compose mode — use your
   compose tool's own `build`/`up --build` directly; compose owns builds for its own services.
 
+### Compose mode (native)
+
+Don't want to install a third-party compose-for-`wslc` tool at all? `mode: compose-native` parses
+`compose.yml` itself and drives `wslc` directly, the same way `mode: container` +`dependencies:`
+already does — no external binary, and `wip run` gets a real ephemeral `wslc run --rm` instead of
+the `exec` fallback above:
+
+```yaml
+version: 1
+mode: compose-native
+
+compose:
+  service: app    # required: which compose service wip run/exec/NAME target
+  file: compose.yml # optional; auto-detected next to wip.yml otherwise
+  project: myapp    # optional; also names wip's own project network (defaults to the wip.yml
+                    # directory's name) so services can reach each other by name
+```
+
+There's no `compose.command` here (no external binary to name), and no top-level `container:` —
+`compose.service` already names it.
+
+This is explicitly a stopgap for as long as `wslc` itself has no native Compose support (tracked
+upstream in [microsoft/WSL#40948](https://github.com/microsoft/WSL/issues/40948)) and third-party
+compose-for-`wslc` tools stay incomplete. It only understands a minimal subset of the Compose spec
+— anything outside that subset is a load-time `ConfigError` naming the offending key, rather than
+silently ignored:
+
+- Per service: `image`, `build` (string or `{context:, dockerfile:}`; resolved relative to
+  `compose.yml`, not wherever `wip` is invoked from), `command`, `environment` (mapping or
+  `KEY=VALUE` array), `ports`/`volumes` (short syntax only — `"host:container"` strings, not
+  long-syntax mappings), `working_dir`, `depends_on` (ordering only — a `condition:` other than
+  `service_started` is rejected, since there's no health-check support).
+- Nothing at the top level besides `services:` is read (`networks:`, `volumes:`, `configs:`,
+  `secrets:` are ignored).
+- `wip logs` takes at most one `SERVICE` (defaulting to `compose.service`) — `wslc logs`, like
+  `docker logs`, follows a single container, unlike a real compose tool's multi-service view.
+- `sync:` behaves exactly like `mode: container`'s (falls back to the primary service's own image,
+  defaults to `sync.mode: exec`) — none of the external bridge's `sync.image`/`sync.build`
+  requirement applies, since wip itself boots every container here.
+
 ## Commands
 
 | Command | Description |
 |---|---|
-| `wip init [--force]` | Write a starter `wip.yml`: `mode: compose` if a `compose.yml`/`docker-compose.yml` is found next to it, `mode: container` otherwise. Refuses to overwrite an existing `wip.yml` unless `--force` |
+| `wip init [--force]` | Write a starter `wip.yml`: `mode: compose-native` if a `compose.yml`/`docker-compose.yml` is found next to it, `mode: container` otherwise. Refuses to overwrite an existing `wip.yml` unless `--force` |
 | `wip version` | wip's version, plus WSLC's if it can be detected |
 | `wip doctor` | Diagnose WSL2, interop, WSLC, config, architecture, and Git |
 | `wip config` | Print the effective configuration (secrets masked) |
@@ -307,9 +347,9 @@ found, its version, and which compose file `wip` resolved.
 | `wip up [-d] [--no-sync]` | Start the primary `dependencies:` entry (`container:` names which one) and its sidecars (creating any that are missing, on `network:` if set). `-d` runs the main container in the background; with `sync:` configured, the source is mirrored into the volume first unless `--no-sync` |
 | `wip down` | Stop and remove the primary container and its sidecar `dependencies:` |
 | `wip exec [--no-interactive] COMMAND...` | Run a command in the existing container |
-| `wip run [--no-interactive] COMMAND...` | Run a command in a new `--rm` container (compose mode: `exec`s into `compose.service` instead) |
+| `wip run [--no-interactive] COMMAND...` | Run a command in a new `--rm` container (mode: compose `exec`s into `compose.service` instead — see "Compose mode" above) |
 | `wip shell` | Open the configured shell, falling back to `bash` then `sh` |
-| `wip logs [-f] [SERVICE...]` | Follow compose service logs (compose mode only) |
+| `wip logs [-f] [SERVICE...]` | Follow compose service logs (compose modes only; mode: compose-native takes at most one `SERVICE`) |
 | `wip sync [-w] [--interval N]` | Mirror the source into the sync volume once, or keep re-syncing with `--watch` (needs `sync:`) |
 | `wip NAME ARGS...` | Run `commands.NAME`, appending any extra arguments |
 
@@ -428,10 +468,11 @@ checklist.
 
 ## Not in the initial release
 
-Full Compose compatibility isn't reimplemented in `wip` itself, but is available by delegating to
-a third-party compose-for-`wslc` tool — see [Compose mode](#compose-mode). A resident/daemon
-process, a GUI, PowerShell-specific tuning, direct registry API/manifest parsing, self-update, and
-plugins are all unimplemented.
+Full Compose compatibility isn't reimplemented in `wip` itself — `mode: compose-native` only
+covers a minimal subset (see [Compose mode (native)](#compose-mode-native)), and full parity is
+otherwise available by delegating to a third-party compose-for-`wslc` tool (see
+[Compose mode](#compose-mode)). A resident/daemon process, a GUI, PowerShell-specific tuning,
+direct registry API/manifest parsing, self-update, and plugins are all unimplemented.
 
 ## Roadmap
 

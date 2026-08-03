@@ -53,7 +53,7 @@ module Wip
     # ConfigError (validate_dependency!), so the only way to reach here with a
     # broken primary container is `container:` naming an entry that isn't defined.
     def container_result(config)
-      return [:ok, 'Loaded wip.yml'] if config.compose? || config.primary
+      return [:ok, 'Loaded wip.yml'] if config.compose? || config.compose_native? || config.primary
 
       [:fail, "No dependencies.#{config.container} entry"]
     end
@@ -63,6 +63,7 @@ module Wip
 
       check_wslc(config, results)
       check_compose(config, results) if config.compose?
+      check_compose_native(config, results) if config.compose_native?
       check_sync(config, results) if config.sync?
     end
 
@@ -107,6 +108,16 @@ module Wip
       path = ComposeBridge.file_path(config)
       results << result(path.file? ? :ok : :fail, "Found compose file #{path}",
                         "Compose file not found: #{path}")
+    rescue ConfigError => e
+      results << Result.new(:fail, e.message)
+    end
+
+    # mode: compose-native has no external binary to check (check_wslc, above, already
+    # covers the one binary it drives) — just that compose.yml exists and parses.
+    def check_compose_native(config, results)
+      check_compose_file(config, results)
+      ComposeFile.load(ComposeBridge.file_path(config))
+      results << Result.new(:ok, 'Parsed compose file')
     rescue ConfigError => e
       results << Result.new(:fail, e.message)
     end
