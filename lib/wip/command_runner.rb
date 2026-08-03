@@ -26,8 +26,7 @@ module Wip
         threads.each(&:join)
         status = wait.value
       end
-      hint = @interpreter.interpret(captured.force_encoding(Encoding::UTF_8).scrub)
-      @stderr.puts("\n#{hint}") if !status.success? && hint
+      report_hint(captured) unless status.success?
       status.exitstatus
     rescue Errno::ENOENT => e
       @stderr.puts e.message
@@ -38,6 +37,11 @@ module Wip
     end
 
     private
+
+    def report_hint(captured)
+      hint = @interpreter.interpret(captured.force_encoding(Encoding::UTF_8).scrub)
+      @stderr.puts("\n#{hint}") if hint
+    end
 
     # Piping stdin/stdout/stderr (as `run` does above) closes the child's
     # stdin immediately, which breaks anything that reads from the terminal

@@ -30,8 +30,9 @@ RSpec.describe Wip::CommandRunner do
   end
 
   it 'interprets output containing invalid UTF-8 bytes instead of raising an encoding error' do
+    stdout = StringIO.new(+''.b)
     stderr = StringIO.new
-    runner = described_class.new(stderr: stderr)
+    runner = described_class.new(stdout: stdout, stderr: stderr)
     script = <<~'RUBY'
       STDOUT.binmode
       STDOUT.write("\xFF\xFE".b)
@@ -39,9 +40,11 @@ RSpec.describe Wip::CommandRunner do
       exit 1
     RUBY
 
+    status = nil
     expect do
-      runner.run([RbConfig.ruby, '-e', script])
+      status = runner.run([RbConfig.ruby, '-e', script])
     end.not_to raise_error
+    expect(status).to eq(1)
     expect(stderr.string).to include('mounted-volume limit')
   end
 
