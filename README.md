@@ -155,12 +155,14 @@ mirrors one into the other with `rsync`.
 
 `wip up`'s pre-boot mirror always uses a throwaway container (the primary one isn't running yet),
 so `sync.image`/`sync.build` apply there regardless of `sync.mode` — falling back to the primary
-container's own image if neither is set. Where `sync.mode` actually matters is every mirror
+container's own image if neither is set under `mode: container`/`compose-native` (both have a
+`dependencies:` entry to borrow it from); `mode: compose` has no such entry, so one of
+`sync.image`/`sync.build` is required there. Where `sync.mode` actually matters is every mirror
 *after* that: under `sync.mode: exec` (the default for `mode: container`/`compose-native`), `wip
 sync`/`wip sync --watch` run `rsync` inside the already-running primary container instead, so
 *that* image needs `rsync` installed — `sync.image`/`sync.build` are ignored for these. Under
 `sync.mode: run`, every mirror (pre-boot included) uses a throwaway container, so `sync.image`/
-`sync.build` (or the primary image fallback) need `rsync` throughout.
+`sync.build` (or the primary image fallback, where available) need `rsync` throughout.
 
 ```yaml
 sync:
