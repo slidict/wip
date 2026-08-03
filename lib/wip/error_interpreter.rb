@@ -10,6 +10,11 @@ module Wip
       /rsync[^\n]*executable file not found/i,
       /executable file not found[^\n]*rsync/i
     )
+    VOLUME_LIMIT_REACHED = Regexp.union(
+      /0x8007000e/i,
+      /too many mounted volumes/i,
+      /マウントされているボリュームが多すぎます/
+    )
 
     def initialize(architecture: Environment.new.architecture)
       @architecture = architecture
@@ -17,6 +22,7 @@ module Wip
 
     def interpret(output)
       case output
+      when VOLUME_LIMIT_REACHED then volume_limit_message
       when /pull access denied|insufficient_scope|authorization failed/i then registry_message
       when %r{no matching manifest for linux/(?:amd64|arm64)}i then architecture_message
       when RSYNC_MISSING then rsync_message
@@ -24,6 +30,20 @@ module Wip
     end
 
     private
+
+    def volume_limit_message
+      <<~TEXT
+        The WSLC session has reached its mounted-volume limit.
+
+        Stop any containers you no longer need, then restart the session:
+
+          wslc container list
+          wslc container stop <container-name>
+          wslc system session terminate
+
+        Then retry the command.
+      TEXT
+    end
 
     def rsync_message
       <<~TEXT
