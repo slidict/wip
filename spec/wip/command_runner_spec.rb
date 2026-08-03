@@ -39,9 +39,9 @@ RSpec.describe Wip::CommandRunner do
       exit 1
     RUBY
 
-    expect {
+    expect do
       runner.run([RbConfig.ruby, '-e', script])
-    }.not_to raise_error
+    end.not_to raise_error
     expect(stderr.string).to include('mounted-volume limit')
   end
 
