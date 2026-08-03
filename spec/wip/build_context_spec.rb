@@ -48,6 +48,31 @@ RSpec.describe Wip::BuildContext do
     end
   end
 
+  it 'calls on_progress with (count, total) once per staged file, and not at all when there is nothing to copy' do
+    Dir.mktmpdir do |dir|
+      File.write(File.join(dir, '.dockerignore'), "node_modules\n")
+      File.write(File.join(dir, 'app.rb'), '')
+      File.write(File.join(dir, 'app_spec.rb'), '')
+      FileUtils.mkdir_p(File.join(dir, 'node_modules'))
+      File.write(File.join(dir, 'node_modules', 'pkg.js'), '')
+
+      calls = []
+      described_class.new(dir).stage(on_progress: ->(count, total) { calls << [count, total] }) { |_staged| nil }
+
+      # .dockerignore, app.rb, app_spec.rb — node_modules/pkg.js is excluded.
+      expect(calls).to eq([[1, 3], [2, 3], [3, 3]])
+    end
+
+    Dir.mktmpdir do |dir|
+      FileUtils.touch(File.join(dir, 'app.rb'))
+
+      calls = []
+      described_class.new(dir).stage(on_progress: ->(count, total) { calls << [count, total] }) { |_staged| nil }
+
+      expect(calls).to eq([])
+    end
+  end
+
   it 'preserves broken symlinks' do
     Dir.mktmpdir do |dir|
       File.write(File.join(dir, '.dockerignore'), "ignored\n")

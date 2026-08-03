@@ -14,19 +14,24 @@ module Wip
       @ignore = ignore || DockerIgnore.load(@root.join('.dockerignore'))
     end
 
-    def stage
+    # on_progress fires once per file copied, as `|count, total|` — so a caller
+    # can show that staging a large context (thousands of small files can take
+    # tens of seconds) is still moving instead of looking hung.
+    def stage(on_progress: nil)
       return yield @root.to_s if @ignore.empty?
 
       Dir.mktmpdir('wip-build-context-') do |dir|
-        copy_included_files(Pathname(dir))
+        copy_included_files(Pathname(dir), on_progress)
         yield dir
       end
     end
 
     private
 
-    def copy_included_files(destination)
-      each_included_file do |relative_path|
+    def copy_included_files(destination, on_progress)
+      files = included_files
+      files.each_with_index do |relative_path, index|
+        on_progress&.call(index + 1, files.size)
         target = destination.join(relative_path)
         FileUtils.mkdir_p(target.dirname)
         # Keep links as links. Dereferencing a link here could copy arbitrary
@@ -36,15 +41,12 @@ module Wip
       end
     end
 
-    def each_included_file
-      Dir.glob('**/*', File::FNM_DOTMATCH, base: @root.to_s).each do |entry|
-        next if %w[. ..].include?(entry)
+    def included_files
+      Dir.glob('**/*', File::FNM_DOTMATCH, base: @root.to_s).select do |entry|
+        next false if %w[. ..].include?(entry)
 
         path = @root.join(entry)
-        next unless path.file? || path.symlink?
-        next if @ignore.ignored?(entry)
-
-        yield entry
+        (path.file? || path.symlink?) && !@ignore.ignored?(entry)
       end
     end
   end

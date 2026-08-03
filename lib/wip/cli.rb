@@ -71,7 +71,9 @@ module Wip
       settings = load_config.command('build') || {}
       context = settings['context'] || '.'
       warn "wip: staging build context (#{context})"
-      BuildContext.new(context).stage do |staged_context|
+      progress = StagingProgress.new
+      BuildContext.new(context).stage(on_progress: progress.method(:tick)) do |staged_context|
+        progress.finish
         execute(builder.build(settings: settings.merge('context' => staged_context), extra: extra))
       end
     end
