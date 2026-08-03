@@ -23,6 +23,12 @@ RSpec.describe Wip::CommandBuilder do
     expect(builder.run(['server'], settings: settings)).to eq(expected)
   end
 
+  it 'passes user through as -u' do
+    settings = { 'user' => '1000:1000' }
+    expect(builder.exec(%w[whoami], settings: settings,
+                                    interactive: false)).to eq(%w[wslc.exe exec -w /app -u 1000:1000 app whoami])
+  end
+
   it 'builds images with extra options before context' do
     expect(builder.build(settings: config.command('build'),
                          extra: ['--no-cache'])).to eq(%w[wslc.exe build -t example:dev

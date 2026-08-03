@@ -15,10 +15,19 @@ module Wip
   # "Compose mode (native)") — once wslc ships that support, or a
   # compose-for-wslc tool reliably supports `run`.
   class ComposeFile
-    Service = Struct.new(:image, :build, :command, :env, :ports, :volumes, :workdir, :depends_on, keyword_init: true)
+    Service = Struct.new(:image, :build, :command, :env, :ports, :volumes, :workdir, :user, :depends_on,
+                         keyword_init: true)
 
-    SERVICE_KEYS = %w[image build command environment ports volumes working_dir depends_on].freeze
-    BUILD_KEYS = %w[context dockerfile].freeze
+    SERVICE_KEYS = %w[image build command environment ports volumes working_dir user depends_on].freeze
+    # Real Compose keys that read as meaningful here but have nothing to map onto: TTY/stdin
+    # allocation is already decided per invocation (see CommandBuilder#tty?), not fixed per
+    # service; there's no per-service network to join beyond the one project network `network`
+    # (config.rb) already puts every service on; `wslc run`/`exec` has no restart-policy or
+    # capability flag to forward `restart:`/`cap_add:` to; and `profiles:` gates which services a
+    # real `docker compose up` starts by default, which doesn't apply here since wip never starts
+    # "every service" — only `compose.service` and whatever it reaches via `depends_on`.
+    IGNORED_SERVICE_KEYS = %w[tty stdin_open networks restart cap_add profiles].freeze
+    BUILD_KEYS = %w[context dockerfile args].freeze
     SUPPORTED_CONDITIONS = %w[service_started].freeze
 
     def self.load(path)
@@ -44,10 +53,10 @@ module Wip
     # name => {context:, dockerfile:, tag:} for every service with a build:.
     def build_specs
       @order.filter_map do |name|
-        build = @services.fetch(name).build
-        next unless build
+        service = @services.fetch(name)
+        next unless service.build
 
-        [name, build.merge('tag' => image_tag(name))]
+        [name, service.build.merge('tag' => image_tag(name, service))]
       end.to_h
     end
 
@@ -56,35 +65,41 @@ module Wip
     def to_dependencies_hash
       @order.to_h do |name|
         service = @services.fetch(name)
-        [name, { 'image' => service.build ? image_tag(name) : service.image, 'command' => service.command,
+        [name, { 'image' => service.build ? image_tag(name, service) : service.image, 'command' => service.command,
                  'env' => service.env, 'ports' => service.ports, 'volumes' => service.volumes,
-                 'workdir' => service.workdir }]
+                 'workdir' => service.workdir, 'user' => service.user }]
       end
     end
 
     private
 
-    def image_tag(name) = "wip-compose-#{name}:latest"
+    # A service naming both `build:` and `image:` builds via the former and tags the
+    # result with the latter (real Compose's own rule for that combination), instead
+    # of the auto-generated tag a build:-only service gets.
+    def image_tag(name, service) = service.image || "wip-compose-#{name}:latest"
 
     def build_service(name, entry)
       raise ConfigError, "#{@path}: services.#{name} must be a mapping" unless entry.is_a?(Hash)
 
-      unknown = entry.keys.map(&:to_s) - SERVICE_KEYS
+      unknown = entry.keys.map(&:to_s) - SERVICE_KEYS - IGNORED_SERVICE_KEYS
       raise ConfigError, "#{@path}: services.#{name} has unsupported key(s): #{unknown.join(', ')}" if unknown.any?
 
       image, build = image_or_build(name, entry)
       Service.new(image: image, build: build, command: normalize_command(entry['command']),
-                  env: normalize_env(name, entry['environment']),
-                  ports: normalize_list(name, entry['ports'], 'ports'),
-                  volumes: normalize_list(name, entry['volumes'], 'volumes'),
-                  workdir: presence(entry['working_dir']), depends_on: normalize_depends_on(name, entry['depends_on']))
+                  env: normalize_env(name, entry['environment']), **normalize_service_lists(name, entry),
+                  workdir: presence(entry['working_dir']), user: presence(entry['user']),
+                  depends_on: normalize_depends_on(name, entry['depends_on']))
+    end
+
+    def normalize_service_lists(name, entry)
+      { ports: normalize_list(name, entry['ports'], 'ports'),
+        volumes: normalize_list(name, entry['volumes'], 'volumes') }
     end
 
     def image_or_build(name, entry)
       image = presence(entry['image'])
       build = normalize_build(name, entry['build'])
       raise ConfigError, "#{@path}: services.#{name} must set image or build" unless image || build
-      raise ConfigError, "#{@path}: services.#{name} must not set both image and build" if image && build
 
       [image, build]
     end
@@ -118,27 +133,33 @@ module Wip
 
       context = resolve_context(presence(value['context']) || '.')
       dockerfile = presence(value['dockerfile'])
-      { 'context' => context, 'dockerfile' => dockerfile && Pathname(context).join(dockerfile).to_s }.compact
+      { 'context' => context, 'dockerfile' => dockerfile && Pathname(context).join(dockerfile).to_s,
+        'args' => normalize_kv(name, value['args'], 'build.args') }.compact
     end
 
     # build.context is relative to compose.yml's own directory (Compose's own rule),
     # not wherever `wip` happens to be invoked from.
     def resolve_context(raw) = Pathname(@path).expand_path.dirname.join(raw).to_s
 
-    def normalize_env(name, value)
+    def normalize_env(name, value) = normalize_kv(name, value, 'environment')
+
+    # Shared by `environment:` and `build.args:` — both accept a mapping or a
+    # KEY=VALUE array, and neither supports host environment pass-through (a
+    # null mapping value, or a bare KEY with no `=`).
+    def normalize_kv(name, value, label)
       return {} unless value
 
       case value
-      when Hash then normalize_env_mapping(name, value)
-      when Array then normalize_env_array(name, value)
-      else raise ConfigError, "#{@path}: services.#{name}.environment must be a mapping or an array of KEY=VALUE"
+      when Hash then normalize_kv_mapping(name, value, label)
+      when Array then normalize_kv_array(name, value, label)
+      else raise ConfigError, "#{@path}: services.#{name}.#{label} must be a mapping or an array of KEY=VALUE"
       end
     end
 
-    def normalize_env_mapping(name, value)
+    def normalize_kv_mapping(name, value, label)
       value.to_h do |key, val|
         if val.nil?
-          raise ConfigError, "#{@path}: services.#{name}.environment.#{key} must have a value " \
+          raise ConfigError, "#{@path}: services.#{name}.#{label}.#{key} must have a value " \
                              '(host environment pass-through is not supported)'
         end
 
@@ -146,10 +167,10 @@ module Wip
       end
     end
 
-    def normalize_env_array(name, value)
+    def normalize_kv_array(name, value, label)
       value.to_h do |item|
         key, val = item.to_s.split('=', 2)
-        raise ConfigError, "#{@path}: services.#{name}.environment entries must be KEY=VALUE" unless val
+        raise ConfigError, "#{@path}: services.#{name}.#{label} entries must be KEY=VALUE" unless val
 
         [key, val]
       end
