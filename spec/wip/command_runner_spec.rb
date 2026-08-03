@@ -29,6 +29,25 @@ RSpec.describe Wip::CommandRunner do
     expect(stderr.string).to include('wip: interrupted')
   end
 
+  it 'interprets output containing invalid UTF-8 bytes instead of raising an encoding error' do
+    stdout = StringIO.new(+''.b)
+    stderr = StringIO.new
+    runner = described_class.new(stdout: stdout, stderr: stderr)
+    script = <<~'RUBY'
+      STDOUT.binmode
+      STDOUT.write("\xFF\xFE".b)
+      STDOUT.write('too many mounted volumes')
+      exit 1
+    RUBY
+
+    status = nil
+    expect do
+      status = runner.run([RbConfig.ruby, '-e', script])
+    end.not_to raise_error
+    expect(status).to eq(1)
+    expect(stderr.string).to include('mounted-volume limit')
+  end
+
   it "doesn't let a pump thread's IOError escape when its stream is closed early" do
     source = Object.new
     def source.readpartial(_size)
