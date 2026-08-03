@@ -70,6 +70,7 @@ module Wip
       extra.shift if extra.first == '--'
       settings = load_config.command('build') || {}
       context = settings['context'] || '.'
+      warn "wip: staging build context (#{context})"
       BuildContext.new(context).stage do |staged_context|
         execute(builder.build(settings: settings.merge('context' => staged_context), extra: extra))
       end

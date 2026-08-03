@@ -277,5 +277,34 @@ RSpec.describe Wip::Config do
       expect(config.compose_build_specs['app']).to include('tag' => 'wip-compose-app:latest')
       expect(config.dependency('app')).to include('image' => 'wip-compose-app:latest')
     end
+
+    it 'interpolates ${VAR} references in compose.yml from a .env file next to wip.yml' do
+      File.write('compose.yml', <<~YAML)
+        services:
+          app:
+            image: example:dev
+            user: ${USER_ID}:${GROUP_ID}
+      YAML
+      File.write('.env', "USER_ID=1000\nGROUP_ID=1000\n")
+      config = described_class.new({ 'mode' => 'compose-native', 'compose' => { 'service' => 'app' } },
+                                   File.expand_path('wip.yml'))
+
+      expect(config.dependency('app')).to include('user' => '1000:1000')
+    end
+
+    it 'lets the shell environment override the .env file when interpolating compose.yml' do
+      File.write('compose.yml', "services:\n  app:\n    image: example:dev\n    user: ${USER_ID}\n")
+      File.write('.env', "USER_ID=1000\n")
+      config = described_class.new({ 'mode' => 'compose-native', 'compose' => { 'service' => 'app' } },
+                                   File.expand_path('wip.yml'))
+
+      begin
+        original = ENV.fetch('USER_ID', nil)
+        ENV['USER_ID'] = '2000'
+        expect(config.dependency('app')).to include('user' => '2000')
+      ensure
+        ENV['USER_ID'] = original
+      end
+    end
   end
 end

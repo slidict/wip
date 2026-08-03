@@ -202,7 +202,19 @@ module Wip
     def presence(value) = value.to_s.empty? ? nil : value.to_s
 
     def parsed_compose_file
-      @parsed_compose_file ||= ComposeFile.load(ComposeBridge.file_path(self))
+      @parsed_compose_file ||= ComposeFile.load(ComposeBridge.file_path(self), env: compose_interpolation_env)
+    end
+
+    # Compose interpolates ${VAR} references in compose.yml from the shell environment
+    # and a project .env file, shell values winning on conflict — mirror that here so
+    # `wip` doesn't need the value duplicated into wip.yml just to resolve a compose.yml
+    # reference. Uses the .env file next to wip.yml (the same default `wip`'s own
+    # --env-file/DotenvLoader convention resolves to unless overridden).
+    def compose_interpolation_env
+      return ENV.to_h unless path
+
+      env_file = Pathname(path).dirname.join('.env')
+      DotenvLoader.new(env_file).load.merge(ENV.to_h)
     end
 
     def default_compose_network = path && Pathname(path).dirname.basename.to_s

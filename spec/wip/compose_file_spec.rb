@@ -194,6 +194,46 @@ RSpec.describe Wip::ComposeFile do
     expect(deps['app']['user']).to eq('1000:1000')
   end
 
+  it 'interpolates ${VAR} references from the given env, like `docker compose` does' do
+    path = write_compose(<<~YAML)
+      services:
+        app:
+          image: example:dev
+          user: ${USER_ID}:${GROUP_ID}
+    YAML
+
+    deps = described_class.load(path, env: { 'USER_ID' => '1000', 'GROUP_ID' => '1000' }).to_dependencies_hash
+    expect(deps['app']['user']).to eq('1000:1000')
+  end
+
+  it 'falls back to a default for ${VAR:-default} and ${VAR-default} when unset' do
+    path = write_compose(<<~YAML)
+      services:
+        app:
+          image: example:dev
+          working_dir: ${MISSING:-/app}
+          command: ${ALSO_MISSING-fallback}
+    YAML
+
+    deps = described_class.load(path).to_dependencies_hash
+    expect(deps['app']['workdir']).to eq('/app')
+    expect(deps['app']['command']).to eq('fallback')
+  end
+
+  it 'substitutes an unset ${VAR} with nothing, and $$ with a literal dollar sign' do
+    path = write_compose(<<~YAML)
+      services:
+        app:
+          image: example:dev
+          working_dir: /${MISSING}app
+          command: echo $$HOME
+    YAML
+
+    deps = described_class.load(path).to_dependencies_hash
+    expect(deps['app']['workdir']).to eq('/app')
+    expect(deps['app']['command']).to eq('echo $HOME')
+  end
+
   it 'rejects unsupported service keys' do
     path = write_compose(<<~YAML)
       services:
