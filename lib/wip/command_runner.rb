@@ -26,7 +26,7 @@ module Wip
         threads.each(&:join)
         status = wait.value
       end
-      hint = @interpreter.interpret(captured)
+      hint = @interpreter.interpret(captured.force_encoding(Encoding::UTF_8).scrub)
       @stderr.puts("\n#{hint}") if !status.success? && hint
       status.exitstatus
     rescue Errno::ENOENT => e
