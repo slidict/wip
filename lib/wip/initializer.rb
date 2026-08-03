@@ -122,23 +122,7 @@ module Wip
         # optional; exec (default, mirrors into the running container) | run (always a fresh container)
         mode: exec
 
-        # image/build below always cover `wip up`'s pre-boot mirror (a throwaway container, since
-        # the primary one isn't running yet — falls back to the primary image if neither is set).
-        # With mode: exec above (the default here), `wip sync`/`wip sync --watch` afterward run
-        # rsync inside the already-running primary container instead, so its own image needs
-        # rsync installed too — image/build below aren't read for those.
-
-        # image the pre-boot (and, under sync.mode: run, every) mirror container runs
-        # image: your/image:tag
-
-        # alternative to image — let wip build a small dedicated mirror image itself
-        # build:
-        #   dockerfile: |
-        #     FROM alpine:latest
-        #     RUN apk add --no-cache rsync
-
-        #   optional (default: wip-sync-<container>:latest)
-        #   tag: wip-sync-app:latest
+        # sync.image/sync.build — only needed for sync.mode: run; see README "Source sync"
       YAML
     end
 
