@@ -138,6 +138,10 @@ module Wip
       results << result(File.directory?(sync.source) ? :ok : :fail,
                         "Sync source #{sync.source} mirrors into volume #{sync.volume} at #{sync.target}",
                         "Sync source not found: #{sync.source}")
+      return unless sync.exec? && (sync.image || sync.build)
+
+      results << Result.new(:warn, 'sync.image/sync.build are set but sync.mode is exec, so they are ignored ' \
+                                   '(only sync.mode: run mirrors from a separate image)')
     end
 
     def result(condition, ok_message, fail_message)

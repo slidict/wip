@@ -153,6 +153,13 @@ bind-mounted](#slow-boot-when-the-app-directory-is-bind-mounted) for why. A `syn
 that problem to `wip`: the source is mounted read-only, the app runs off a named volume, and wip
 mirrors one into the other with `rsync`.
 
+Under `sync.mode: exec` (the default for `mode: container`/`compose-native`), that `rsync` runs
+inside the already-running primary container, so the image it's built from must have `rsync`
+installed — `sync.image`/`sync.build` are irrelevant here since there's no separate mirror
+container. They only matter under `sync.mode: run`, which mirrors from a throwaway container
+instead and needs its own image with `rsync` (either `sync.image`, or `sync.build` to have `wip`
+build one).
+
 ```yaml
 sync:
   source: .          # host path, relative to wip.yml (default: the wip.yml directory)

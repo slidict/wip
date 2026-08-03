@@ -43,6 +43,23 @@ RSpec.describe Wip::Doctor do
                                                            message: a_string_matching(%r{volume app-src at /app})))
   end
 
+  it 'warns when sync.image/sync.build are set but sync.mode is exec' do
+    results = results_for(<<~YAML)
+      version: 1
+      container: app
+      dependencies:
+        app:
+          image: example:dev
+      sync:
+        mode: exec
+        image: some/image:tag
+    YAML
+
+    expect(results).to include(an_object_having_attributes(
+                                 level: :warn, message: a_string_matching(/ignored/)
+                               ))
+  end
+
   it 'reports a missing primary container as a failed check' do
     results = results_for(<<~YAML)
       version: 1

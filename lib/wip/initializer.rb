@@ -122,7 +122,11 @@ module Wip
         # optional; exec (default, mirrors into the running container) | run (always a fresh container)
         mode: exec
 
-        # only needed if sync.mode: run (or under mode: compose); image the mirror container runs
+        # image/build below only matter under sync.mode: run (a throwaway mirror container) — with
+        # mode: exec above (the default here), rsync runs inside the already-running container
+        # instead, so neither is read. That container's own image needs rsync installed either way.
+
+        # image the mirror container runs, if sync.mode: run
         # image: your/image:tag
 
         # alternative to image — let wip build a small dedicated mirror image itself
