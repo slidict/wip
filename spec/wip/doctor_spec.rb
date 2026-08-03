@@ -43,7 +43,7 @@ RSpec.describe Wip::Doctor do
                                                            message: a_string_matching(%r{volume app-src at /app})))
   end
 
-  it 'warns when sync.image/sync.build are set but sync.mode is exec' do
+  it 'warns when sync.image is set with sync.mode: exec' do
     results = results_for(<<~YAML)
       version: 1
       container: app
@@ -56,7 +56,26 @@ RSpec.describe Wip::Doctor do
     YAML
 
     expect(results).to include(an_object_having_attributes(
-                                 level: :warn, message: a_string_matching(/ignored/)
+                                 level: :warn, message: a_string_matching(/pre-boot mirror/)
+                               ))
+  end
+
+  it 'warns when sync.build is set with sync.mode: exec' do
+    results = results_for(<<~YAML)
+      version: 1
+      container: app
+      dependencies:
+        app:
+          image: example:dev
+      sync:
+        mode: exec
+        build:
+          dockerfile: |
+            FROM alpine:latest
+    YAML
+
+    expect(results).to include(an_object_having_attributes(
+                                 level: :warn, message: a_string_matching(/pre-boot mirror/)
                                ))
   end
 

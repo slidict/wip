@@ -153,12 +153,14 @@ bind-mounted](#slow-boot-when-the-app-directory-is-bind-mounted) for why. A `syn
 that problem to `wip`: the source is mounted read-only, the app runs off a named volume, and wip
 mirrors one into the other with `rsync`.
 
-Under `sync.mode: exec` (the default for `mode: container`/`compose-native`), that `rsync` runs
-inside the already-running primary container, so the image it's built from must have `rsync`
-installed — `sync.image`/`sync.build` are irrelevant here since there's no separate mirror
-container. They only matter under `sync.mode: run`, which mirrors from a throwaway container
-instead and needs its own image with `rsync` (either `sync.image`, or `sync.build` to have `wip`
-build one).
+`wip up`'s pre-boot mirror always uses a throwaway container (the primary one isn't running yet),
+so `sync.image`/`sync.build` apply there regardless of `sync.mode` — falling back to the primary
+container's own image if neither is set. Where `sync.mode` actually matters is every mirror
+*after* that: under `sync.mode: exec` (the default for `mode: container`/`compose-native`), `wip
+sync`/`wip sync --watch` run `rsync` inside the already-running primary container instead, so
+*that* image needs `rsync` installed — `sync.image`/`sync.build` are ignored for these. Under
+`sync.mode: run`, every mirror (pre-boot included) uses a throwaway container, so `sync.image`/
+`sync.build` (or the primary image fallback) need `rsync` throughout.
 
 ```yaml
 sync:
