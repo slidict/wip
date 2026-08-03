@@ -1,12 +1,10 @@
 # frozen_string_literal: true
 
-require 'yaml'
-
 module Wip
   # Builds a starter wip.yml. Detects an existing compose file next to the
   # target (the same filenames ComposeBridge auto-detects) to decide between
-  # mode: compose and mode: container, since that's the one decision `wip
-  # init` can't leave to a placeholder.
+  # mode: compose-native and mode: container, since that's the one decision
+  # `wip init` can't leave to a placeholder.
   class Initializer
     CONTAINER_TEMPLATE = <<~YAML
       version: 1
@@ -40,56 +38,15 @@ module Wip
     def compose_template
       <<~YAML
         version: 1
-        mode: compose
-        container: app # TODO: rename freely; only used to name sync's volume ("<container>-src"),
-                        # since compose.yml — not dependencies: — owns this service's own definition
+        mode: compose-native # wip parses #{compose_file} itself and drives wslc directly — no external
+                              # compose-for-wslc binary needed. Prefer a real compose tool instead? Use
+                              # mode: compose (see README "Compose mode") and set compose.command.
 
         compose:
           service: app # TODO: which service in #{compose_file} wip run/exec/NAME target
-          command: wslc-compose # TODO: the compose-for-wslc binary/path you have installed
 
-        #{sync_hint}
+        sync: {} # optional; mirrors the source into a named volume instead of bind-mounting it live
       YAML
-    end
-
-    # sync: needs sync.image or sync.build (mode: compose has no dependencies: entry to borrow an
-    # image from) and a named volume the compose service mounts, matching sync.volume ("app-src" by
-    # default). Checked against the detected compose file so the hint doesn't repeat what's set up.
-    def sync_hint
-      return sync_hint_configured if compose_volume_mounted?
-
-      sync_hint_todo
-    end
-
-    def sync_hint_configured
-      <<~COMMENT.chomp
-        # #{compose_file} already mounts a volume matching sync.volume's default (app-src).
-        # sync: # add sync.build or sync.image too (one's required under mode: compose) — see README
-      COMMENT
-    end
-
-    def sync_hint_todo
-      <<~COMMENT.chomp
-        # sync: # optional; mirrors the source into a named volume instead of bind-mounting it live
-        #   build: # required under mode: compose (no dependencies: entry to borrow an image from)
-        #     dockerfile: |
-        #       FROM alpine:latest
-        #       RUN apk add --no-cache rsync
-        #   # the service above must also mount a volume named "app-src" (sync.volume's default) at the
-        #   # path your app expects — add to #{compose_file}:
-        #   #   volumes:
-        #   #     - app-src:/app
-        #   # and, alongside services:
-        #   # volumes:
-        #   #   app-src:
-      COMMENT
-    end
-
-    def compose_volume_mounted?
-      services = YAML.safe_load_file(File.join(@dir, compose_file), aliases: true)&.fetch('services', nil) || {}
-      services.values.any? { |service| Array(service['volumes']).any? { |v| v.to_s.start_with?('app-src:') } }
-    rescue StandardError
-      false
     end
   end
 end

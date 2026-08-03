@@ -18,7 +18,7 @@ RSpec.describe Wip::Initializer do
   end
 
   Wip::ComposeBridge::FILENAMES.each do |filename|
-    it "detects #{filename} and writes a mode: compose starter" do
+    it "detects #{filename} and writes a mode: compose-native starter" do
       Dir.mktmpdir do |dir|
         File.write(File.join(dir, filename), "services:\n  app:\n    image: example:dev\n")
         initializer = described_class.new(dir: dir)
@@ -26,28 +26,12 @@ RSpec.describe Wip::Initializer do
         expect(initializer.compose?).to be(true)
         output = initializer.call
         parsed = YAML.safe_load(output)
-        expect(parsed).to include('version' => 1, 'mode' => 'compose')
-        expect(parsed['compose']).to include('service', 'command')
-        expect(output).to include('required under mode: compose').and include('app-src')
+        expect(parsed).to include('version' => 1, 'mode' => 'compose-native')
+        expect(parsed['compose']).to include('service')
+        expect(parsed['compose']).not_to have_key('command')
+        expect(output).to include('mode: compose').and include(filename)
+        expect(parsed).to have_key('sync')
       end
-    end
-  end
-
-  it 'points at README when the compose file already mounts a volume matching sync.volume' do
-    Dir.mktmpdir do |dir|
-      File.write(File.join(dir, 'compose.yml'), <<~YAML)
-        services:
-          app:
-            image: example:dev
-            volumes:
-              - app-src:/app
-        volumes:
-          app-src:
-      YAML
-      output = described_class.new(dir: dir).call
-
-      expect(output).to include('already mounts a volume matching').and include('see README')
-      expect(output).not_to include('path your app expects')
     end
   end
 end

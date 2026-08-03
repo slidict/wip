@@ -4,9 +4,10 @@ require 'spec_helper'
 require 'tmpdir'
 
 RSpec.describe Wip::Doctor do
-  def results_for(yaml)
+  def results_for(yaml, compose_yaml: nil)
     Dir.mktmpdir do |dir|
       File.write(File.join(dir, 'wip.yml'), yaml)
+      File.write(File.join(dir, 'compose.yml'), compose_yaml) if compose_yaml
       described_class.new(loader: Wip::ConfigLoader.new(start_dir: dir)).call
     end
   end
@@ -65,5 +66,42 @@ RSpec.describe Wip::Doctor do
     expect(results).to include(an_object_having_attributes(
                                  level: :fail, message: 'container: must be set when dependencies: has entries'
                                ))
+  end
+
+  it 'reports a compose.service that has no matching compose.yml service as a failed check' do
+    results = results_for(<<~YAML, compose_yaml: "services:\n  app:\n    image: example:dev\n")
+      version: 1
+      mode: compose-native
+      compose:
+        service: web
+    YAML
+
+    expect(results).to include(an_object_having_attributes(
+                                 level: :fail, message: "compose.service 'web' has no matching service in compose.yml"
+                               ))
+  end
+
+  it 'reports the parsed compose file for a valid mode: compose-native config' do
+    results = results_for(<<~YAML, compose_yaml: "services:\n  app:\n    image: example:dev\n")
+      version: 1
+      mode: compose-native
+      compose:
+        service: app
+    YAML
+
+    expect(results).to include(an_object_having_attributes(level: :ok, message: 'Loaded wip.yml'))
+    expect(results).to include(an_object_having_attributes(level: :ok, message: 'Parsed compose file'))
+  end
+
+  it 'reports a missing compose file as a single failed check, without an unhandled exception' do
+    results = results_for(<<~YAML)
+      version: 1
+      mode: compose-native
+      compose:
+        service: app
+    YAML
+
+    expect(results).to include(an_object_having_attributes(level: :fail,
+                                                           message: a_string_matching(/no compose file found/)))
   end
 end

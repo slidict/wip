@@ -195,4 +195,87 @@ RSpec.describe Wip::Config do
     expect(config.to_h).not_to have_key('defaults')
     expect(config.to_h).not_to have_key('up')
   end
+
+  context 'mode: compose-native' do
+    around { |example| Dir.mktmpdir { |dir| Dir.chdir(dir) { example.run } } }
+
+    def write_compose_file
+      File.write('compose.yml', <<~YAML)
+        services:
+          app:
+            image: example:dev
+            depends_on:
+              - redis
+          redis:
+            image: redis:latest
+      YAML
+    end
+
+    it 'requires a compose: block' do
+      expect { described_class.new('mode' => 'compose-native') }
+        .to raise_error(Wip::ConfigError, /mode: compose-native requires a compose: block/)
+    end
+
+    it 'has no compose.command: there is no external binary to name' do
+      expect do
+        described_class.new('mode' => 'compose-native',
+                            'compose' => { 'service' => 'app', 'command' => 'wslc-compose' })
+      end.to raise_error(Wip::ConfigError, /compose\.command is not used under mode: compose-native/)
+    end
+
+    it 'rejects compose-native combined with dependencies' do
+      expect do
+        described_class.new('mode' => 'compose-native', 'compose' => { 'service' => 'app' },
+                            'dependencies' => { 'redis' => { 'image' => 'redis:latest' } })
+      end.to raise_error(Wip::ConfigError, /compose is mutually exclusive with dependencies/)
+    end
+
+    it 'rejects compose-native combined with network' do
+      expect do
+        described_class.new('mode' => 'compose-native', 'compose' => { 'service' => 'app' },
+                            'network' => 'app-tier')
+      end.to raise_error(Wip::ConfigError, /compose is mutually exclusive with network/)
+    end
+
+    it 'derives container from compose.service — no separate container: key needed' do
+      write_compose_file
+      config = described_class.new({ 'mode' => 'compose-native', 'compose' => { 'service' => 'app' } },
+                                   File.expand_path('wip.yml'))
+      expect(config.container).to eq('app')
+    end
+
+    it 'derives dependencies from compose.yml, in dependency order, image-shaped for CommandBuilder' do
+      write_compose_file
+      config = described_class.new({ 'mode' => 'compose-native', 'compose' => { 'service' => 'app' } },
+                                   File.expand_path('wip.yml'))
+
+      expect(config.dependencies.keys).to eq(%w[redis app])
+      expect(config.dependency('redis')).to include('image' => 'redis:latest')
+      expect(config.dependency('app')).to include('image' => 'example:dev')
+    end
+
+    it 'derives network from compose.project when set' do
+      write_compose_file
+      config = described_class.new({ 'mode' => 'compose-native',
+                                     'compose' => { 'service' => 'app', 'project' => 'myapp' } },
+                                   File.expand_path('wip.yml'))
+      expect(config.network).to eq('myapp')
+    end
+
+    it 'falls back network to the wip.yml directory name when compose.project is unset' do
+      write_compose_file
+      config = described_class.new({ 'mode' => 'compose-native', 'compose' => { 'service' => 'app' } },
+                                   File.expand_path('wip.yml'))
+      expect(config.network).to eq(File.basename(Dir.pwd))
+    end
+
+    it 'exposes build_specs for services with build: instead of image:' do
+      File.write('compose.yml', "services:\n  app:\n    build: .\n")
+      config = described_class.new({ 'mode' => 'compose-native', 'compose' => { 'service' => 'app' } },
+                                   File.expand_path('wip.yml'))
+
+      expect(config.compose_build_specs['app']).to include('tag' => 'wip-compose-app:latest')
+      expect(config.dependency('app')).to include('image' => 'wip-compose-app:latest')
+    end
+  end
 end

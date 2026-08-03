@@ -88,6 +88,16 @@ module Wip
       [@wslc, 'stop', required_container]
     end
 
+    # Only reachable under mode: compose-native — mode: compose delegates `wip logs`
+    # to the external compose command's own `logs` (ComposeBridge#logs) instead.
+    # Single container only, mirroring `wslc`/docker's own `logs`: there's no
+    # multi-service log aggregation the way a real compose tool provides.
+    def logs(name, follow: true)
+      command = [@wslc, 'logs']
+      command << '-f' if follow
+      command.push(name.to_s)
+    end
+
     def remove
       [@wslc, 'remove', '-f', required_container]
     end
