@@ -211,6 +211,18 @@ RSpec.describe Wip::Config do
       YAML
     end
 
+    # Isolates a spec from whatever the ambient shell/CI environment happens to
+    # have set for these keys, since compose_interpolation_env merges real ENV
+    # over the .env file — a preexisting USER_ID/GROUP_ID would otherwise make
+    # the interpolation specs pass or fail depending on who's running them.
+    def without_env(*keys)
+      originals = keys.to_h { |key| [key, ENV.fetch(key, nil)] }
+      keys.each { |key| ENV.delete(key) }
+      yield
+    ensure
+      originals.each { |key, value| ENV[key] = value }
+    end
+
     it 'requires a compose: block' do
       expect { described_class.new('mode' => 'compose-native') }
         .to raise_error(Wip::ConfigError, /mode: compose-native requires a compose: block/)
@@ -279,32 +291,45 @@ RSpec.describe Wip::Config do
     end
 
     it 'interpolates ${VAR} references in compose.yml from a .env file next to wip.yml' do
-      File.write('compose.yml', <<~YAML)
-        services:
-          app:
-            image: example:dev
-            user: ${USER_ID}:${GROUP_ID}
-      YAML
-      File.write('.env', "USER_ID=1000\nGROUP_ID=1000\n")
-      config = described_class.new({ 'mode' => 'compose-native', 'compose' => { 'service' => 'app' } },
-                                   File.expand_path('wip.yml'))
+      without_env('USER_ID', 'GROUP_ID') do
+        File.write('compose.yml', <<~YAML)
+          services:
+            app:
+              image: example:dev
+              user: ${USER_ID}:${GROUP_ID}
+        YAML
+        File.write('.env', "USER_ID=1000\nGROUP_ID=1000\n")
+        config = described_class.new({ 'mode' => 'compose-native', 'compose' => { 'service' => 'app' } },
+                                     File.expand_path('wip.yml'))
 
-      expect(config.dependency('app')).to include('user' => '1000:1000')
+        expect(config.dependency('app')).to include('user' => '1000:1000')
+      end
     end
 
     it 'lets the shell environment override the .env file when interpolating compose.yml' do
-      File.write('compose.yml', "services:\n  app:\n    image: example:dev\n    user: ${USER_ID}\n")
-      File.write('.env', "USER_ID=1000\n")
+      without_env('USER_ID') do
+        File.write('compose.yml', "services:\n  app:\n    image: example:dev\n    user: ${USER_ID}\n")
+        File.write('.env', "USER_ID=1000\n")
+        config = described_class.new({ 'mode' => 'compose-native', 'compose' => { 'service' => 'app' } },
+                                     File.expand_path('wip.yml'))
+
+        ENV['USER_ID'] = '2000'
+        expect(config.dependency('app')).to include('user' => '2000')
+      end
+    end
+
+    it 'raises instead of recursing forever on a self-referential YAML alias' do
+      File.write('compose.yml', <<~YAML)
+        services:
+          app: &app
+            image: example:dev
+            depends_on:
+              self: *app
+      YAML
       config = described_class.new({ 'mode' => 'compose-native', 'compose' => { 'service' => 'app' } },
                                    File.expand_path('wip.yml'))
 
-      begin
-        original = ENV.fetch('USER_ID', nil)
-        ENV['USER_ID'] = '2000'
-        expect(config.dependency('app')).to include('user' => '2000')
-      ensure
-        ENV['USER_ID'] = original
-      end
+      expect { config.dependencies }.to raise_error(Wip::ConfigError, /self-referential/)
     end
   end
 end

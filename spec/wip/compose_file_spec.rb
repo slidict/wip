@@ -220,6 +220,20 @@ RSpec.describe Wip::ComposeFile do
     expect(deps['app']['command']).to eq('fallback')
   end
 
+  it 'distinguishes ${VAR:-default} (falls back on empty) from ${VAR-default} (empty stays empty)' do
+    path = write_compose(<<~YAML)
+      services:
+        app:
+          image: example:dev
+          working_dir: ${EMPTY:-/app}
+          command: "prefix-${EMPTY-fallback}-suffix"
+    YAML
+
+    deps = described_class.load(path, env: { 'EMPTY' => '' }).to_dependencies_hash
+    expect(deps['app']['workdir']).to eq('/app')
+    expect(deps['app']['command']).to eq('prefix--suffix')
+  end
+
   it 'substitutes an unset ${VAR} with nothing, and $$ with a literal dollar sign' do
     path = write_compose(<<~YAML)
       services:

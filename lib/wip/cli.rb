@@ -189,7 +189,11 @@ module Wip
 
     private
 
-    def loader = ConfigLoader.new(path: options[:config])
+    def loader
+      env_file = options[:env_file] && Pathname(options[:env_file]).expand_path
+      ConfigLoader.new(path: options[:config], env_file: env_file)
+    end
+
     def load_config = (@load_config ||= loader.load)
     def resolver = CommandResolver.new
 
