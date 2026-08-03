@@ -181,6 +181,17 @@ sync:
     tag: null          # optional (default: "wip-sync-<container>:latest")
 ```
 
+`wip init --template NAME` writes `exclude`'s default list live, picked from that stack's own
+`github/gitignore` template:
+
+| `--template` | Stack | Default `exclude` |
+|---|---|---|
+| `rails` | Rails | `.git`, `log/`, `tmp/`, `storage/`, `public/assets/`, `public/packs/`, `.bundle/`, `vendor/bundle/`, `coverage/`, `node_modules/` |
+| `node` | Node.js | `.git`, `node_modules/`, `dist/`, `build/`, `.next/`, `.cache/`, `coverage/` |
+| `rust` | Rust | `.git`, `target/` |
+| `csharp` | C# | `.git`, `bin/`, `obj/`, `.vs/`, `packages/` |
+| (omitted) | — | `.git`, `tmp/`, `node_modules/` |
+
 Everything below `sync:` is optional — `sync: {}` alone already works. With it in place:
 
 - Any `volumes` entry on the primary container mounting `target` (the usual `.:/app`) is replaced
@@ -341,7 +352,7 @@ valid compose.yml over sections it doesn't need to look at:
 
 | Command | Description |
 |---|---|
-| `wip init [--force]` | Write a starter `wip.yml`: `mode: compose-native` if a `compose.yml`/`docker-compose.yml` is found next to it, `mode: container` otherwise. Refuses to overwrite an existing `wip.yml` unless `--force` |
+| `wip init [--force] [--template NAME]` | Write a starter `wip.yml`: `mode: compose-native` if a `compose.yml`/`docker-compose.yml` is found next to it, `mode: container` otherwise. `--template` picks `sync.exclude`'s default patterns for a stack (`rails`, `node`, `rust`, `csharp`); omitted, it falls back to `.git`/`tmp/`/`node_modules/`. Refuses to overwrite an existing `wip.yml` unless `--force` |
 | `wip version` | wip's version, plus WSLC's if it can be detected |
 | `wip doctor` | Diagnose WSL2, interop, WSLC, config, architecture, and Git |
 | `wip config` | Print the effective configuration (secrets masked) |

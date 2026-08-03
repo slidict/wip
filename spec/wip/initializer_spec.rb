@@ -34,4 +34,29 @@ RSpec.describe Wip::Initializer do
       end
     end
   end
+
+  it 'defaults sync.exclude to .git/tmp/node_modules when no template is given' do
+    Dir.mktmpdir do |dir|
+      parsed = YAML.safe_load(described_class.new(dir: dir).call)
+      expect(parsed['sync']['exclude']).to eq(['.git', 'tmp/', 'node_modules/'])
+    end
+  end
+
+  {
+    'rails' => %w[log/ tmp/ storage/],
+    'node' => %w[node_modules/ dist/],
+    'rust' => %w[target/],
+    'csharp' => %w[bin/ obj/]
+  }.each do |template, expected_patterns|
+    it "picks the #{template} sync.exclude preset for --template #{template}" do
+      Dir.mktmpdir do |dir|
+        parsed = YAML.safe_load(described_class.new(dir: dir, template: template).call)
+        expect(parsed['sync']['exclude']).to include(*expected_patterns)
+      end
+    end
+  end
+
+  it 'rejects an unknown --template' do
+    expect { described_class.new(dir: Dir.pwd, template: 'cobol') }.to raise_error(Wip::Error, /cobol/)
+  end
 end
