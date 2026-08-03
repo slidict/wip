@@ -34,8 +34,7 @@ module Wip
     # so values like `user: ${USER_ID}:${GROUP_ID}` reach wslc already substituted
     # instead of literally (see Config#compose_interpolation_env for what's passed in).
     def self.load(path, env: {})
-      text = VariableInterpolation.call(File.read(path), env)
-      raw = YAML.safe_load(text, aliases: true, filename: path.to_s)
+      raw = VariableInterpolation.tree(YAML.safe_load_file(path, aliases: true), env)
       raise ConfigError, "#{path}: services: must be a mapping" unless raw.is_a?(Hash) && raw['services'].is_a?(Hash)
 
       new(raw['services'], path: path)

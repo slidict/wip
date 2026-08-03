@@ -17,6 +17,19 @@ module Wip
       end
     end
 
+    # Walks an already-parsed YAML structure and interpolates string values only —
+    # real Compose interpolates YAML values, never mapping keys (its docs call this
+    # out explicitly), and doing this after parsing means a substituted value can't
+    # introduce YAML syntax (e.g. a literal "#" turning into a comment marker).
+    def self.tree(value, env)
+      case value
+      when String then call(value, env)
+      when Hash then value.transform_values { |v| tree(v, env) }
+      when Array then value.map { |v| tree(v, env) }
+      else value
+      end
+    end
+
     def self.resolve(value, operator, default)
       case operator
       when ':-' then value.nil? || value.empty? ? default.to_s : value

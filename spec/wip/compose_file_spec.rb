@@ -234,6 +234,31 @@ RSpec.describe Wip::ComposeFile do
     expect(deps['app']['command']).to eq('echo $HOME')
   end
 
+  it 'interpolates values, not mapping keys, like real Compose' do
+    path = write_compose(<<~YAML)
+      services:
+        app:
+          image: example:dev
+          environment:
+            $KEY: value
+    YAML
+
+    deps = described_class.load(path, env: { 'KEY' => 'RENAMED' }).to_dependencies_hash
+    expect(deps['app']['env']).to eq('$KEY' => 'value')
+  end
+
+  it "substitutes a value without re-parsing it as YAML, so a literal '#' doesn't become a comment" do
+    path = write_compose(<<~YAML)
+      services:
+        app:
+          image: example:dev
+          command: ${VALUE}
+    YAML
+
+    deps = described_class.load(path, env: { 'VALUE' => 'value # not a comment' }).to_dependencies_hash
+    expect(deps['app']['command']).to eq('value # not a comment')
+  end
+
   it 'rejects unsupported service keys' do
     path = write_compose(<<~YAML)
       services:
