@@ -65,6 +65,38 @@ RSpec.describe Wip::ComposeFile do
     expect { described_class.load(path) }.to raise_error(Wip::ConfigError, /environment entries must be KEY=VALUE/)
   end
 
+  it 'rejects an environment mapping entry with a null value instead of silently blanking it' do
+    path = write_compose(<<~YAML)
+      services:
+        app:
+          image: example:dev
+          environment:
+            RAILS_ENV:
+    YAML
+
+    expect { described_class.load(path) }.to raise_error(Wip::ConfigError, /environment\.RAILS_ENV must have a value/)
+  end
+
+  it 'joins exec-form command arrays back into a single shell-safe string' do
+    path = write_compose(<<~YAML)
+      services:
+        app:
+          image: example:dev
+          command: ["bin/rails", "s", "-p 3000"]
+    YAML
+
+    expect(described_class.load(path).to_dependencies_hash['app']['command']).to eq('bin/rails s -p\ 3000')
+  end
+
+  it 'raises a ConfigError, not a raw exception, when the compose file is missing' do
+    expect { described_class.load('nope.yml') }.to raise_error(Wip::ConfigError, /Compose file not found/)
+  end
+
+  it 'raises a ConfigError, not a raw exception, on invalid YAML' do
+    path = write_compose("services: [\n")
+    expect { described_class.load(path) }.to raise_error(Wip::ConfigError, /Could not parse/)
+  end
+
   it 'requires exactly one of image or build' do
     neither = write_compose("services:\n  app:\n    command: x\n")
     expect { described_class.load(neither) }.to raise_error(Wip::ConfigError, /must set image or build/)
@@ -97,7 +129,7 @@ RSpec.describe Wip::ComposeFile do
     YAML
 
     spec = described_class.load(path).build_specs['app']
-    expect(spec['dockerfile']).to eq('Dockerfile.dev')
+    expect(spec['dockerfile']).to eq(File.expand_path('Dockerfile.dev'))
     expect(described_class.load(path).to_dependencies_hash['app']['image']).to eq('wip-compose-app:latest')
   end
 

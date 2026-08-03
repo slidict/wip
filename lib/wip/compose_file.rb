@@ -2,6 +2,7 @@
 
 require 'yaml'
 require 'pathname'
+require 'shellwords'
 
 module Wip
   # Parses compose.yml/docker-compose.yml into the shape mode: compose-native
@@ -25,6 +26,10 @@ module Wip
       raise ConfigError, "#{path}: services: must be a mapping" unless raw.is_a?(Hash) && raw['services'].is_a?(Hash)
 
       new(raw['services'], path: path)
+    rescue Psych::Exception => e
+      raise ConfigError, "Could not parse #{path}: #{e.message}"
+    rescue Errno::ENOENT
+      raise ConfigError, "Compose file not found: #{path}"
     end
 
     def initialize(services, path:)
@@ -68,7 +73,7 @@ module Wip
       raise ConfigError, "#{@path}: services.#{name} has unsupported key(s): #{unknown.join(', ')}" if unknown.any?
 
       image, build = image_or_build(name, entry)
-      Service.new(image: image, build: build, command: presence(entry['command']),
+      Service.new(image: image, build: build, command: normalize_command(entry['command']),
                   env: normalize_env(name, entry['environment']),
                   ports: normalize_list(name, entry['ports'], 'ports'),
                   volumes: normalize_list(name, entry['volumes'], 'volumes'),
@@ -84,22 +89,36 @@ module Wip
       [image, build]
     end
 
+    # Compose allows both shell form ("bin/rails s") and exec form (["bin/rails", "s"]);
+    # CommandBuilder re-splits whatever's here with Shellwords, so join exec form back into
+    # one string instead of letting Array#to_s (via presence) turn it into a literal
+    # "[\"bin/rails\", \"s\"]" that Shellwords would then split wrong.
+    def normalize_command(value)
+      return presence(value) unless value.is_a?(Array)
+
+      presence(Shellwords.join(value.map(&:to_s)))
+    end
+
     def normalize_build(name, value)
       return nil unless value
 
       case value
       when String then { 'context' => resolve_context(value) }
-      when Hash
-        unknown = value.keys.map(&:to_s) - BUILD_KEYS
-        if unknown.any?
-          raise ConfigError,
-                "#{@path}: services.#{name}.build has unsupported key(s): #{unknown.join(', ')}"
-        end
-
-        { 'context' => resolve_context(presence(value['context']) || '.'), 'dockerfile' => value['dockerfile'] }.compact
-      else
-        raise ConfigError, "#{@path}: services.#{name}.build must be a string or mapping"
+      when Hash then normalize_build_mapping(name, value)
+      else raise ConfigError, "#{@path}: services.#{name}.build must be a string or mapping"
       end
+    end
+
+    def normalize_build_mapping(name, value)
+      unknown = value.keys.map(&:to_s) - BUILD_KEYS
+      if unknown.any?
+        raise ConfigError,
+              "#{@path}: services.#{name}.build has unsupported key(s): #{unknown.join(', ')}"
+      end
+
+      context = resolve_context(presence(value['context']) || '.')
+      dockerfile = presence(value['dockerfile'])
+      { 'context' => context, 'dockerfile' => dockerfile && Pathname(context).join(dockerfile).to_s }.compact
     end
 
     # build.context is relative to compose.yml's own directory (Compose's own rule),
@@ -110,16 +129,29 @@ module Wip
       return {} unless value
 
       case value
-      when Hash then value.to_h { |key, val| [key.to_s, val.to_s] }
-      when Array
-        value.to_h do |item|
-          key, val = item.to_s.split('=', 2)
-          raise ConfigError, "#{@path}: services.#{name}.environment entries must be KEY=VALUE" unless val
+      when Hash then normalize_env_mapping(name, value)
+      when Array then normalize_env_array(name, value)
+      else raise ConfigError, "#{@path}: services.#{name}.environment must be a mapping or an array of KEY=VALUE"
+      end
+    end
 
-          [key, val]
+    def normalize_env_mapping(name, value)
+      value.to_h do |key, val|
+        if val.nil?
+          raise ConfigError, "#{@path}: services.#{name}.environment.#{key} must have a value " \
+                             '(host environment pass-through is not supported)'
         end
-      else
-        raise ConfigError, "#{@path}: services.#{name}.environment must be a mapping or an array of KEY=VALUE"
+
+        [key.to_s, val.to_s]
+      end
+    end
+
+    def normalize_env_array(name, value)
+      value.to_h do |item|
+        key, val = item.to_s.split('=', 2)
+        raise ConfigError, "#{@path}: services.#{name}.environment entries must be KEY=VALUE" unless val
+
+        [key, val]
       end
     end
 

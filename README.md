@@ -318,17 +318,19 @@ There's no `compose.command` here (no external binary to name), and no top-level
 
 This is explicitly a stopgap for as long as `wslc` itself has no native Compose support (tracked
 upstream in [microsoft/WSL#40948](https://github.com/microsoft/WSL/issues/40948)) and third-party
-compose-for-`wslc` tools stay incomplete. It only understands a minimal subset of the Compose spec
-— anything outside that subset is a load-time `ConfigError` naming the offending key, rather than
-silently ignored:
+compose-for-`wslc` tools stay incomplete. It only understands a minimal subset of the Compose spec.
+Within `services.<name>:`, anything outside that subset is a load-time `ConfigError` naming the
+offending key, rather than silently ignored — but everything *outside* `services:` at the document's
+top level (`networks:`, `volumes:`, `configs:`, `secrets:`, ...) is the one exception: it's read by
+real Compose tools, not by `wip`, so `wip` silently ignores it rather than rejecting an otherwise
+valid compose.yml over sections it doesn't need to look at:
 
 - Per service: `image`, `build` (string or `{context:, dockerfile:}`; resolved relative to
-  `compose.yml`, not wherever `wip` is invoked from), `command`, `environment` (mapping or
-  `KEY=VALUE` array), `ports`/`volumes` (short syntax only — `"host:container"` strings, not
+  `compose.yml`, not wherever `wip` is invoked from), `command` (shell or exec form), `environment`
+  (mapping or `KEY=VALUE` array — a mapping value must not be null; host environment pass-through
+  isn't supported), `ports`/`volumes` (short syntax only — `"host:container"` strings, not
   long-syntax mappings), `working_dir`, `depends_on` (ordering only — a `condition:` other than
   `service_started` is rejected, since there's no health-check support).
-- Nothing at the top level besides `services:` is read (`networks:`, `volumes:`, `configs:`,
-  `secrets:` are ignored).
 - `wip logs` takes at most one `SERVICE` (defaulting to `compose.service`) — `wslc logs`, like
   `docker logs`, follows a single container, unlike a real compose tool's multi-service view.
 - `sync:` behaves exactly like `mode: container`'s (falls back to the primary service's own image,
