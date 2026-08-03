@@ -36,7 +36,7 @@ RSpec.describe Wip::ComposeFile do
     deps = described_class.load(path).to_dependencies_hash
     expect(deps['app']).to eq('image' => 'example:dev', 'command' => 'bin/rails s',
                               'env' => { 'RAILS_ENV' => 'development' }, 'ports' => ['3000:3000'],
-                              'volumes' => ['app-src:/app'], 'workdir' => '/app')
+                              'volumes' => ['app-src:/app'], 'workdir' => '/app', 'user' => nil)
   end
 
   it 'normalizes environment given as a KEY=VALUE array' do
@@ -97,12 +97,23 @@ RSpec.describe Wip::ComposeFile do
     expect { described_class.load(path) }.to raise_error(Wip::ConfigError, /Could not parse/)
   end
 
-  it 'requires exactly one of image or build' do
+  it 'requires at least one of image or build' do
     neither = write_compose("services:\n  app:\n    command: x\n")
     expect { described_class.load(neither) }.to raise_error(Wip::ConfigError, /must set image or build/)
+  end
 
-    both = write_compose("services:\n  app:\n    image: example:dev\n    build: .\n")
-    expect { described_class.load(both) }.to raise_error(Wip::ConfigError, /must not set both image and build/)
+  it 'builds and tags with image: when both image and build are set' do
+    path = write_compose(<<~YAML)
+      services:
+        app:
+          image: example:tagged
+          build:
+            context: .
+    YAML
+
+    compose = described_class.load(path)
+    expect(compose.build_specs['app']['tag']).to eq('example:tagged')
+    expect(compose.to_dependencies_hash['app']['image']).to eq('example:tagged')
   end
 
   it 'resolves build.context relative to the compose file, not the current directory' do
@@ -133,8 +144,8 @@ RSpec.describe Wip::ComposeFile do
     expect(described_class.load(path).to_dependencies_hash['app']['image']).to eq('wip-compose-app:latest')
   end
 
-  it 'rejects unsupported build keys' do
-    path = write_compose(<<~YAML)
+  it 'normalizes build.args given as a mapping or a KEY=VALUE array' do
+    mapping = write_compose(<<~YAML)
       services:
         app:
           build:
@@ -142,8 +153,45 @@ RSpec.describe Wip::ComposeFile do
             args:
               FOO: bar
     YAML
+    expect(described_class.load(mapping).build_specs['app']['args']).to eq('FOO' => 'bar')
 
-    expect { described_class.load(path) }.to raise_error(Wip::ConfigError, /build has unsupported key\(s\): args/)
+    array = write_compose(<<~YAML)
+      services:
+        app:
+          build:
+            context: .
+            args:
+              - FOO=bar
+    YAML
+    expect(described_class.load(array).build_specs['app']['args']).to eq('FOO' => 'bar')
+  end
+
+  it 'rejects unsupported build keys' do
+    path = write_compose(<<~YAML)
+      services:
+        app:
+          build:
+            context: .
+            deploy: true
+    YAML
+
+    expect { described_class.load(path) }.to raise_error(Wip::ConfigError, /build has unsupported key\(s\): deploy/)
+  end
+
+  it 'reads user and ignores tty, stdin_open, networks' do
+    path = write_compose(<<~YAML)
+      services:
+        app:
+          image: example:dev
+          user: "1000:1000"
+          tty: true
+          stdin_open: true
+          networks:
+            - app-tier
+    YAML
+
+    deps = described_class.load(path).to_dependencies_hash
+    expect(deps['app']['user']).to eq('1000:1000')
   end
 
   it 'rejects unsupported service keys' do

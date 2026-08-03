@@ -294,6 +294,7 @@ module Wip
     def ensure_compose_images
       load_config.compose_build_specs.each_value do |spec|
         extra = spec['dockerfile'] ? ['-f', spec['dockerfile']] : []
+        spec['args']&.each { |key, value| extra.push('--build-arg', "#{key}=#{value}") }
         execute(builder.build(settings: { 'context' => spec['context'], 'tag' => spec['tag'] }, extra: extra))
       end
     end

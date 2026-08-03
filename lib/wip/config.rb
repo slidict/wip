@@ -7,7 +7,7 @@ module Wip
   class Config
     # Applied to every dependencies: entry, primary container included — there
     # is no separate, differently-shaped bucket for "the one you exec into."
-    DEPENDENCY_DEFAULTS = { 'workdir' => nil, 'interactive' => false, 'remove' => true,
+    DEPENDENCY_DEFAULTS = { 'workdir' => nil, 'user' => nil, 'interactive' => false, 'remove' => true,
                             'env' => {}, 'ports' => [], 'volumes' => [] }.freeze
     SECRET_PATTERN = /token|password|secret|credential|auth/i
     # Which orchestration path `up`/`down`/`sync`/etc. take. Explicit rather than

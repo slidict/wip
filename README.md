@@ -340,8 +340,11 @@ valid compose.yml over sections it doesn't need to look at:
   `compose.yml`, not wherever `wip` is invoked from), `command` (shell or exec form), `environment`
   (mapping or `KEY=VALUE` array — a mapping value must not be null; host environment pass-through
   isn't supported), `ports`/`volumes` (short syntax only — `"host:container"` strings, not
-  long-syntax mappings), `working_dir`, `depends_on` (ordering only — a `condition:` other than
-  `service_started` is rejected, since there's no health-check support).
+  long-syntax mappings), `working_dir`, `user`, `depends_on` (ordering only — a `condition:` other
+  than `service_started` is rejected, since there's no health-check support). `tty`, `stdin_open`,
+  and `networks` are accepted but silently ignored: TTY/stdin allocation is already decided per
+  invocation (see "TTY allocation" below), not fixed per service, and every service already shares
+  the one project network `compose.project` sets up.
 - `wip logs` takes at most one `SERVICE` (defaulting to `compose.service`) — `wslc logs`, like
   `docker logs`, follows a single container, unlike a real compose tool's multi-service view.
 - `sync:` behaves exactly like `mode: container`'s (falls back to the primary service's own image,
@@ -481,21 +484,28 @@ checklist.
 
 ## Not in the initial release
 
-Full Compose compatibility isn't reimplemented in `wip` itself — `mode: compose-native` only
-covers a minimal subset (see [Compose mode (native)](#compose-mode-native)), and full parity is
-otherwise available by delegating to a third-party compose-for-`wslc` tool (see
-[Compose mode](#compose-mode)). A resident/daemon process, a GUI, PowerShell-specific tuning,
-direct registry API/manifest parsing, self-update, and plugins are all unimplemented.
+Full Compose compatibility isn't reimplemented in `wip` itself — `mode: compose-native` parses
+`compose.yml` and drives `wslc` directly, but only covers a minimal subset (see
+[Compose mode (native)](#compose-mode-native)); full parity is otherwise available by delegating
+to a third-party compose-for-`wslc` tool (see [Compose mode](#compose-mode)). A resident/daemon
+process, a GUI, PowerShell-specific tuning, direct registry API/manifest parsing, self-update, and
+plugins are all unimplemented.
 
 ## Roadmap
 
 `wip` already covers most of what [`dip`](https://github.com/bibendi/dip) adds on top of Compose —
 named commands (`commands:`), `run`/`exec` hidden behind a single verb, `.env` passthrough, and
-sidecar services via `dependencies:` + `network:`. Fuller Compose semantics
-(`depends_on` ordering/health checks, log aggregation, named volumes, profiles, scaling) are now
-handled by delegating to a separate compose-for-`wslc` tool in [compose mode](#compose-mode)
-rather than being reimplemented in `wip` itself. Which of those actually work is entirely up to
-the external tool you point `compose.command` at — `wip` only forwards
+sidecar services via `dependencies:` + `network:`. Rather than waiting on `wslc`'s own Compose
+support ([microsoft/WSL#40948](https://github.com/microsoft/WSL/issues/40948)) or an external
+compose-for-`wslc` tool staying complete, `mode: compose-native` (see
+[Compose mode (native)](#compose-mode-native)) parses `compose.yml` itself and drives `wslc`
+directly — no external binary in the loop, `wip run` gets a real `--rm` container, and iterating
+on the parser is faster than chasing a third-party tool's own bugs. It's still a deliberately
+minimal subset (`depends_on` ordering but no health checks, single-container `logs`, no named
+volumes/scaling), and `dependencies:` + `network:` remains the escape hatch for sidecars it
+doesn't model. Fuller Compose semantics beyond that subset stay behind delegating to a separate
+compose-for-`wslc` tool in [compose mode](#compose-mode) — which of those actually work is
+entirely up to the external tool you point `compose.command` at; `wip` only forwards
 `-f FILE [-p PROJECT] up|down|exec|logs`, so treat that list as what Compose offers, not as
 something `wip` guarantees. See that section for what compose mode covers
 and its current limitations (`run`, and `commands:` of type `run`/`build`). What's still planned

@@ -159,14 +159,23 @@ module Wip
     private
 
     def options(values, include_container: false, include_publish: true, sync: true)
+      result = scalar_options(values)
+      merged_env(values).each { |key, value| result.push('-e', "#{key}=#{value}") }
+      result.concat(publish_options(values, sync: sync)) if include_publish
+      result << required(values, 'container') if include_container
+      result
+    end
+
+    def scalar_options(values)
       result = []
       result.push('-w', values['workdir']) unless values['workdir'].to_s.empty?
-      merged_env(values).each { |key, value| result.push('-e', "#{key}=#{value}") }
-      if include_publish
-        Array(values['ports']).each { |port| result.push('-p', port.to_s) }
-        volume_specs(values, sync: sync).each { |volume| result.push('-v', volume) }
-      end
-      result << required(values, 'container') if include_container
+      result.push('-u', values['user']) unless values['user'].to_s.empty?
+      result
+    end
+
+    def publish_options(values, sync:)
+      result = Array(values['ports']).flat_map { |port| ['-p', port.to_s] }
+      volume_specs(values, sync: sync).each { |volume| result.push('-v', volume) }
       result
     end
 
