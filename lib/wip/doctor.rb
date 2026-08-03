@@ -138,6 +138,12 @@ module Wip
       results << result(File.directory?(sync.source) ? :ok : :fail,
                         "Sync source #{sync.source} mirrors into volume #{sync.volume} at #{sync.target}",
                         "Sync source not found: #{sync.source}")
+      return unless sync.exec? && (sync.image || sync.build)
+
+      results << Result.new(:warn, 'sync.image/sync.build only cover `wip up`’s one-time pre-boot mirror ' \
+                                   '(the primary container isn’t running yet, so that step always uses a ' \
+                                   'throwaway container) — sync.mode: exec’s `wip sync`/`wip sync --watch` run ' \
+                                   'rsync inside the primary container instead, so its image needs rsync too')
     end
 
     def result(condition, ok_message, fail_message)
