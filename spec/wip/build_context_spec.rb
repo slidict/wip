@@ -48,6 +48,55 @@ RSpec.describe Wip::BuildContext do
     end
   end
 
+  it 'calls on_progress with (count, total) once per staged file, and not at all when there is nothing to copy' do
+    Dir.mktmpdir do |dir|
+      File.write(File.join(dir, '.dockerignore'), "node_modules\n")
+      File.write(File.join(dir, 'app.rb'), '')
+      File.write(File.join(dir, 'app_spec.rb'), '')
+      FileUtils.mkdir_p(File.join(dir, 'node_modules'))
+      File.write(File.join(dir, 'node_modules', 'pkg.js'), '')
+
+      calls = []
+      described_class.new(dir).stage(on_progress: ->(count, total) { calls << [count, total] }) { |_staged| nil }
+
+      # .dockerignore, app.rb, app_spec.rb — node_modules/pkg.js is excluded.
+      expect(calls).to eq([[1, 3], [2, 3], [3, 3]])
+    end
+
+    Dir.mktmpdir do |dir|
+      FileUtils.touch(File.join(dir, 'app.rb'))
+
+      calls = []
+      described_class.new(dir).stage(on_progress: ->(count, total) { calls << [count, total] }) { |_staged| nil }
+
+      expect(calls).to eq([])
+    end
+  end
+
+  it 'only calls on_progress once the file it reports has actually finished copying' do
+    Dir.mktmpdir do |dir|
+      File.write(File.join(dir, 'app.rb'), '')
+      File.write(File.join(dir, 'app_spec.rb'), '')
+      # A rule that matches nothing forces staging (the empty-.dockerignore
+      # case skips copying entirely and never calls on_progress at all).
+      File.write(File.join(dir, '.dockerignore'), "nonexistent-dir/\n")
+
+      completed = 0
+      allow(FileUtils).to receive(:copy_entry).and_wrap_original do |original, *args|
+        result = original.call(*args)
+        completed += 1
+        result
+      end
+
+      counts_seen_by_progress = []
+      described_class.new(dir).stage(on_progress: lambda { |count, _total|
+        counts_seen_by_progress << [count, completed]
+      }) { |_staged| nil }
+
+      expect(counts_seen_by_progress).to eq([[1, 1], [2, 2], [3, 3]])
+    end
+  end
+
   it 'preserves broken symlinks' do
     Dir.mktmpdir do |dir|
       File.write(File.join(dir, '.dockerignore'), "ignored\n")
