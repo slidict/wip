@@ -42,16 +42,11 @@ RSpec.describe Wip::Initializer do
     end
   end
 
-  {
-    'rails' => %w[log/ tmp/ storage/],
-    'node' => %w[node_modules/ dist/],
-    'rust' => %w[target/],
-    'csharp' => %w[bin/ obj/]
-  }.each do |template, expected_patterns|
+  Wip::Initializer::TEMPLATE_EXCLUDES.each do |template, expected_excludes|
     it "picks the #{template} sync.exclude preset for --template #{template}" do
       Dir.mktmpdir do |dir|
         parsed = YAML.safe_load(described_class.new(dir: dir, template: template).call)
-        expect(parsed['sync']['exclude']).to include(*expected_patterns)
+        expect(parsed['sync']['exclude']).to eq(expected_excludes)
       end
     end
   end

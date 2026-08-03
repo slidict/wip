@@ -43,7 +43,7 @@ module Wip
     desc 'init', 'Create a starter wip.yml (detects an existing compose.yml/docker-compose.yml)'
     option :force, type: :boolean, default: false, desc: 'Overwrite an existing wip.yml'
     option :template, type: :string,
-                      desc: "sync.exclude preset: #{Initializer::TEMPLATE_LABELS.keys.join(', ')} (default: generic)"
+                      desc: "sync.exclude preset: #{Initializer::TEMPLATE_LABELS.keys.join(', ')} (default: none)"
     def init
       path = Pathname(options[:config] || ConfigLoader::FILENAME).expand_path
       raise Error, "#{path} already exists (use --force to overwrite)" if path.file? && !options[:force]
