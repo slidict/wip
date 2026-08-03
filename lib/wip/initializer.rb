@@ -122,7 +122,7 @@ module Wip
         # optional; exec (default, mirrors into the running container) | run (always a fresh container)
         mode: exec
 
-        # sync.image/sync.build — only needed for sync.mode: run; see README "Source sync"
+        # sync.image/sync.build — required for mode: compose and used by sync.mode: run; see README "Source sync"
       YAML
     end
 
