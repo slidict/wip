@@ -73,6 +73,30 @@ RSpec.describe Wip::BuildContext do
     end
   end
 
+  it 'only calls on_progress once the file it reports has actually finished copying' do
+    Dir.mktmpdir do |dir|
+      File.write(File.join(dir, 'app.rb'), '')
+      File.write(File.join(dir, 'app_spec.rb'), '')
+      # A rule that matches nothing forces staging (the empty-.dockerignore
+      # case skips copying entirely and never calls on_progress at all).
+      File.write(File.join(dir, '.dockerignore'), "nonexistent-dir/\n")
+
+      completed = 0
+      allow(FileUtils).to receive(:copy_entry).and_wrap_original do |original, *args|
+        result = original.call(*args)
+        completed += 1
+        result
+      end
+
+      counts_seen_by_progress = []
+      described_class.new(dir).stage(on_progress: lambda { |count, _total|
+        counts_seen_by_progress << [count, completed]
+      }) { |_staged| nil }
+
+      expect(counts_seen_by_progress).to eq([[1, 1], [2, 2], [3, 3]])
+    end
+  end
+
   it 'preserves broken symlinks' do
     Dir.mktmpdir do |dir|
       File.write(File.join(dir, '.dockerignore'), "ignored\n")

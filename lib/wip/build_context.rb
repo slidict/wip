@@ -31,13 +31,13 @@ module Wip
     def copy_included_files(destination, on_progress)
       files = included_files
       files.each_with_index do |relative_path, index|
-        on_progress&.call(index + 1, files.size)
         target = destination.join(relative_path)
         FileUtils.mkdir_p(target.dirname)
         # Keep links as links. Dereferencing a link here could copy arbitrary
         # host files outside the build context (for example, ~/.ssh/id_rsa)
         # into the staged directory and expose them to the image build.
         FileUtils.copy_entry(@root.join(relative_path), target, false, false, false)
+        on_progress&.call(index + 1, files.size)
       end
     end
 

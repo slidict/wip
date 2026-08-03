@@ -76,6 +76,8 @@ module Wip
         progress.finish
         execute(builder.build(settings: settings.merge('context' => staged_context), extra: extra))
       end
+    ensure
+      progress&.finish
     end
 
     desc 'up', 'Start the configured container and its dependencies, creating them if necessary'
