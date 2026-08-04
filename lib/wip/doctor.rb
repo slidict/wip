@@ -151,6 +151,8 @@ module Wip
                  condition == :ok ? ok_message : fail_message)
     end
 
-    def command_available?(name) = ENV.fetch('PATH', '').split(File::PATH_SEPARATOR).any? { |dir| File.executable?(File.join(dir, name)) }
+    def command_available?(name)
+      ENV.fetch('PATH', '').split(File::PATH_SEPARATOR).any? { |dir| File.executable?(File.join(dir, name)) }
+    end
   end
 end
