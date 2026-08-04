@@ -57,13 +57,16 @@ module Wip
     end
 
     # Returns whether `path` belongs in the staged context, pruning the walk
-    # when it's an ignored directory so nothing under it is even visited.
+    # when it's an ignored directory so nothing under it is even visited —
+    # unless a later negated rule could still re-include something beneath it.
     def visit?(path, entry)
       ignored = @ignore.ignored?(entry)
-      return !ignored unless !File.symlink?(path) && File.directory?(path)
+      if !File.symlink?(path) && File.directory?(path)
+        Find.prune if ignored && @ignore.prunable?(entry)
+        return false
+      end
 
-      Find.prune if ignored
-      false
+      !ignored && (File.file?(path) || File.symlink?(path))
     end
   end
 end

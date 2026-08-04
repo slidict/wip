@@ -391,6 +391,38 @@ RSpec.describe Wip::CLI do
     expect(node_modules_present).to be false
   end
 
+  it 'uses an absolute build context unchanged instead of resolving it under the config directory' do
+    Dir.mktmpdir do |context_dir|
+      File.write(File.join(context_dir, 'Dockerfile'), "FROM scratch\n")
+      File.write('wip.yml', <<~YAML)
+        version: 1
+        container: app
+        dependencies:
+          app:
+            image: example:dev
+        commands:
+          build:
+            type: build
+            tag: example:dev
+            context: #{context_dir}
+      YAML
+
+      runner = instance_double(Wip::CommandRunner, run: 0)
+      allow(Wip::CommandRunner).to receive(:new).and_return(runner)
+      allow(Wip::CommandResolver).to receive(:new).and_return(instance_double(Wip::CommandResolver,
+                                                                              resolve: 'wslc.exe'))
+      staged_context = nil
+      expect(runner).to receive(:run) do |command, **_kwargs|
+        staged_context = command.last
+        0
+      end
+
+      described_class.start(%w[build])
+
+      expect(staged_context).to eq(context_dir)
+    end
+  end
+
   context 'in compose mode' do
     around do |example|
       Dir.mktmpdir do |dir|
