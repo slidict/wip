@@ -48,7 +48,7 @@ RSpec.describe Wip::BuildContext do
     end
   end
 
-  it 'calls on_progress with (count, total) once per staged file, and not at all when there is nothing to copy' do
+  it 'calls on_progress before copying and after every staged file, and not at all when staging is skipped' do
     Dir.mktmpdir do |dir|
       File.write(File.join(dir, '.dockerignore'), "node_modules\n")
       File.write(File.join(dir, 'app.rb'), '')
@@ -60,7 +60,7 @@ RSpec.describe Wip::BuildContext do
       described_class.new(dir).stage(on_progress: ->(count, total) { calls << [count, total] }) { |_staged| nil }
 
       # .dockerignore, app.rb, app_spec.rb — node_modules/pkg.js is excluded.
-      expect(calls).to eq([[1, 3], [2, 3], [3, 3]])
+      expect(calls).to eq([[0, 3], [1, 3], [2, 3], [3, 3]])
     end
 
     Dir.mktmpdir do |dir|
@@ -93,7 +93,7 @@ RSpec.describe Wip::BuildContext do
         counts_seen_by_progress << [count, completed]
       }) { |_staged| nil }
 
-      expect(counts_seen_by_progress).to eq([[1, 1], [2, 2], [3, 3]])
+      expect(counts_seen_by_progress).to eq([[0, 0], [1, 1], [2, 2], [3, 3]])
     end
   end
 
