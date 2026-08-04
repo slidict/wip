@@ -74,7 +74,8 @@ module Wip
       progress = StagingProgress.new
       BuildContext.new(context).stage(on_progress: progress.method(:tick)) do |staged_context|
         progress.finish
-        execute(builder.build(settings: settings.merge('context' => staged_context), extra: extra))
+        built = builder.build(settings: settings.merge('context' => staged_context), extra: extra)
+        execute(built, interactive: tty?(true))
       end
     ensure
       progress&.finish
@@ -313,7 +314,8 @@ module Wip
       progress = StagingProgress.new
       BuildContext.new(spec['context']).stage(on_progress: progress.method(:tick)) do |staged_context|
         progress.finish
-        execute(builder.build(settings: { 'context' => staged_context, 'tag' => spec['tag'] }, extra: extra))
+        settings = { 'context' => staged_context, 'tag' => spec['tag'] }
+        execute(builder.build(settings: settings, extra: extra), interactive: tty?(true))
       end
     ensure
       progress&.finish
