@@ -14,9 +14,8 @@ module Wip
       @ignore = ignore || DockerIgnore.load(@root.join('.dockerignore'))
     end
 
-    # on_progress fires once per file copied, as `|count, total|` — so a caller
-    # can show that staging a large context (thousands of small files can take
-    # tens of seconds) is still moving instead of looking hung.
+    # on_progress fires before copying and after each file, as `|count, total|`,
+    # so a caller can report elapsed progress even while copying one large file.
     def stage(on_progress: nil)
       return yield @root.to_s if @ignore.empty?
 
@@ -30,6 +29,7 @@ module Wip
 
     def copy_included_files(destination, on_progress)
       files = included_files
+      on_progress&.call(0, files.size)
       files.each_with_index do |relative_path, index|
         target = destination.join(relative_path)
         FileUtils.mkdir_p(target.dirname)
