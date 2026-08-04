@@ -12,7 +12,6 @@ module Wip
       @condition = ConditionVariable.new
       @worker = nil
       @stopped = false
-      @printed = false
     end
 
     def tick(count, total)
@@ -20,7 +19,10 @@ module Wip
         @count = count
         @total = total
         print_progress if @worker.nil? || count == total
-        @worker ||= Thread.new { report_on_interval }
+        unless @worker
+          @stopped = false
+          @worker = Thread.new { report_on_interval }
+        end
       end
     end
 
@@ -37,8 +39,8 @@ module Wip
 
       @mutex.synchronize do
         @worker = nil
-        @printed = false
         @out.puts
+        @out.flush
       end
     end
 
@@ -54,8 +56,8 @@ module Wip
     end
 
     def print_progress
-      @printed = true
       @out.print "\rwip: copying build context files: #{@count}/#{@total}"
+      @out.flush
     end
   end
 end

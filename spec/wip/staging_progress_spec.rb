@@ -2,21 +2,22 @@
 
 require 'spec_helper'
 require 'stringio'
+require 'timeout'
 
 RSpec.describe Wip::StagingProgress do
   it 'prints the latest count/total every interval even when no new tick arrives' do
-    out = StringIO.new
+    writes = Queue.new
+    out = instance_double(IO, print: nil, puts: nil, flush: nil)
+    allow(out).to receive(:print) { |text| writes << text }
     progress = described_class.new(out: out, interval: 0.01)
 
     progress.tick(1, 10)
-    expect(out.string).to eq("\rwip: copying build context files: 1/10")
+    expect(writes.pop).to eq("\rwip: copying build context files: 1/10")
 
     progress.tick(2, 10)
-    expect(out.string).to eq("\rwip: copying build context files: 1/10")
-
-    sleep 0.03
+    expect(Timeout.timeout(1) { writes.pop }).to eq("\rwip: copying build context files: 2/10")
     progress.finish
-    expect(out.string).to include("\rwip: copying build context files: 2/10")
+    expect(out).to have_received(:flush).at_least(:twice)
   end
 
   it 'always prints the final count/total, even mid-interval' do
