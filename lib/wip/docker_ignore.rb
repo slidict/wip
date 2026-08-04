@@ -30,7 +30,25 @@ module Wip
       end
     end
 
+    # Whether a walker can stop descending into an ignored directory without
+    # risking a miss: false if some later negated rule (e.g. `!node_modules/pkg`
+    # after `node_modules`) could still match something beneath it.
+    def prunable?(relative_path)
+      dir_components = relative_path.split('/')
+      @rules.none? { |rule| rule.negate && targets_descendant?(rule.pattern, dir_components) }
+    end
+
     private
+
+    def targets_descendant?(pattern, dir_components)
+      pattern_components = pattern.split('/')
+      return true if pattern_components.first == '**'
+      return false if pattern_components.size <= dir_components.size
+
+      pattern_components.first(dir_components.size).each_with_index.all? do |component, i|
+        File.fnmatch(component, dir_components[i], FNMATCH_FLAGS)
+      end
+    end
 
     def parse(line)
       line = line.strip

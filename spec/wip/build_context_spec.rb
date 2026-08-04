@@ -97,6 +97,66 @@ RSpec.describe Wip::BuildContext do
     end
   end
 
+  it 'never descends into an ignored directory, even one full of files' do
+    Dir.mktmpdir do |dir|
+      File.write(File.join(dir, '.dockerignore'), "node_modules\n")
+      File.write(File.join(dir, 'app.rb'), '')
+      FileUtils.mkdir_p(File.join(dir, 'node_modules', 'pkg'))
+      File.write(File.join(dir, 'node_modules', 'pkg', 'index.js'), '')
+
+      visited = []
+      allow(File).to receive(:directory?).and_wrap_original do |original, path, *args|
+        visited << path
+        original.call(path, *args)
+      end
+
+      staged_files = nil
+      described_class.new(dir).stage do |staged|
+        staged_files = Dir.glob('**/*', File::FNM_DOTMATCH, base: staged).reject { |f| %w[. ..].include?(f) }
+      end
+
+      expect(staged_files).to include('app.rb', '.dockerignore')
+      expect(staged_files.grep(/^node_modules/)).to be_empty
+      expect(visited.grep(%r{node_modules/pkg})).to be_empty
+    end
+  end
+
+  it 'stages a file re-included by a negated rule under an otherwise-ignored directory' do
+    Dir.mktmpdir do |dir|
+      File.write(File.join(dir, '.dockerignore'), "node_modules\n!node_modules/pkg/index.js\n")
+      FileUtils.mkdir_p(File.join(dir, 'node_modules', 'pkg'))
+      File.write(File.join(dir, 'node_modules', 'pkg', 'index.js'), '')
+      File.write(File.join(dir, 'node_modules', 'pkg', 'other.js'), '')
+
+      staged_files = nil
+      described_class.new(dir).stage do |staged|
+        staged_files = Dir.glob('**/*', File::FNM_DOTMATCH, base: staged).reject { |f| %w[. ..].include?(f) }
+      end
+
+      expect(staged_files).to include(File.join('node_modules', 'pkg', 'index.js'))
+      expect(staged_files).not_to include(File.join('node_modules', 'pkg', 'other.js'))
+    end
+  end
+
+  it 'excludes special files like named pipes even when not ignored' do
+    Dir.mktmpdir do |dir|
+      File.write(File.join(dir, 'app.rb'), '')
+      # A rule that matches nothing forces staging (an empty .dockerignore
+      # skips staging entirely and would just yield the original directory).
+      File.write(File.join(dir, '.dockerignore'), "nonexistent-dir/\n")
+      fifo = File.join(dir, 'a-fifo')
+      system('mkfifo', fifo, exception: true)
+
+      staged_files = nil
+      described_class.new(dir).stage do |staged|
+        staged_files = Dir.glob('**/*', File::FNM_DOTMATCH, base: staged).reject { |f| %w[. ..].include?(f) }
+      end
+
+      expect(staged_files).to include('app.rb', '.dockerignore')
+      expect(staged_files).not_to include('a-fifo')
+    end
+  end
+
   it 'preserves broken symlinks' do
     Dir.mktmpdir do |dir|
       File.write(File.join(dir, '.dockerignore'), "ignored\n")

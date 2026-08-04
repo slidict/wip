@@ -69,12 +69,13 @@ module Wip
     def build(*extra)
       extra.shift if extra.first == '--'
       settings = load_config.command('build') || {}
-      context = settings['context'] || '.'
+      context = Pathname(load_config.path).dirname.join(settings['context'] || '.').to_s
       warn "wip: staging build context (#{context})"
       progress = StagingProgress.new
       BuildContext.new(context).stage(on_progress: progress.method(:tick)) do |staged_context|
         progress.finish
-        execute(builder.build(settings: settings.merge('context' => staged_context), extra: extra))
+        built = builder.build(settings: settings.merge('context' => staged_context), extra: extra)
+        execute(built, interactive: tty?(true))
       end
     ensure
       progress&.finish
@@ -301,11 +302,23 @@ module Wip
     # `wip up` invocation, mirroring ensure_sync_image's "build once, not every tick"
     # approach. A no-op for mode: container/compose and for build:-less services.
     def ensure_compose_images
-      load_config.compose_build_specs.each_value do |spec|
-        extra = spec['dockerfile'] ? ['-f', spec['dockerfile']] : []
-        spec['args']&.each { |key, value| extra.push('--build-arg', "#{key}=#{value}") }
-        execute(builder.build(settings: { 'context' => spec['context'], 'tag' => spec['tag'] }, extra: extra))
+      load_config.compose_build_specs.each_value { |spec| build_compose_image(spec) }
+    end
+
+    # Stages spec['context'] the same way `wip build` does, so a .dockerignore next to
+    # a compose-native service's build: is honored and progress is reported here too.
+    def build_compose_image(spec)
+      extra = spec['dockerfile'] ? ['-f', spec['dockerfile']] : []
+      spec['args']&.each { |key, value| extra.push('--build-arg', "#{key}=#{value}") }
+      warn "wip: staging build context (#{spec['context']})"
+      progress = StagingProgress.new
+      BuildContext.new(spec['context']).stage(on_progress: progress.method(:tick)) do |staged_context|
+        progress.finish
+        settings = { 'context' => staged_context, 'tag' => spec['tag'] }
+        execute(builder.build(settings: settings, extra: extra), interactive: tty?(true))
       end
+    ensure
+      progress&.finish
     end
 
     # Builds sync.build's image once per invocation (not per --watch tick, which

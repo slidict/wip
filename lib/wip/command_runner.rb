@@ -27,7 +27,7 @@ module Wip
         status = wait.value
       end
       report_hint(captured) unless status.success?
-      status.exitstatus
+      exitstatus(status)
     rescue Errno::ENOENT => e
       @stderr.puts e.message
       127
@@ -37,6 +37,13 @@ module Wip
     end
 
     private
+
+    # exitstatus is nil when the process was killed by a signal instead of
+    # exiting normally; fall back to the conventional 128+signal shell code
+    # so callers always get a comparable integer.
+    def exitstatus(status)
+      status.exitstatus || (128 + status.termsig)
+    end
 
     def report_hint(captured)
       hint = @interpreter.interpret(captured.force_encoding(Encoding::UTF_8).scrub)
@@ -50,7 +57,7 @@ module Wip
     def run_attached(command, env)
       pid = Process.spawn(env, *command)
       _, status = Process.wait2(pid)
-      status.exitstatus
+      exitstatus(status)
     rescue Errno::ENOENT => e
       @stderr.puts e.message
       127
