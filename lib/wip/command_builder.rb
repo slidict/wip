@@ -84,10 +84,6 @@ module Wip
       [@wslc, 'exec', required_container, *required_sync.mirror_command]
     end
 
-    def down
-      [@wslc, 'stop', required_container]
-    end
-
     # Only reachable under mode: compose-native — mode: compose delegates `wip logs`
     # to the external compose command's own `logs` (ComposeBridge#logs) instead.
     # Single container only, mirroring `wslc`/docker's own `logs`: there's no
@@ -96,6 +92,10 @@ module Wip
       command = [@wslc, 'logs']
       command << '-f' if follow
       command.push(name.to_s)
+    end
+
+    def stop
+      [@wslc, 'stop', required_container]
     end
 
     def remove
@@ -128,7 +128,7 @@ module Wip
       [@wslc, 'list', '--all', '--filter', "name=#{name}", '--format', 'json']
     end
 
-    def dependency_down(name)
+    def dependency_stop(name)
       [@wslc, 'stop', name.to_s]
     end
 

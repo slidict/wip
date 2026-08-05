@@ -72,8 +72,8 @@ RSpec.describe Wip::CommandBuilder do
     expect(builder.start(detach: true)).to eq(%w[wslc.exe start app])
   end
 
-  it 'builds down and remove commands for the configured container' do
-    expect(builder.down).to eq(%w[wslc.exe stop app])
+  it 'builds stop and remove commands for the configured container' do
+    expect(builder.stop).to eq(%w[wslc.exe stop app])
     expect(builder.remove).to eq(%w[wslc.exe remove -f app])
   end
 
@@ -132,10 +132,10 @@ RSpec.describe Wip::CommandBuilder do
       expect(builder.dependency_up('redis')).to eq(%w[wslc.exe run --name redis --network app-tier -d redis:latest])
     end
 
-    it 'builds start/find/down/remove commands for a dependency' do
+    it 'builds start/find/stop/remove commands for a dependency' do
       expect(builder.dependency_start('redis')).to eq(%w[wslc.exe start redis])
       expect(builder.dependency_find('redis')).to eq(%w[wslc.exe list --all --filter name=redis --format json])
-      expect(builder.dependency_down('redis')).to eq(%w[wslc.exe stop redis])
+      expect(builder.dependency_stop('redis')).to eq(%w[wslc.exe stop redis])
       expect(builder.dependency_remove('redis')).to eq(%w[wslc.exe remove -f redis])
     end
 
