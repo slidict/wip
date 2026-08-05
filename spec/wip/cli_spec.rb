@@ -644,6 +644,21 @@ RSpec.describe Wip::CLI do
       )
     end
 
+    it 'names the service being built so multiple build: entries are distinguishable' do
+      File.write('compose.yml', <<~YAML)
+        services:
+          app:
+            build: .
+      YAML
+      runner = instance_double(Wip::CommandRunner, run: 0)
+      allow(Wip::CommandRunner).to receive(:new).and_return(runner)
+      allow(runner).to receive(:run).and_return(0)
+
+      expect { described_class.start(%w[up -d]) }.to output(
+        /wip: building service 'app' \(tag: wip-compose-app:latest\) from/
+      ).to_stderr
+    end
+
     it 'disables compose-native build cache when --no-cache is passed to up' do
       File.write('compose.yml', <<~YAML)
         services:

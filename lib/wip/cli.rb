@@ -312,14 +312,14 @@ module Wip
     # `wip up` invocation, mirroring ensure_sync_image's "build once, not every tick"
     # approach. A no-op for mode: container/compose and for build:-less services.
     def ensure_compose_images
-      load_config.compose_build_specs.each_value { |spec| build_compose_image(spec) }
+      load_config.compose_build_specs.each_pair { |name, spec| build_compose_image(name, spec) }
     end
 
     # Stages spec['context'] the same way `wip build` does, so a .dockerignore next to
     # a compose-native service's build: is honored and progress is reported here too.
-    def build_compose_image(spec)
+    def build_compose_image(name, spec)
       extra = compose_build_extra(spec)
-      warn "wip: staging build context (#{spec['context']})"
+      warn "wip: building service '#{name}' (tag: #{spec['tag']}) from #{spec['context']}"
       progress = StagingProgress.new
       BuildContext.new(spec['context']).stage(on_progress: progress.method(:tick)) do |staged_context|
         progress.finish
