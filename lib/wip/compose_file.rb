@@ -20,13 +20,13 @@ module Wip
 
     SERVICE_KEYS = %w[image build command environment ports volumes working_dir user depends_on profiles].freeze
     # Real Compose keys that read as meaningful here but have nothing to map onto: TTY/stdin
-    # allocation is already decided per invocation (see CommandBuilder#tty?), not fixed per
-    # service; there's no per-service network to join beyond the one project network `network`
-    # (config.rb) already puts every service on; and `wslc run`/`exec` has no restart-policy or
-    # capability flag to forward `restart:`/`cap_add:` to.
+    # allocation is decided per invocation (CommandBuilder#tty?), not per service; every
+    # service already shares one project network (config.rb); and `wslc run`/`exec` has no
+    # restart-policy or capability flag to forward `restart:`/`cap_add:` to.
     IGNORED_SERVICE_KEYS = %w[tty stdin_open networks restart cap_add].freeze
     BUILD_KEYS = %w[context dockerfile args].freeze
     SUPPORTED_CONDITIONS = %w[service_started].freeze
+    LIST_HINT = 'only supports short syntax ("host:container"), not long-syntax mappings'
 
     # env interpolates compose.yml's ${VAR} references the way `docker compose` does,
     # so values like `user: ${USER_ID}:${GROUP_ID}` reach wslc already substituted
@@ -50,6 +50,9 @@ module Wip
     end
 
     def service_names_in_dependency_order = @order.dup
+
+    # True if `name` is gated behind profiles: (wip has no --profile flag); false for an unknown name.
+    def profiled?(name) = @services[name.to_s]&.profiles&.any? || false
 
     # name => {context:, dockerfile:, tag:} for every service with a build:.
     # Profile-gated services are skipped — see #startable_order.
@@ -75,12 +78,9 @@ module Wip
 
     private
 
-    # `profiles:` gates which services a real `docker compose up` starts by default —
-    # wip has no --profile flag to activate one, so a service that names any profiles
-    # is never among the ones wip starts on its own (real Compose's behavior with no
-    # profile active). It still participates in #topological_order/depends_on
-    # validation, since another (startable) service may legitimately depend on it.
-    def startable_order = @order.reject { |name| @services.fetch(name).profiles.any? }
+    # A profile-gated service (see #profiled?) is never among the ones wip starts
+    # on its own, but still participates in #topological_order/depends_on validation.
+    def startable_order = @order.reject { |name| profiled?(name) }
 
     # A service naming both `build:` and `image:` builds via the former and tags the
     # result with the latter (real Compose's own rule for that combination), instead
@@ -103,7 +103,7 @@ module Wip
     def normalize_service_lists(name, entry)
       { ports: normalize_list(name, entry['ports'], 'ports'),
         volumes: normalize_list(name, entry['volumes'], 'volumes'),
-        profiles: normalize_list(name, entry['profiles'], 'profiles') }
+        profiles: normalize_list(name, entry['profiles'], 'profiles', hint: 'must be an array of strings') }
     end
 
     def image_or_build(name, entry)
@@ -136,10 +136,8 @@ module Wip
 
     def normalize_build_mapping(name, value)
       unknown = value.keys.map(&:to_s) - BUILD_KEYS
-      if unknown.any?
-        raise ConfigError,
-              "#{@path}: services.#{name}.build has unsupported key(s): #{unknown.join(', ')}"
-      end
+      raise ConfigError, "#{@path}: services.#{name}.build has unsupported key(s): #{unknown.join(', ')}" \
+        unless unknown.empty?
 
       context = resolve_context(presence(value['context']) || '.')
       dockerfile = presence(value['dockerfile'])
@@ -186,13 +184,12 @@ module Wip
       end
     end
 
-    def normalize_list(name, value, key)
+    def normalize_list(name, value, key, hint: LIST_HINT)
       return [] unless value
       raise ConfigError, "#{@path}: services.#{name}.#{key} must be an array" unless value.is_a?(Array)
-      if value.any?(Hash)
-        raise ConfigError, "#{@path}: services.#{name}.#{key} only supports short syntax (\"host:container\"), " \
-                           'not long-syntax mappings'
-      end
+
+      nested = value.any? { |item| item.is_a?(Hash) || item.is_a?(Array) }
+      raise ConfigError, "#{@path}: services.#{name}.#{key} #{hint}" if nested
 
       value.map(&:to_s)
     end
@@ -216,10 +213,18 @@ module Wip
       dep.to_s
     end
 
+    # Also rejects a startable (unprofiled) service depending on a profile-gated one —
+    # with no profile activation, real Compose treats that as an invalid model, since
+    # the dependency would silently never start.
     def validate_depends_on!
       @services.each do |name, service|
         service.depends_on.each do |dep|
           raise ConfigError, "#{@path}: services.#{name} depends_on unknown service '#{dep}'" unless @services.key?(dep)
+          next if service.profiles.any? || !profiled?(dep)
+
+          raise ConfigError, "#{@path}: services.#{name} depends_on '#{dep}', gated behind profiles: " \
+                             "(#{@services.fetch(dep).profiles.join(', ')}) wip never activates " \
+                             '(no --profile flag)'
         end
       end
     end

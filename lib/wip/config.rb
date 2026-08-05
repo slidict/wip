@@ -204,6 +204,19 @@ module Wip
 
     def parsed_compose_file
       @parsed_compose_file ||= ComposeFile.load(ComposeBridge.file_path(self), env: compose_interpolation_env)
+                                          .tap { |file| validate_compose_service_startable!(file) }
+    end
+
+    # compose.service is what wip always starts by default (container:) — wip has no
+    # --profile flag to activate one, so naming a profile-gated service here would
+    # otherwise fail later with a misleading "No dependencies.<name> entry" instead
+    # of pointing at the real cause.
+    def validate_compose_service_startable!(file)
+      return unless file.profiled?(compose_service)
+
+      raise ConfigError, "compose.service '#{compose_service}' is gated behind profiles: in compose.yml, " \
+                         'but wip has no --profile flag to activate one — pick a service with no profiles: ' \
+                         'or remove profiles: from it'
     end
 
     # Compose interpolates ${VAR} references in compose.yml from the shell environment
