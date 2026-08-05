@@ -370,8 +370,8 @@ valid compose.yml over sections it doesn't need to look at:
 | `wip version` | wip's version, plus WSLC's if it can be detected |
 | `wip doctor` | Diagnose WSL2, interop, WSLC, config, architecture, and Git |
 | `wip config` | Print the effective configuration (secrets masked) |
-| `wip build -- --no-cache` | Build the image from the `build` definition |
-| `wip up [-d] [--no-sync]` | Start the primary `dependencies:` entry (`container:` names which one) and its sidecars (creating any that are missing, on `network:` if set). `-d` runs the main container in the background; with `sync:` configured, the source is mirrored into the volume first unless `--no-sync` |
+| `wip build [--no-cache] [-- OPTIONS]` | Build the image from the `build` definition. By default, wip passes the target tag as `--cache-from` so previous layers can be reused; `--no-cache` disables that cache path. |
+| `wip up [-d] [--no-sync] [--no-cache]` | Start the primary `dependencies:` entry (`container:` names which one) and its sidecars (creating any that are missing, on `network:` if set). `-d` runs the main container in the background; with `sync:` configured, the source is mirrored into the volume first unless `--no-sync` |
 | `wip down` | Stop and remove the primary container and its sidecar `dependencies:` |
 | `wip exec [--no-interactive] COMMAND...` | Run a command in the existing container |
 | `wip run [--no-interactive] COMMAND...` | Run a command in a new `--rm` container (mode: compose `exec`s into `compose.service` instead — see "Compose mode" above) |

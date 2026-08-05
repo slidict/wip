@@ -66,8 +66,9 @@ module Wip
     end
 
     desc 'build [OPTIONS]', 'Build the configured image'
+    option :no_cache, type: :boolean, default: false, desc: 'Build without using cached layers'
     def build(*extra)
-      extra.shift if extra.first == '--'
+      extra = build_extra_options(extra)
       settings = load_config.command('build') || {}
       context = Pathname(load_config.path).dirname.join(settings['context'] || '.').to_s
       warn "wip: staging build context (#{context})"
@@ -84,6 +85,7 @@ module Wip
     desc 'up', 'Start the configured container and its dependencies, creating them if necessary'
     option :detach, type: :boolean, default: false, aliases: '-d'
     option :sync, type: :boolean, default: true, desc: 'Mirror the source into the sync volume first (--no-sync skips)'
+    option :no_cache, type: :boolean, default: false, desc: 'Build compose-native images without cached layers'
     def up
       if load_config.compose?
         sync_before_boot if options[:sync]
@@ -308,8 +310,7 @@ module Wip
     # Stages spec['context'] the same way `wip build` does, so a .dockerignore next to
     # a compose-native service's build: is honored and progress is reported here too.
     def build_compose_image(spec)
-      extra = spec['dockerfile'] ? ['-f', spec['dockerfile']] : []
-      spec['args']&.each { |key, value| extra.push('--build-arg', "#{key}=#{value}") }
+      extra = compose_build_extra(spec)
       warn "wip: staging build context (#{spec['context']})"
       progress = StagingProgress.new
       BuildContext.new(spec['context']).stage(on_progress: progress.method(:tick)) do |staged_context|
@@ -319,6 +320,23 @@ module Wip
       end
     ensure
       progress&.finish
+    end
+
+    def build_extra_options(extra)
+      extra = extra.dup
+      extra.shift if extra.first == '--'
+      with_no_cache_option(extra)
+    end
+
+    def compose_build_extra(spec)
+      extra = spec['dockerfile'] ? ['-f', spec['dockerfile']] : []
+      spec['args']&.each { |key, value| extra.push('--build-arg', "#{key}=#{value}") }
+      with_no_cache_option(extra)
+    end
+
+    def with_no_cache_option(extra)
+      extra.unshift('--no-cache') if options[:no_cache] && !extra.include?('--no-cache')
+      extra
     end
 
     # Builds sync.build's image once per invocation (not per --watch tick, which

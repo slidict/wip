@@ -142,7 +142,8 @@ module Wip
       tag = values['tag'] || values['image']
       raise ConfigError, 'Build image/tag must not be empty' if tag.to_s.empty?
 
-      [@wslc, 'build', '-t', tag, *extra, context]
+      cache_options = extra.include?('--no-cache') ? [] : ['--cache-from', tag]
+      [@wslc, 'build', '-t', tag, *cache_options, *extra, context]
     end
 
     def custom(name, arguments)
