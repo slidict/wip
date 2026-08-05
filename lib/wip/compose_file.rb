@@ -15,18 +15,16 @@ module Wip
   # "Compose mode (native)") — once wslc ships that support, or a
   # compose-for-wslc tool reliably supports `run`.
   class ComposeFile
-    Service = Struct.new(:image, :build, :command, :env, :ports, :volumes, :workdir, :user, :depends_on,
+    Service = Struct.new(:image, :build, :command, :env, :ports, :volumes, :workdir, :user, :depends_on, :profiles,
                          keyword_init: true)
 
-    SERVICE_KEYS = %w[image build command environment ports volumes working_dir user depends_on].freeze
+    SERVICE_KEYS = %w[image build command environment ports volumes working_dir user depends_on profiles].freeze
     # Real Compose keys that read as meaningful here but have nothing to map onto: TTY/stdin
     # allocation is already decided per invocation (see CommandBuilder#tty?), not fixed per
     # service; there's no per-service network to join beyond the one project network `network`
-    # (config.rb) already puts every service on; `wslc run`/`exec` has no restart-policy or
-    # capability flag to forward `restart:`/`cap_add:` to; and `profiles:` gates which services a
-    # real `docker compose up` starts by default, which doesn't apply here since wip never starts
-    # "every service" — only `compose.service` and whatever it reaches via `depends_on`.
-    IGNORED_SERVICE_KEYS = %w[tty stdin_open networks restart cap_add profiles].freeze
+    # (config.rb) already puts every service on; and `wslc run`/`exec` has no restart-policy or
+    # capability flag to forward `restart:`/`cap_add:` to.
+    IGNORED_SERVICE_KEYS = %w[tty stdin_open networks restart cap_add].freeze
     BUILD_KEYS = %w[context dockerfile args].freeze
     SUPPORTED_CONDITIONS = %w[service_started].freeze
 
@@ -54,8 +52,9 @@ module Wip
     def service_names_in_dependency_order = @order.dup
 
     # name => {context:, dockerfile:, tag:} for every service with a build:.
+    # Profile-gated services are skipped — see #startable_order.
     def build_specs
-      @order.filter_map do |name|
+      startable_order.filter_map do |name|
         service = @services.fetch(name)
         next unless service.build
 
@@ -66,7 +65,7 @@ module Wip
     # Shaped like Config::DEPENDENCY_DEFAULTS expects: image/command/env/ports/volumes/workdir,
     # in dependency order so callers iterating sidecars start them before their dependents.
     def to_dependencies_hash
-      @order.to_h do |name|
+      startable_order.to_h do |name|
         service = @services.fetch(name)
         [name, { 'image' => service.build ? image_tag(name, service) : service.image, 'command' => service.command,
                  'env' => service.env, 'ports' => service.ports, 'volumes' => service.volumes,
@@ -75,6 +74,13 @@ module Wip
     end
 
     private
+
+    # `profiles:` gates which services a real `docker compose up` starts by default —
+    # wip has no --profile flag to activate one, so a service that names any profiles
+    # is never among the ones wip starts on its own (real Compose's behavior with no
+    # profile active). It still participates in #topological_order/depends_on
+    # validation, since another (startable) service may legitimately depend on it.
+    def startable_order = @order.reject { |name| @services.fetch(name).profiles.any? }
 
     # A service naming both `build:` and `image:` builds via the former and tags the
     # result with the latter (real Compose's own rule for that combination), instead
@@ -96,7 +102,8 @@ module Wip
 
     def normalize_service_lists(name, entry)
       { ports: normalize_list(name, entry['ports'], 'ports'),
-        volumes: normalize_list(name, entry['volumes'], 'volumes') }
+        volumes: normalize_list(name, entry['volumes'], 'volumes'),
+        profiles: normalize_list(name, entry['profiles'], 'profiles') }
     end
 
     def image_or_build(name, entry)

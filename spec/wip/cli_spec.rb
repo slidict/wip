@@ -614,7 +614,7 @@ RSpec.describe Wip::CLI do
                                       ])
     end
 
-    it 'builds a build: service before starting it' do
+    it 'builds a build: service before starting it, without an unsupported --cache-from' do
       File.write('compose.yml', <<~YAML)
         services:
           app:
@@ -631,8 +631,7 @@ RSpec.describe Wip::CLI do
       described_class.start(%w[up -d])
 
       expect(runner).to have_received(:run).with(
-        ['wslc.exe', 'build', '-t', 'wip-compose-app:latest', '--cache-from', 'wip-compose-app:latest',
-         File.expand_path('.')], interactive: false
+        ['wslc.exe', 'build', '-t', 'wip-compose-app:latest', File.expand_path('.')], interactive: false
       )
     end
 

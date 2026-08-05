@@ -194,6 +194,50 @@ RSpec.describe Wip::ComposeFile do
     expect(deps['app']['user']).to eq('1000:1000')
   end
 
+  it 'excludes services with a profiles: entry from to_dependencies_hash, like an inactive `docker compose` profile' do
+    path = write_compose(<<~YAML)
+      services:
+        app:
+          image: example:dev
+        production.build:
+          image: example:dev
+          profiles:
+            - production.build
+    YAML
+
+    expect(described_class.load(path).to_dependencies_hash.keys).to eq(['app'])
+  end
+
+  it 'excludes services with a profiles: entry from build_specs' do
+    path = write_compose(<<~YAML)
+      services:
+        app:
+          image: example:dev
+        production.build:
+          build: .
+          profiles:
+            - production.build
+    YAML
+
+    expect(described_class.load(path).build_specs.keys).to eq([])
+  end
+
+  it 'still validates depends_on against a profile-gated service' do
+    path = write_compose(<<~YAML)
+      services:
+        app:
+          image: example:dev
+          depends_on:
+            - missing.profile
+        missing.profile:
+          image: example:dev
+          profiles:
+            - only-with-profile
+    YAML
+
+    expect(described_class.load(path).to_dependencies_hash.keys).to eq(['app'])
+  end
+
   it 'interpolates ${VAR} references from the given env, like `docker compose` does' do
     path = write_compose(<<~YAML)
       services:
