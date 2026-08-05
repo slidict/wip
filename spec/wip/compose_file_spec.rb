@@ -194,6 +194,82 @@ RSpec.describe Wip::ComposeFile do
     expect(deps['app']['user']).to eq('1000:1000')
   end
 
+  it 'excludes services with a profiles: entry from to_dependencies_hash, like an inactive `docker compose` profile' do
+    path = write_compose(<<~YAML)
+      services:
+        app:
+          image: example:dev
+        production.build:
+          image: example:dev
+          profiles:
+            - production.build
+    YAML
+
+    expect(described_class.load(path).to_dependencies_hash.keys).to eq(['app'])
+  end
+
+  it 'excludes services with a profiles: entry from build_specs' do
+    path = write_compose(<<~YAML)
+      services:
+        app:
+          image: example:dev
+        production.build:
+          build: .
+          profiles:
+            - production.build
+    YAML
+
+    expect(described_class.load(path).build_specs.keys).to eq([])
+  end
+
+  it 'rejects a startable service depending on a profile-gated one, since that dependency would never start' do
+    path = write_compose(<<~YAML)
+      services:
+        app:
+          image: example:dev
+          depends_on:
+            - missing.profile
+        missing.profile:
+          image: example:dev
+          profiles:
+            - only-with-profile
+    YAML
+
+    expect do
+      described_class.load(path)
+    end.to raise_error(Wip::ConfigError, /gated behind profiles: \(only-with-profile\)/)
+  end
+
+  it 'allows one profile-gated service to depend on another' do
+    path = write_compose(<<~YAML)
+      services:
+        app:
+          image: example:dev
+        worker:
+          image: example:dev
+          profiles: [batch]
+          depends_on:
+            - db
+        db:
+          image: postgres:16
+          profiles: [batch]
+    YAML
+
+    expect(described_class.load(path).to_dependencies_hash.keys).to eq(['app'])
+  end
+
+  it 'rejects a non-array profiles: entry' do
+    path = write_compose(<<~YAML)
+      services:
+        app:
+          image: example:dev
+          profiles:
+            name: batch
+    YAML
+
+    expect { described_class.load(path) }.to raise_error(Wip::ConfigError, /profiles must be an array/)
+  end
+
   it 'interpolates ${VAR} references from the given env, like `docker compose` does' do
     path = write_compose(<<~YAML)
       services:

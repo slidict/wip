@@ -29,14 +29,13 @@ RSpec.describe Wip::CommandBuilder do
                                     interactive: false)).to eq(%w[wslc.exe exec -w /app -u 1000:1000 app whoami])
   end
 
-  it 'builds images with extra options before context' do
-    expected = %w[wslc.exe build -t example:dev --cache-from example:dev
-                  --build-arg RAILS_ENV=development .]
+  it 'builds images with extra options before context, without an unsupported --cache-from' do
     expect(builder.build(settings: config.command('build'),
-                         extra: ['--build-arg', 'RAILS_ENV=development'])).to eq(expected)
+                         extra: ['--build-arg', 'RAILS_ENV=development']))
+      .to eq(%w[wslc.exe build -t example:dev --build-arg RAILS_ENV=development .])
   end
 
-  it 'omits cache options when building with --no-cache' do
+  it 'passes --no-cache through when building with --no-cache' do
     expect(builder.build(settings: config.command('build'),
                          extra: ['--no-cache'])).to eq(%w[wslc.exe build -t example:dev --no-cache .])
   end

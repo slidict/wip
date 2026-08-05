@@ -12,6 +12,7 @@ Metrics/ClassLength:
   Max: 160
   Exclude:
     - lib/wip/cli.rb
+    - lib/wip/compose_file.rb
 Metrics/BlockLength:
   Exclude:
     - spec/**/*

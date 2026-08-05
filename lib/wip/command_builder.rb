@@ -136,14 +136,16 @@ module Wip
       [@wslc, 'remove', '-f', name.to_s]
     end
 
+    # `wslc build` reuses matching local layers by default (like `docker build`
+    # without `--pull`) — it has no `--cache-from` flag to ask for that explicitly,
+    # and passing one is a hard error (unrecognized argument).
     def build(settings:, extra: [])
       values = primary_values.merge(settings)
       context = values['context'] || '.'
       tag = values['tag'] || values['image']
       raise ConfigError, 'Build image/tag must not be empty' if tag.to_s.empty?
 
-      cache_options = extra.include?('--no-cache') ? [] : ['--cache-from', tag]
-      [@wslc, 'build', '-t', tag, *cache_options, *extra, context]
+      [@wslc, 'build', '-t', tag, *extra, context]
     end
 
     def custom(name, arguments)

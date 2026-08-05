@@ -256,6 +256,22 @@ RSpec.describe Wip::Config do
       expect(config.container).to eq('app')
     end
 
+    it 'rejects compose.service naming a profile-gated service, since wip has no --profile flag to activate one' do
+      File.write('compose.yml', <<~YAML)
+        services:
+          app:
+            image: example:dev
+            profiles:
+              - production
+      YAML
+      config = described_class.new({ 'mode' => 'compose-native', 'compose' => { 'service' => 'app' } },
+                                   File.expand_path('wip.yml'))
+
+      expect do
+        config.dependencies
+      end.to raise_error(Wip::ConfigError, /compose\.service 'app' is gated behind profiles:/)
+    end
+
     it 'derives dependencies from compose.yml, in dependency order, image-shaped for CommandBuilder' do
       write_compose_file
       config = described_class.new({ 'mode' => 'compose-native', 'compose' => { 'service' => 'app' } },
