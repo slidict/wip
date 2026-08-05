@@ -45,6 +45,8 @@ module Wip
       command
     end
 
+    def stop = base.push('stop')
+
     def down = base.push('down')
 
     def exec(service, arguments, interactive: true)

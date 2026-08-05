@@ -14,6 +14,10 @@ RSpec.describe Wip::ComposeBridge do
     expect(bridge.up(detach: false)).to eq(%w[wslc-compose -f compose.yml up])
   end
 
+  it 'builds a stop command' do
+    expect(bridge.stop).to eq(%w[wslc-compose -f compose.yml stop])
+  end
+
   it 'builds a down command' do
     expect(bridge.down).to eq(%w[wslc-compose -f compose.yml down])
   end

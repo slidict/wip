@@ -119,14 +119,22 @@ module Wip
       warn "\nwip: sync stopped"
     end
 
+    desc 'stop', 'Stop the configured container and its dependencies without removing them'
+    def stop
+      return execute(compose_bridge.stop, exit_on_failure: false) if load_config.compose?
+
+      execute(builder.stop, exit_on_failure: false)
+      sidecar_names.each do |name|
+        execute(builder.dependency_stop(name), exit_on_failure: false)
+      end
+    end
+
     desc 'down', 'Stop and remove the configured container and its dependencies'
     def down
       return execute(compose_bridge.down, exit_on_failure: false) if load_config.compose?
 
-      execute(builder.down, exit_on_failure: false)
       execute(builder.remove, exit_on_failure: false)
       sidecar_names.each do |name|
-        execute(builder.dependency_down(name), exit_on_failure: false)
         execute(builder.dependency_remove(name), exit_on_failure: false)
       end
     end

@@ -510,6 +510,15 @@ RSpec.describe Wip::CLI do
       described_class.start(%w[up])
     end
 
+    it 'delegates stop to wslc-compose' do
+      runner = instance_double(Wip::CommandRunner, run: 0)
+      allow(Wip::CommandRunner).to receive(:new).and_return(runner)
+      expect(runner).to receive(:run).with(['wslc-compose', '-f', compose_file, 'stop'],
+                                           interactive: false).and_return(0)
+
+      described_class.start(%w[stop])
+    end
+
     it 'delegates down to wslc-compose' do
       runner = instance_double(Wip::CommandRunner, run: 0)
       allow(Wip::CommandRunner).to receive(:new).and_return(runner)
@@ -669,15 +678,22 @@ RSpec.describe Wip::CLI do
       described_class.start(%w[run echo hi])
     end
 
-    it 'stops and removes both the primary service and its sidecars' do
+    it 'removes both the primary service and its sidecars' do
       runner = instance_double(Wip::CommandRunner, run: 0)
       allow(Wip::CommandRunner).to receive(:new).and_return(runner)
-      expect(runner).to receive(:run).with(%w[wslc.exe stop app], interactive: false).and_return(0)
       expect(runner).to receive(:run).with(%w[wslc.exe remove -f app], interactive: false).and_return(0)
-      expect(runner).to receive(:run).with(%w[wslc.exe stop redis], interactive: false).and_return(0)
       expect(runner).to receive(:run).with(%w[wslc.exe remove -f redis], interactive: false).and_return(0)
 
       described_class.start(%w[down])
+    end
+
+    it 'stops both the primary service and its sidecars without removing them' do
+      runner = instance_double(Wip::CommandRunner, run: 0)
+      allow(Wip::CommandRunner).to receive(:new).and_return(runner)
+      expect(runner).to receive(:run).with(%w[wslc.exe stop app], interactive: false).and_return(0)
+      expect(runner).to receive(:run).with(%w[wslc.exe stop redis], interactive: false).and_return(0)
+
+      described_class.start(%w[stop])
     end
 
     it 'follows logs for a single named service' do
