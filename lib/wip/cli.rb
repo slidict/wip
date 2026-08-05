@@ -66,8 +66,10 @@ module Wip
     end
 
     desc 'build [OPTIONS]', 'Build the configured image'
+    option :no_cache, type: :boolean, default: false, desc: 'Build without using cached layers'
     def build(*extra)
       extra.shift if extra.first == '--'
+      extra.unshift('--no-cache') if options[:no_cache] && !extra.include?('--no-cache')
       settings = load_config.command('build') || {}
       context = Pathname(load_config.path).dirname.join(settings['context'] || '.').to_s
       warn "wip: staging build context (#{context})"
@@ -84,6 +86,7 @@ module Wip
     desc 'up', 'Start the configured container and its dependencies, creating them if necessary'
     option :detach, type: :boolean, default: false, aliases: '-d'
     option :sync, type: :boolean, default: true, desc: 'Mirror the source into the sync volume first (--no-sync skips)'
+    option :no_cache, type: :boolean, default: false, desc: 'Build compose-native images without cached layers'
     def up
       if load_config.compose?
         sync_before_boot if options[:sync]
@@ -315,6 +318,7 @@ module Wip
       BuildContext.new(spec['context']).stage(on_progress: progress.method(:tick)) do |staged_context|
         progress.finish
         settings = { 'context' => staged_context, 'tag' => spec['tag'] }
+        extra.unshift('--no-cache') if options[:no_cache] && !extra.include?('--no-cache')
         execute(builder.build(settings: settings, extra: extra), interactive: tty?(true))
       end
     ensure

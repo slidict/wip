@@ -31,8 +31,15 @@ RSpec.describe Wip::CommandBuilder do
 
   it 'builds images with extra options before context' do
     expect(builder.build(settings: config.command('build'),
-                         extra: ['--no-cache'])).to eq(%w[wslc.exe build -t example:dev
-                                                          --no-cache .])
+                         extra: ['--build-arg', 'RAILS_ENV=development'])).to eq(%w[wslc.exe build -t example:dev
+                                                                                     --cache-from example:dev
+                                                                                     --build-arg
+                                                                                     RAILS_ENV=development .])
+  end
+
+  it 'omits cache options when building with --no-cache' do
+    expect(builder.build(settings: config.command('build'),
+                         extra: ['--no-cache'])).to eq(%w[wslc.exe build -t example:dev --no-cache .])
   end
 
   it 'appends custom command arguments' do
