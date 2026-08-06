@@ -27,7 +27,11 @@ module Wip
     end
 
     def wslc_command = @raw.dig('wslc', 'command') || 'auto'
-    def commands = @raw['commands'] || {}
+    # interaction: is dip's name for the same concept — accepted as an alias so a
+    # dip.yml can be renamed to wip.yml with fewer edits. The two are mutually
+    # exclusive (validate_commands!) rather than merged, so a project doesn't end up
+    # with the same command split across both keys.
+    def commands = @raw['commands'] || @raw['interaction'] || {}
     # Raw dependencies: block as written in wip.yml. Under compose-native mode this stays
     # empty by construction (validate_compose! forbids combining the two) — #dependencies
     # below is what callers actually want, since it's synthesized from compose.yml there.
@@ -126,6 +130,8 @@ module Wip
     end
 
     def validate_commands!
+      raise ConfigError, 'commands is mutually exclusive with interaction — pick one' \
+        if @raw.key?('commands') && @raw.key?('interaction')
       raise ConfigError, 'commands must be a mapping' unless commands.is_a?(Hash)
 
       commands.each { |name, entry| validate_command!(name, entry) }

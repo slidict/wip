@@ -149,6 +149,11 @@ sync: # optional; mirror the source into a named volume instead of bind-mounting
 credential, or auth. Keep real secrets out of the config file and in your runtime environment
 instead.
 
+`commands:` can also be spelled `interaction:` — dip's name for the same block — so a `dip.yml`
+can become a `wip.yml` with fewer edits. The two are aliases for the same feature, not separate
+ones: pick whichever name you like, but declaring both `commands:` and `interaction:` in the same
+`wip.yml` is a `ConfigError`.
+
 #### Dependency containers
 
 `dependencies:` holds every container uniformly — the primary one `container:` points at and any
@@ -572,6 +577,11 @@ is meant to stay untracked) rather than committing them in `wip.yml`.
 
 **`wslc.exe`/`wslc` isn't found — what do I do?**
 See [WSLC not found](#wslc-not-found) under Common errors.
+
+**I'm migrating from `dip` — do I have to rename `interaction:` to `commands:`?**
+No, `wip.yml` accepts `interaction:` as an alias for `commands:` — same shape, same behavior, just
+dip's original name for it. Use whichever you prefer, but not both in the same file (that's a
+`ConfigError`). See [Container mode](#container-mode).
 
 ## Development
 
