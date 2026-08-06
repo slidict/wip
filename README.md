@@ -7,6 +7,15 @@
 
 Homepage: https://wslc-wip.slidict.com/
 
+`wip` is a Ruby-built OSS CLI wrapper that brings a [`dip`](https://github.com/bibendi/dip)-like
+workflow to Microsoft WSLC. It collects a project's container, image, environment variables, and
+commands into a single `wip.yml`, and forwards them to `wslc.exe` / `wslc` as safe argument arrays
+(no shell interpolation).
+
+![wip demo](https://raw.githubusercontent.com/slidict/wip/main/docs/demo.gif)
+
+> **Status:** early release. Expect to track WSLC's own interface as it evolves.
+
 ## Contents
 
 - [Which mode should you use?](#which-mode-should-you-use)
@@ -26,15 +35,6 @@ Homepage: https://wslc-wip.slidict.com/
 - [Contributing](#contributing)
 - [Roadmap](#roadmap)
 - [License](#license)
-
-`wip` is a Ruby-built OSS CLI wrapper that brings a [`dip`](https://github.com/bibendi/dip)-like
-workflow to Microsoft WSLC. It collects a project's container, image, environment variables, and
-commands into a single `wip.yml`, and forwards them to `wslc.exe` / `wslc` as safe argument arrays
-(no shell interpolation).
-
-![wip demo](https://raw.githubusercontent.com/slidict/wip/main/docs/demo.gif)
-
-> **Status:** early release. Expect to track WSLC's own interface as it evolves.
 
 ## Which mode should you use?
 
