@@ -31,6 +31,7 @@ commands into a single `wip.yml`, and forwards them to `wslc.exe` / `wslc` as sa
 - [Commands](#commands)
 - [doctor](#doctor)
 - [Common errors](#common-errors)
+- [FAQ](#faq)
 - [Development](#development)
 - [Contributing](#contributing)
 - [Roadmap](#roadmap)
@@ -509,6 +510,68 @@ docker buildx build \
   -t <image> \
   --push .
 ```
+
+## FAQ
+
+**Which mode should I start with?**
+Pick whichever `mode:` fits your project — see [Which mode should you use?](#which-mode-should-you-use)
+for the breakdown.
+
+**Can I use `dependencies:` and `compose:` together?**
+No — `compose:` is mutually exclusive with `dependencies:`/`network`. Pick one orchestration path
+per project; see [Configuration](#configuration).
+
+**What's the difference between `mode: compose` and `mode: compose-native`?**
+`compose` delegates to a third-party compose-for-`wslc` binary you install yourself
+(`compose.command`); `compose-native` parses `compose.yml` itself and drives `wslc` directly, no
+external tool required. `compose-native`'s Compose coverage isn't frozen at whatever it handles
+today — it keeps growing until `wslc` ships native Compose support of its own. See
+[Compose mode](#compose-mode) and [Compose mode (native)](#compose-mode-native).
+
+**`dependencies:` already gives me sidecar containers — why would I need `compose-native` too?**
+`dependencies:` and `compose-native` aren't really alternatives to each other — they're for two
+different starting points. No `compose.yml`? Declare containers directly in `wip.yml`'s own shape
+with `dependencies:`. Already have a `compose.yml`? Reusing it is where `compose-native` and
+`mode: compose` both come in, so the real comparison is between those two, not against
+`dependencies:`: `mode: compose` reuses it too, but only by delegating to a third-party
+compose-for-`wslc` binary you install yourself; `compose-native` reuses the same `compose.yml`
+without installing anything external, parsing it and driving `wslc` directly — and gets a real
+`wslc run --rm` for `wip run` instead of the `exec` fallback `mode: compose` falls back to.
+`mode: compose`'s coverage is whatever the external tool you point it at supports; `compose-native`'s
+is maintained in this repo and actively extended, not treated as a permanent ceiling. See
+[Which mode should you use?](#which-mode-should-you-use) for the full picture.
+
+**What happens to `compose-native` once `wslc` gets official Compose support?**
+`compose-native` exists to close the gap for as long as `wslc` has no native Compose support of its
+own (tracked upstream in [microsoft/WSL#40948](https://github.com/microsoft/WSL/issues/40948)), and
+we intend to keep extending its Compose coverage until that lands — see
+[Compose mode (native)](#compose-mode-native) and [Roadmap](#roadmap). `wip.yml`'s shape (`mode:`,
+`compose:`) isn't planned to change for existing `container`/`compose`/`compose-native` setups, so
+whatever we do once `wslc` catches up won't require rewriting your config.
+
+**Is `sync:` required?**
+No, it's entirely optional. Add it if boot times feel slow with a bind-mounted app directory — see
+[Slow boot when the app directory is bind-mounted](#slow-boot-when-the-app-directory-is-bind-mounted).
+
+**How does `wip` actually fix the slow bind-mount boot problem?**
+The slowness comes from `.:/app`-style bind mounts going through virtiofs, where frameworks that
+stat/open many small files at startup (e.g. Ruby's Zeitwerk) pay a round trip per file. A `sync:`
+block moves the app off that path entirely: the host source is mounted read-only, the app itself
+runs off a named volume (fast native storage inside the VM), and `wip` mirrors the read-only
+source into that volume with `rsync` — once before boot, and on demand afterward via `wip sync`
+(or continuously with `wip sync --watch`). Since the app never touches the bind mount directly, its
+own file access is no longer paying the virtiofs cost; the trade-off is a one-way, slightly-delayed
+mirror instead of an always-live view of host edits. See [Source sync](#source-sync) for the full
+config and [Slow boot when the app directory is bind-mounted](#slow-boot-when-the-app-directory-is-bind-mounted)
+for the root cause.
+
+**Is it safe to put passwords/secrets in `wip.yml`?**
+`wip config` masks any key matching token/password/secret/credential/auth when printing, but the
+raw file itself is not encrypted. Keep real secrets in your runtime environment (or `.env`, which
+is meant to stay untracked) rather than committing them in `wip.yml`.
+
+**`wslc.exe`/`wslc` isn't found — what do I do?**
+See [WSLC not found](#wslc-not-found) under Common errors.
 
 ## Development
 
