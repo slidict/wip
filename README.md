@@ -87,7 +87,7 @@ version: 1
 mode: container # default
 wslc:
   command: auto # tries wslc.exe, wslc, then System32; an absolute path also works
-container: app # required once dependencies: has entries; which one `up`/`exec`/`run`/`build`/`commands:`
+container: app # required once dependencies: has entries; which one `up`/`exec`/`run`/`build`/`interaction:`
                # target. No default — a project must say which entry is the primary one explicitly.
 network: app-tier # optional; shared by every dependencies: entry so containers can resolve each other by name
 dependencies:
@@ -113,7 +113,7 @@ dependencies:
     env:
       MYSQL_ROOT_PASSWORD: password
       MYSQL_DATABASE: development
-commands:
+interaction:
   rails:
     type: exec
     command: bin/rails
@@ -149,8 +149,8 @@ sync: # optional; mirror the source into a named volume instead of bind-mounting
 credential, or auth. Keep real secrets out of the config file and in your runtime environment
 instead.
 
-`commands:` can also be spelled `interaction:` — dip's name for the same block — so a `dip.yml`
-can become a `wip.yml` with fewer edits. The two are aliases for the same feature, not separate
+`interaction:` can also be spelled `commands:` — the same block under a different name, e.g. for
+projects that already use `commands:`. The two are aliases for the same feature, not separate
 ones: pick whichever name you like, but declaring both `commands:` and `interaction:` in the same
 `wip.yml` is a `ConfigError`.
 
@@ -167,7 +167,7 @@ entry by name first (creating `network:` beforehand if it doesn't exist and set)
 starts the primary one — so `bin/rails c` (or anything else run inside it) can reach
 `development.mysql`/`redis`/etc. by their dependency name, the same way Compose's service names
 resolve. `wip down` tears the primary container and all sidecars down (the network itself is left
-in place). Only the primary container is a target for `exec`/`run`/`build`/`commands:` — sidecars
+in place). Only the primary container is a target for `exec`/`run`/`build`/`interaction:` — sidecars
 are only ever started and stopped, matching Compose's own service-vs-you-exec-into-one-of-them
 split.
 
@@ -204,13 +204,13 @@ the Compose CLI vocabulary `wip` drives. `wip doctor` reports whether the config
 found, its version, and which compose file `wip` resolved.
 
 - `wip up`/`wip down` delegate straight to `<compose command> up -d`/`down`.
-- `wip exec`/`wip NAME` (custom `commands:`) run inside `compose.service`.
-- `wip shell` also goes through the bridge: unless `commands.shell` is defined in `wip.yml`, it
+- `wip exec`/`wip NAME` (custom `interaction:`) run inside `compose.service`.
+- `wip shell` also goes through the bridge: unless `interaction.shell` is defined in `wip.yml`, it
   `exec`s `bash` against `compose.service`, falling back to `sh`.
 - `wip logs [-f] [SERVICE...]` is only available in compose mode.
 - `wip run` has no ephemeral-container equivalent in this exec-only vocabulary, so it falls back
   to `exec` against the already-running `compose.service` (wip warns when this happens).
-- `commands:` entries with `type: run`/`type: build` aren't supported in compose mode — use your
+- `interaction:` entries with `type: run`/`type: build` aren't supported in compose mode — use your
   compose tool's own `build`/`up --build` directly; compose owns builds for its own services.
 
 ### Compose mode (native)
@@ -350,7 +350,7 @@ Everything below `sync:` is optional — `sync: {}` alone already works. With it
 - With `sync.build` configured, `wip build`s that image once per `wip up`/`wip sync` invocation
   (including once before a `--watch` loop starts, not on every tick) before mirroring with it.
 
-Like every built-in command, `wip sync` takes precedence over a `commands:` entry of the same
+Like every built-in command, `wip sync` takes precedence over an `interaction:` entry of the same
 name; wip says so and points at `wip dispatch sync`, which still runs yours.
 
 Two things to keep in mind. The mirror runs `rsync` *inside* the container, so the image needs it
@@ -421,7 +421,7 @@ to that tag directly — `sync.build`'s tag wins if both are set, so don't confi
 | `wip shell` | Open the configured shell, falling back to `bash` then `sh` |
 | `wip logs [-f] [SERVICE...]` | Follow compose service logs (compose modes only; mode: compose-native takes at most one `SERVICE`) |
 | `wip sync [-w] [--interval N]` | Mirror the source into the sync volume once, or keep re-syncing with `--watch` (needs `sync:`) |
-| `wip NAME ARGS...` | Run `commands.NAME`, appending any extra arguments |
+| `wip NAME ARGS...` | Run `interaction.NAME`, appending any extra arguments |
 
 TTY allocation is decided by combining the command's config, the CLI option, and whether both
 stdin and stdout are real TTYs.
@@ -579,10 +579,10 @@ of committing them in `wip.yml` — but `.env` is only safe if it's actually unt
 **`wslc.exe`/`wslc` isn't found — what do I do?**
 See [WSLC not found](#wslc-not-found) under Common errors.
 
-**I'm migrating from `dip` — do I have to rename `interaction:` to `commands:`?**
-No, `wip.yml` accepts `interaction:` as an alias for `commands:` — same shape, same behavior, just
-dip's original name for it. Use whichever you prefer, but not both in the same file (that's a
-`ConfigError`). See [Container mode](#container-mode).
+**I'm migrating from `dip` — do I have to rename `interaction:`?**
+No, `wip.yml` accepts `interaction:` as-is — it's the primary spelling, same as in `dip`. `commands:`
+also works as an alias if you prefer it, but not both in the same file (that's a `ConfigError`). See
+[Container mode](#container-mode).
 
 ## Development
 
@@ -607,7 +607,7 @@ checklist.
 ## Roadmap
 
 `wip` already covers most of what [`dip`](https://github.com/bibendi/dip) adds on top of Compose —
-named commands (`commands:`), `run`/`exec` hidden behind a single verb, `.env` passthrough, and
+named commands (`interaction:`), `run`/`exec` hidden behind a single verb, `.env` passthrough, and
 sidecar services via `dependencies:` + `network:`. Rather than waiting on `wslc`'s own Compose
 support ([microsoft/WSL#40948](https://github.com/microsoft/WSL/issues/40948)) or an external
 compose-for-`wslc` tool staying complete, `mode: compose-native` (see
@@ -621,7 +621,7 @@ compose-for-`wslc` tool in [compose mode](#compose-mode) — which of those actu
 entirely up to the external tool you point `compose.command` at; `wip` only forwards
 `-f FILE [-p PROJECT] up|down|exec|logs`, so treat that list as what Compose offers, not as
 something `wip` guarantees. See that section for what compose mode covers
-and its current limitations (`run`, and `commands:` of type `run`/`build`).
+and its current limitations (`run`, and `interaction:` of type `run`/`build`).
 
 Beyond Compose parity, a resident/daemon process, a GUI, PowerShell-specific tuning, direct
 registry API/manifest parsing, self-update, and plugins are all unimplemented and not currently

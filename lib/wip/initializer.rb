@@ -35,13 +35,13 @@ module Wip
     # commented since an empty commands: {} is indistinguishable from omitting the key.
     COMMANDS_EXAMPLE = <<~YAML.chomp
       # optional; custom subcommands, e.g. `wip test` — see README
-      # commands:
+      # (commands: is accepted as an alias — the two are mutually exclusive, so pick one)
+      # interaction:
       #   test:
       #     optional; exec (default, runs in the running container) | run (fresh container) | build
       #     type: exec
 
-      #     TODO
-      #     command: bundle exec rspec
+      #     command: ls
     YAML
 
     def initialize(dir: Dir.pwd, template: nil)
