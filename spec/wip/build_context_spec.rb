@@ -198,6 +198,16 @@ RSpec.describe Wip::BuildContext do
     end
   end
 
+  it 'leaves the shadow optimization disabled when no shadow root is configured' do
+    Dir.mktmpdir do |source|
+      File.write(File.join(source, 'app.rb'), '')
+
+      described_class.new(source, environment: wsl).stage do |staged|
+        expect(staged).to eq(source)
+      end
+    end
+  end
+
   it 'removes deleted and newly ignored files from an existing shadow context' do
     Dir.mktmpdir do |parent|
       source = File.join(parent, 'source')

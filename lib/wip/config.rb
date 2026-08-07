@@ -188,6 +188,11 @@ module Wip
       type = entry['type'] || (name == 'build' ? 'build' : 'exec')
       raise ConfigError, "Invalid command type for #{name}: #{type}" unless %w[exec run build].include?(type)
 
+      shadow_context = entry['shadow_context']
+      if entry.key?('shadow_context') && (type != 'build' || !shadow_context.is_a?(String) || shadow_context.empty?)
+        raise ConfigError, "commands.#{name}.shadow_context must be a non-empty path for a build command"
+      end
+
       entry['env']&.transform_values!(&:to_s)
     end
 

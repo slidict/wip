@@ -138,6 +138,7 @@ commands:
     type: build
     context: .
     tag: slidict/slidict:development
+    shadow_context: /mnt/c/Users/me/AppData/Local/wip/build-contexts
 sync: # optional; mirror the source into a named volume instead of bind-mounting it live
   exclude:
     - .git
@@ -270,12 +271,12 @@ to load a different file instead.
 ### .dockerignore
 
 `wip build` reads `.dockerignore` from the build context and excludes anything it matches before
-handing the context to `wslc build`, since `wslc` sends the context as-is otherwise. On WSL, a
-project outside `/mnt/<drive>` is mirrored into a persistent shadow context on the Windows
-filesystem. The first build copies every included file; later builds only copy added or changed
-files and remove deleted or newly ignored files. Projects already on `/mnt/c` (or another mounted
-Windows drive) continue to build directly. Set `WIP_SHADOW_ROOT` to override the default shadow
-location (`/mnt/c/Users/Public/.wip/build-contexts`).
+handing the context to `wslc build`, since `wslc` sends the context as-is otherwise. Set
+`commands.build.shadow_context` in `wip.yml` to a directory on the Windows filesystem to enable a
+persistent shadow context for projects outside `/mnt/<drive>`. The first build copies every
+included file; later builds only copy added or changed files and remove deleted or newly ignored
+files. Without this setting the optimization is disabled. Projects already on `/mnt/c` (or another
+mounted Windows drive) continue to build directly even when the setting is present.
 
 ### Source sync
 

@@ -11,13 +11,11 @@ module Wip
   # Filters build contexts for wslc and keeps WSL-hosted sources in a fast,
   # persistent Windows-side shadow directory.
   class BuildContext
-    DEFAULT_SHADOW_ROOT = '/mnt/c/Users/Public/.wip/build-contexts'
-
     def initialize(context, ignore: nil, environment: Environment.new, shadow_root: nil)
       @root = Pathname(context).expand_path
       @ignore = ignore || DockerIgnore.load(@root.join('.dockerignore'))
       @environment = environment
-      @shadow_root = Pathname(shadow_root || ENV['WIP_SHADOW_ROOT'] || DEFAULT_SHADOW_ROOT)
+      @shadow_root = Pathname(shadow_root).expand_path if shadow_root
     end
 
     # on_progress fires before copying and after each file, as `|count, total|`,
@@ -35,7 +33,7 @@ module Wip
     private
 
     def shadow_required?
-      @environment.wsl2? && !@root.to_s.match?(%r{\A/mnt/[a-z](?:/|\z)}i)
+      @shadow_root && @environment.wsl2? && !@root.to_s.match?(%r{\A/mnt/[a-z](?:/|\z)}i)
     end
 
     # Keep one stable Windows-side context per source path. Its manifest lives

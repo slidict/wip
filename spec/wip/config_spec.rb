@@ -39,6 +39,20 @@ RSpec.describe Wip::Config do
       .to raise_error(Wip::ConfigError, 'commands must be a mapping')
   end
 
+  it 'accepts a shadow context path on the build command' do
+    config = described_class.new('commands' => { 'build' => { 'tag' => 'example:dev',
+                                                              'shadow_context' => '/mnt/c/wip-cache' } })
+
+    expect(config.command('build')['shadow_context']).to eq('/mnt/c/wip-cache')
+  end
+
+  it 'rejects an empty shadow context path or one attached to a non-build command' do
+    expect { described_class.new('commands' => { 'build' => { 'shadow_context' => '' } }) }
+      .to raise_error(Wip::ConfigError, /shadow_context must be a non-empty path/)
+    expect { described_class.new('commands' => { 'shell' => { 'shadow_context' => '/mnt/c/cache' } }) }
+      .to raise_error(Wip::ConfigError, /shadow_context must be a non-empty path for a build command/)
+  end
+
   it 'exposes container and the primary dependency it points at, with no implicit default' do
     config = described_class.new('container' => 'app',
                                  'dependencies' => { 'app' => { 'image' => 'example:dev', 'command' => 'local' } })
