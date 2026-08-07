@@ -269,10 +269,13 @@ to load a different file instead.
 
 ### .dockerignore
 
-`wip build` reads `.dockerignore` from the build context and stages a filtered copy of the
-context (skipping anything it matches) before handing it to `wslc build`, since `wslc` sends the
-context as-is otherwise. If there's no `.dockerignore`, the original context directory is used
-directly with no copying.
+`wip build` reads `.dockerignore` from the build context and excludes anything it matches before
+handing the context to `wslc build`, since `wslc` sends the context as-is otherwise. On WSL, a
+project outside `/mnt/<drive>` is mirrored into a persistent shadow context on the Windows
+filesystem. The first build copies every included file; later builds only copy added or changed
+files and remove deleted or newly ignored files. Projects already on `/mnt/c` (or another mounted
+Windows drive) continue to build directly. Set `WIP_SHADOW_ROOT` to override the default shadow
+location (`/mnt/c/Users/Public/.wip/build-contexts`).
 
 ### Source sync
 
