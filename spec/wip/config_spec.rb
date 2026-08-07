@@ -16,6 +16,29 @@ RSpec.describe Wip::Config do
     expect(config.to_h.dig('commands', 'x', 'env', 'API_TOKEN')).to eq('[REDACTED]')
   end
 
+  it 'accepts interaction: as a dip-style alias for commands:' do
+    config = described_class.new('interaction' => { 'web' => { 'command' => 'server' } })
+    expect(config.commands).to eq('web' => { 'command' => 'server' })
+  end
+
+  it 'rejects commands: and interaction: together' do
+    expect do
+      described_class.new('commands' => { 'a' => { 'command' => 'a' } },
+                          'interaction' => { 'b' => { 'command' => 'b' } })
+    end
+      .to raise_error(Wip::ConfigError, /commands is mutually exclusive with interaction/)
+  end
+
+  it 'rejects a falsey commands: instead of silently falling back to {}' do
+    expect { described_class.new('commands' => false) }
+      .to raise_error(Wip::ConfigError, 'commands must be a mapping')
+  end
+
+  it 'rejects a falsey interaction: instead of silently falling back to {}' do
+    expect { described_class.new('interaction' => false) }
+      .to raise_error(Wip::ConfigError, 'commands must be a mapping')
+  end
+
   it 'exposes container and the primary dependency it points at, with no implicit default' do
     config = described_class.new('container' => 'app',
                                  'dependencies' => { 'app' => { 'image' => 'example:dev', 'command' => 'local' } })
