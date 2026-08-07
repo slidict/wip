@@ -600,7 +600,8 @@ bundle exec rake
 ```
 
 The test suite doesn't need WSLC — the resolution, build, and execution layers are all
-swappable. GitHub Actions runs RSpec and RuboCop on Ruby 3.2, 3.3, 3.4, and 4.0.
+swappable. This project uses RuboCop for Ruby style and static analysis; `bundle exec rake` runs
+both RSpec and RuboCop. GitHub Actions checks them on Ruby 3.2, 3.3, 3.4, and 4.0.
 
 ## Contributing
 

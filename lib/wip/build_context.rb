@@ -33,7 +33,9 @@ module Wip
     private
 
     def shadow_required?
-      @shadow_root && @environment.wsl2? && !@root.to_s.match?(%r{\A/mnt/[a-z](?:/|\z)}i)
+      return false unless @shadow_root
+
+      @environment.wsl2? && !@root.to_s.match?(%r{\A/mnt/[a-z](?:/|\z)}i)
     end
 
     # Keep one stable Windows-side context per source path. Its manifest lives
