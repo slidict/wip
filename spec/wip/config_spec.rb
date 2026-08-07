@@ -29,6 +29,16 @@ RSpec.describe Wip::Config do
       .to raise_error(Wip::ConfigError, /commands is mutually exclusive with interaction/)
   end
 
+  it 'rejects a falsey commands: instead of silently falling back to {}' do
+    expect { described_class.new('commands' => false) }
+      .to raise_error(Wip::ConfigError, 'commands must be a mapping')
+  end
+
+  it 'rejects a falsey interaction: instead of silently falling back to {}' do
+    expect { described_class.new('interaction' => false) }
+      .to raise_error(Wip::ConfigError, 'commands must be a mapping')
+  end
+
   it 'exposes container and the primary dependency it points at, with no implicit default' do
     config = described_class.new('container' => 'app',
                                  'dependencies' => { 'app' => { 'image' => 'example:dev', 'command' => 'local' } })

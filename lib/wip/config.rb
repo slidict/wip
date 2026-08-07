@@ -27,11 +27,18 @@ module Wip
     end
 
     def wslc_command = @raw.dig('wslc', 'command') || 'auto'
+
     # interaction: is dip's name for the same concept — accepted as an alias so a
     # dip.yml can be renamed to wip.yml with fewer edits. The two are mutually
     # exclusive (validate_commands!) rather than merged, so a project doesn't end up
     # with the same command split across both keys.
-    def commands = @raw['commands'] || @raw['interaction'] || {}
+    def commands
+      return @raw['commands'] if @raw.key?('commands')
+      return @raw['interaction'] if @raw.key?('interaction')
+
+      {}
+    end
+
     # Raw dependencies: block as written in wip.yml. Under compose-native mode this stays
     # empty by construction (validate_compose! forbids combining the two) — #dependencies
     # below is what callers actually want, since it's synthesized from compose.yml there.

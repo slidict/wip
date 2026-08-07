@@ -572,8 +572,9 @@ for the root cause.
 
 **Is it safe to put passwords/secrets in `wip.yml`?**
 `wip config` masks any key matching token/password/secret/credential/auth when printing, but the
-raw file itself is not encrypted. Keep real secrets in your runtime environment (or `.env`, which
-is meant to stay untracked) rather than committing them in `wip.yml`.
+raw file itself is not encrypted. Keep real secrets in your runtime environment or `.env` instead
+of committing them in `wip.yml` — but `.env` is only safe if it's actually untracked: add `.env` to
+`.gitignore` (and confirm with `git check-ignore .env`) before putting anything sensitive in it.
 
 **`wslc.exe`/`wslc` isn't found — what do I do?**
 See [WSLC not found](#wslc-not-found) under Common errors.
