@@ -150,9 +150,9 @@ credential, or auth. Keep real secrets out of the config file and in your runtim
 instead.
 
 `interaction:` can also be spelled `commands:` — the same block under a different name, e.g. for
-projects that already use `commands:`. The two are aliases for the same feature, not separate
-ones: pick whichever name you like, but declaring both `commands:` and `interaction:` in the same
-`wip.yml` is a `ConfigError`.
+projects that already use `commands:`. `wip config` prints the effective config using `commands:`.
+The two are aliases for the same feature, not separate ones: pick whichever name you like, but declaring both
+`commands:` and `interaction:` in the same `wip.yml` is a `ConfigError`.
 
 #### Dependency containers
 
