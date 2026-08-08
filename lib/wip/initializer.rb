@@ -31,11 +31,12 @@ module Wip
     # example uses.
     FALLBACK_EXCLUDES = %w[.git tmp/ node_modules/].freeze
 
-    # Appended to both templates after dependencies/compose. commands: itself is left
-    # commented since an empty commands: {} is indistinguishable from omitting the key.
+    # Appended to both templates after dependencies/compose. interaction: itself is left
+    # commented since an empty interaction: {} is indistinguishable from omitting the key.
     COMMANDS_EXAMPLE = <<~YAML.chomp
       # optional; custom subcommands, e.g. `wip test` — see README
-      # (commands: is accepted as an alias — the two are mutually exclusive, so pick one)
+      # (interaction: is the primary key; commands: is accepted as an alias — the two are
+      # mutually exclusive, so pick one)
       # interaction:
       #   test:
       #     optional; exec (default, runs in the running container) | run (fresh container) | build
