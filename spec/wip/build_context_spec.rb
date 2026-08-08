@@ -5,6 +5,11 @@ require 'fileutils'
 RSpec.describe Wip::BuildContext do
   let(:wsl) { instance_double(Wip::Environment, wsl2?: true) }
 
+  # Examples that don't care about WSL shouldn't behave differently depending on
+  # whether the suite happens to be running under it. The shadow examples inject
+  # their own environment.
+  before { allow(Wip::Environment).to receive(:new).and_return(instance_double(Wip::Environment, wsl2?: false)) }
+
   it 'yields the original context untouched when there is no .dockerignore' do
     Dir.mktmpdir do |dir|
       FileUtils.touch(File.join(dir, 'app.rb'))
@@ -250,6 +255,61 @@ RSpec.describe Wip::BuildContext do
   it 'builds a context on a mounted Windows drive directly, even under WSL' do
     described_class.new('/mnt/c/project', environment: wsl, shadow_root: '/unused').stage do |staged|
       expect(staged).to eq('/mnt/c/project')
+    end
+  end
+
+  it 'refuses a shadow root inside the build context, which would copy itself into itself' do
+    Dir.mktmpdir do |source|
+      expect { described_class.new(source, environment: wsl, shadow_root: File.join(source, 'cache')) }
+        .to raise_error(Wip::ConfigError, /must not be inside the build context/)
+      expect { described_class.new(source, environment: wsl, shadow_root: source) }
+        .to raise_error(Wip::ConfigError, /must not be inside the build context/)
+    end
+  end
+
+  it 'rebuilds the shadow from scratch when its manifest is missing or unreadable' do
+    Dir.mktmpdir do |parent|
+      source = File.join(parent, 'source')
+      shadow_root = File.join(parent, 'windows-cache')
+      FileUtils.mkdir_p(source)
+      File.write(File.join(source, 'kept.rb'), 'kept')
+      File.write(File.join(source, 'deleted.rb'), 'delete me')
+      builder = -> { described_class.new(source, environment: wsl, shadow_root: shadow_root) }
+
+      staged = nil
+      builder.call.stage { |path| staged = path }
+      manifest = File.join(File.dirname(staged), 'manifest.json')
+      File.write(manifest, 'not json at all')
+      FileUtils.rm(File.join(source, 'deleted.rb'))
+      builder.call.stage { |path| staged = path }
+
+      expect(File.read(File.join(staged, 'kept.rb'))).to eq('kept')
+      expect(File).not_to exist(File.join(staged, 'deleted.rb'))
+
+      File.write(manifest, JSON.generate(%w[not a manifest hash]))
+      builder.call.stage { |path| staged = path }
+      expect(File.read(File.join(staged, 'kept.rb'))).to eq('kept')
+    end
+  end
+
+  it 'keeps executable bits when staging, so a RUN of a staged script still works' do
+    Dir.mktmpdir do |parent|
+      source = File.join(parent, 'source')
+      shadow_root = File.join(parent, 'windows-cache')
+      FileUtils.mkdir_p(source)
+      # A rule that matches nothing forces the filtered copy instead of yielding
+      # the source directory untouched.
+      File.write(File.join(source, '.dockerignore'), "nonexistent-dir/\n")
+      script = File.join(source, 'entrypoint.sh')
+      File.write(script, "#!/bin/sh\n")
+      File.chmod(0o755, script)
+
+      described_class.new(source).stage do |staged|
+        expect(File.stat(File.join(staged, 'entrypoint.sh')).mode & 0o777).to eq(0o755)
+      end
+      described_class.new(source, environment: wsl, shadow_root: shadow_root).stage do |staged|
+        expect(File.stat(File.join(staged, 'entrypoint.sh')).mode & 0o777).to eq(0o755)
+      end
     end
   end
 end

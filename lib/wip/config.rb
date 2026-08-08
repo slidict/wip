@@ -188,12 +188,20 @@ module Wip
       type = entry['type'] || (name == 'build' ? 'build' : 'exec')
       raise ConfigError, "Invalid command type for #{name}: #{type}" unless %w[exec run build].include?(type)
 
-      shadow_context = entry['shadow_context']
-      if entry.key?('shadow_context') && (type != 'build' || !shadow_context.is_a?(String) || shadow_context.empty?)
-        raise ConfigError, "commands.#{name}.shadow_context must be a non-empty path for a build command"
-      end
+      validate_shadow_context!(name, entry, type)
 
       entry['env']&.transform_values!(&:to_s)
+    end
+
+    # shadow_context names a Windows-side mirror of the build context, so it only
+    # means anything on a build command — and only as a real path.
+    def validate_shadow_context!(name, entry, type)
+      return unless entry.key?('shadow_context')
+
+      shadow_context = entry['shadow_context']
+      return if type == 'build' && shadow_context.is_a?(String) && !shadow_context.empty?
+
+      raise ConfigError, "commands.#{name}.shadow_context must be a non-empty path for a build command"
     end
 
     def validate_dependency!(name, entry)

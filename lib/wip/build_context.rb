@@ -15,22 +15,34 @@ module Wip
       @root = Pathname(context).expand_path
       @ignore = ignore || DockerIgnore.load(@root.join('.dockerignore'))
       @environment = environment
-      @shadow_root = Pathname(shadow_root).expand_path if shadow_root
+      @shadow_root = validated_shadow_root(shadow_root) if shadow_root
     end
 
     # on_progress fires before copying and after each file, as `|count, total|`,
     # so a caller can report elapsed progress even while copying one large file.
-    def stage(on_progress: nil)
-      return stage_shadow(on_progress) { |context| yield context } if shadow_required?
-      return yield @root.to_s if @ignore.empty?
+    def stage(on_progress: nil, &block)
+      return stage_shadow(on_progress, &block) if shadow_required?
+      return block.call(@root.to_s) if @ignore.empty?
 
       Dir.mktmpdir('wip-build-context-') do |dir|
         copy_included_files(Pathname(dir), on_progress)
-        yield dir
+        block.call(dir)
       end
     end
 
     private
+
+    # A shadow root under the context would itself be walked by included_files
+    # on the next build and copied into itself at ever-deeper paths, so the
+    # cache would grow without bound and the build would eventually fail.
+    def validated_shadow_root(shadow_root)
+      root = Pathname(shadow_root).expand_path
+      if root == @root || root.to_s.start_with?("#{@root}/")
+        raise ConfigError, "shadow_context (#{root}) must not be inside the build context (#{@root})"
+      end
+
+      root
+    end
 
     def shadow_required?
       return false unless @shadow_root
@@ -55,30 +67,53 @@ module Wip
     end
 
     def synchronize_shadow(context, manifest_path, on_progress)
-      previous = context.directory? ? load_manifest(manifest_path) : {}
       current = included_files.to_h { |entry| [entry, fingerprint(@root.join(entry))] }
-      changed = current.keys.select { |entry| current[entry] != previous[entry] }
+      previous = previous_manifest(context, manifest_path)
+      changed = current.keys.reject { |entry| current[entry] == previous[entry] }
       removed = previous.keys - current.keys
-      on_progress&.call(0, changed.size + removed.size)
 
-      removed.each_with_index do |entry, index|
-        FileUtils.rm_rf(context.join(entry))
-        prune_empty_parents(context.join(entry).dirname, context)
-        on_progress&.call(index + 1, changed.size + removed.size)
-      end
-      changed.each_with_index do |entry, index|
-        copy_entry_atomically(@root.join(entry), context.join(entry))
-        on_progress&.call(removed.size + index + 1, changed.size + removed.size)
-      end
-
+      apply_shadow_changes(context, changed, removed, on_progress)
       FileUtils.mkdir_p(context)
       write_manifest(manifest_path, current)
     end
 
-    def load_manifest(path)
-      path.file? ? JSON.parse(path.read) : {}
-    rescue JSON::ParserError, Errno::ENOENT
+    # A context we can't describe is a context we can't update incrementally:
+    # with no manifest there is no way to tell which of its entries are stale,
+    # so it gets discarded and rebuilt rather than left holding deleted or
+    # newly ignored files.
+    def previous_manifest(context, manifest_path)
+      return {} unless context.directory?
+
+      manifest = load_manifest(manifest_path)
+      return manifest if manifest
+
+      FileUtils.rm_rf(context)
       {}
+    end
+
+    def apply_shadow_changes(context, changed, removed, on_progress)
+      total = changed.size + removed.size
+      on_progress&.call(0, total)
+
+      removed.each_with_index do |entry, index|
+        FileUtils.rm_rf(context.join(entry))
+        prune_empty_parents(context.join(entry).dirname, context)
+        on_progress&.call(index + 1, total)
+      end
+      changed.each_with_index do |entry, index|
+        copy_entry_atomically(@root.join(entry), context.join(entry))
+        on_progress&.call(removed.size + index + 1, total)
+      end
+    end
+
+    # Returns nil — not an empty manifest — when the manifest is missing,
+    # unreadable, or not a manifest at all, so callers can tell "nothing was
+    # synced yet" apart from "we no longer know what was synced".
+    def load_manifest(path)
+      manifest = JSON.parse(path.read)
+      manifest if manifest.is_a?(Hash)
+    rescue JSON::ParserError, SystemCallError
+      nil
     end
 
     def write_manifest(path, contents)
@@ -99,15 +134,28 @@ module Wip
       end
     end
 
+    # preserve: true keeps the source mode, so an executable stays executable
+    # even when the shadow lives on a DrvFs mount whose fmask would otherwise
+    # strip the bit and break a `RUN ./script` in the image build.
     def copy_entry_atomically(source, target)
       FileUtils.mkdir_p(target.dirname)
       temporary = target.dirname.join(".#{target.basename}.wip-#{Process.pid}")
       FileUtils.rm_rf(temporary)
-      FileUtils.copy_entry(source, temporary, false, false, false)
-      FileUtils.rm_rf(target)
-      File.rename(temporary, target)
+      FileUtils.copy_entry(source, temporary, true, false, false)
+      replace_atomically(temporary, target)
     ensure
       FileUtils.rm_rf(temporary) if temporary
+    end
+
+    # rename replaces an existing entry in a single step, so an interrupted
+    # update leaves the previous copy in place instead of no copy at all. Only
+    # a target rename can't overwrite — a directory where a file now lives, or
+    # a filesystem without overwrite semantics — needs the unsafe fallback.
+    def replace_atomically(temporary, target)
+      File.rename(temporary, target)
+    rescue Errno::EISDIR, Errno::ENOTDIR, Errno::ENOTEMPTY, Errno::EEXIST, Errno::EPERM, Errno::EACCES
+      FileUtils.rm_rf(target)
+      File.rename(temporary, target)
     end
 
     def prune_empty_parents(directory, root)
@@ -131,7 +179,7 @@ module Wip
         # Keep links as links. Dereferencing a link here could copy arbitrary
         # host files outside the build context (for example, ~/.ssh/id_rsa)
         # into the staged directory and expose them to the image build.
-        FileUtils.copy_entry(@root.join(relative_path), target, false, false, false)
+        FileUtils.copy_entry(@root.join(relative_path), target, true, false, false)
         on_progress&.call(index + 1, files.size)
       end
     end

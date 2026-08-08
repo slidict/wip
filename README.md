@@ -275,8 +275,10 @@ handing the context to `wslc build`, since `wslc` sends the context as-is otherw
 `commands.build.shadow_context` in `wip.yml` to a directory on the Windows filesystem to enable a
 persistent shadow context for projects outside `/mnt/<drive>`. The first build copies every
 included file; later builds only copy added or changed files and remove deleted or newly ignored
-files. Without this setting the optimization is disabled. Projects already on `/mnt/c` (or another
-mounted Windows drive) continue to build directly even when the setting is present.
+files. Without this setting the optimization is disabled, and it only applies under WSL2 — on WSL1
+(or anywhere else) the context is handed to `wslc build` directly. Projects already on `/mnt/c` (or
+another mounted Windows drive) also continue to build directly even when the setting is present.
+The path must live outside the build context itself, or `wip build` refuses it.
 
 ### Source sync
 
