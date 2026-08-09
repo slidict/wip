@@ -10,6 +10,29 @@ RSpec.describe Wip::CommandRunner do
     expect(described_class.new.run([RbConfig.ruby, '-e', 'exit 7'], interactive: true)).to eq(7)
   end
 
+  it 'runs the command inside chdir instead of the process working directory' do
+    Dir.mktmpdir do |dir|
+      stdout = StringIO.new
+      runner = described_class.new(stdout: stdout)
+      script = 'print Dir.pwd'
+
+      runner.run([RbConfig.ruby, '-e', script], chdir: dir)
+
+      expect(stdout.string).to eq(File.realpath(dir))
+    end
+  end
+
+  it 'runs an interactive command inside chdir too' do
+    Dir.mktmpdir do |dir|
+      marker = File.join(dir, 'marker')
+      script = "File.write('marker', Dir.pwd)"
+
+      described_class.new.run([RbConfig.ruby, '-e', script], interactive: true, chdir: dir)
+
+      expect(File.read(marker)).to eq(File.realpath(dir))
+    end
+  end
+
   it 'returns 130 and reports the interrupt instead of raising when Ctrl-C hits while waiting on pump threads' do
     raised = false
     allow_any_instance_of(Thread).to receive(:join).and_wrap_original do |original, *args|

@@ -24,7 +24,7 @@ module Wip
     # service already shares one project network (config.rb); and `wslc run`/`exec` has no
     # restart-policy or capability flag to forward `restart:`/`cap_add:` to.
     IGNORED_SERVICE_KEYS = %w[tty stdin_open networks restart cap_add].freeze
-    BUILD_KEYS = %w[context dockerfile args].freeze
+    BUILD_KEYS = %w[context dockerfile args shadow_context].freeze
     SUPPORTED_CONDITIONS = %w[service_started].freeze
     LIST_HINT = 'only supports short syntax ("host:container"), not long-syntax mappings'
 
@@ -140,9 +140,11 @@ module Wip
         unless unknown.empty?
 
       context = resolve_context(presence(value['context']) || '.')
-      dockerfile = presence(value['dockerfile'])
-      { 'context' => context, 'dockerfile' => dockerfile && Pathname(context).join(dockerfile).to_s,
-        'args' => normalize_kv(name, value['args'], 'build.args') }.compact
+      # Kept relative to context (not resolved against it) so `-f` still finds it once
+      # `wip up`/`wip build` chdir into a staged or shadowed copy of that context.
+      { 'context' => context, 'dockerfile' => presence(value['dockerfile']),
+        'args' => normalize_kv(name, value['args'], 'build.args'),
+        'shadow_context' => presence(value['shadow_context']) }.compact
     end
 
     # build.context is relative to compose.yml's own directory (Compose's own rule),
