@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
+require 'pty'
+
 RSpec.describe Wip::CommandRunner do
   it 'returns the external command exit status' do
     expect(described_class.new.run([RbConfig.ruby, '-e', 'exit 23'])).to eq(23)
@@ -30,6 +32,32 @@ RSpec.describe Wip::CommandRunner do
       described_class.new.run([RbConfig.ruby, '-e', script], interactive: true, chdir: dir)
 
       expect(File.read(marker)).to eq(File.realpath(dir))
+    end
+  end
+
+  it 'reports a hint for an interactive command too, unlike the plain fd-inheriting attach it replaced' do
+    stdout = StringIO.new
+    stderr = StringIO.new
+    runner = described_class.new(stdout: stdout, stderr: stderr)
+    script = <<~RUBY
+      STDOUT.write('too many mounted volumes')
+      exit 1
+    RUBY
+
+    status = runner.run([RbConfig.ruby, '-e', script], interactive: true)
+
+    expect(status).to eq(1)
+    expect(stderr.string).to include('mounted-volume limit')
+  end
+
+  it 'puts a real controlling terminal in raw mode and syncs the pty size, without raising' do
+    PTY.open do |master, slave|
+      runner = described_class.new(stdin: slave, stdout: slave, stderr: StringIO.new)
+
+      status = runner.run([RbConfig.ruby, '-e', 'exit 0'], interactive: true)
+
+      expect(status).to eq(0)
+      master.close
     end
   end
 
