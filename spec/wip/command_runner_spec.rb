@@ -50,6 +50,23 @@ RSpec.describe Wip::CommandRunner do
     expect(stderr.string).to include('mounted-volume limit')
   end
 
+  it 'propagates a terminal resize (SIGWINCH) to the child pty while attached' do
+    PTY.open do |master, slave|
+      slave.winsize = [24, 80]
+      runner = described_class.new(stdin: slave, stdout: slave, stderr: StringIO.new)
+      script = 'sleep 0.4; require "io/console"; STDOUT.write($stdout.winsize.join(","))'
+
+      thread = Thread.new { runner.run([RbConfig.ruby, '-e', script], interactive: true) }
+      sleep 0.1
+      slave.winsize = [50, 120] # simulates the terminal emulator resizing wip's own pty
+      Process.kill('WINCH', Process.pid) # simulates the kernel notifying wip of that resize
+      thread.join
+
+      expect(master.read_nonblock(4096)).to include('50,120')
+      master.close
+    end
+  end
+
   it 'puts a real controlling terminal in raw mode and syncs the pty size, without raising' do
     PTY.open do |master, slave|
       runner = described_class.new(stdin: slave, stdout: slave, stderr: StringIO.new)

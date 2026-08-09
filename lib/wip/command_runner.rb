@@ -69,7 +69,7 @@ module Wip
       status = nil
       PTY.spawn(env, *command, opts) do |output, input, pid|
         sync_winsize(output)
-        with_raw_stdin { pump_attached(output, input, captured) }
+        with_winsize_sync(output) { with_raw_stdin { pump_attached(output, input, captured) } }
         _, status = Process.wait2(pid)
       end
       report_hint(captured) unless status.success?
@@ -100,6 +100,20 @@ module Wip
     # (piped output, tests) has no size to read, so the pty keeps its default.
     def sync_winsize(output)
       output.winsize = @stdout.winsize if @stdout.respond_to?(:winsize) && @stdout.tty?
+    end
+
+    # The child's pty only gets the terminal size wip had at spawn time
+    # (sync_winsize, above) — it's a separate pty from wip's own real one, so
+    # later resizes of wip's terminal don't reach it on their own. Trap
+    # SIGWINCH for the duration to re-sync it live, restoring whatever handler
+    # was already installed (if any) once the command finishes.
+    def with_winsize_sync(output)
+      return yield unless @stdout.respond_to?(:winsize) && @stdout.tty?
+
+      previous = Signal.trap('WINCH') { sync_winsize(output) }
+      yield
+    ensure
+      Signal.trap('WINCH', previous) if previous
     end
 
     # A non-tty @stdin (piped input, tests) has no raw mode to switch to, so
