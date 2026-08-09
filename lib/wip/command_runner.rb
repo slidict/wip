@@ -14,13 +14,14 @@ module Wip
       @debug = debug
     end
 
-    def run(command, env: {}, interactive: false)
+    def run(command, env: {}, interactive: false, chdir: nil)
       @stderr.puts "+ #{CommandDisplay.for_debug(command)}" if @debug
-      return run_attached(command, env) if interactive
+      return run_attached(command, env, chdir) if interactive
 
+      opts = chdir ? { chdir: chdir } : {}
       captured = +''
       status = nil
-      Open3.popen3(env, *command) do |input, output, error, wait|
+      Open3.popen3(env, *command, opts) do |input, output, error, wait|
         input.close
         threads = [pump(output, @stdout, captured), pump(error, @stderr, captured)]
         threads.each(&:join)
@@ -54,8 +55,9 @@ module Wip
     # stdin immediately, which breaks anything that reads from the terminal
     # (a shell, `rails console`, ...). Inherit the real file descriptors
     # instead so the child gets a genuine TTY.
-    def run_attached(command, env)
-      pid = Process.spawn(env, *command)
+    def run_attached(command, env, chdir)
+      opts = chdir ? { chdir: chdir } : {}
+      pid = Process.spawn(env, *command, opts)
       _, status = Process.wait2(pid)
       exitstatus(status)
     rescue Errno::ENOENT => e

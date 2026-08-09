@@ -30,6 +30,11 @@ module Wip
       end
     end
 
+    # Whether the upcoming stage will use the Windows-side shadow directory
+    # (configured shadow_root, on WSL2, with a context outside /mnt) rather
+    # than staging in place or under a WSL-side tmpdir.
+    def shadow? = shadow_required?
+
     private
 
     # A shadow root under the context would itself be walked by included_files

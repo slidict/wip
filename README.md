@@ -244,8 +244,10 @@ top level (`networks:`, `volumes:`, `configs:`, `secrets:`, ...) is the one exce
 real Compose tools, not by `wip`, so `wip` silently ignores it rather than rejecting an otherwise
 valid compose.yml over sections it doesn't need to look at:
 
-- Per service: `image`, `build` (string or `{context:, dockerfile:}`; resolved relative to
-  `compose.yml`, not wherever `wip` is invoked from), `command` (shell or exec form), `environment`
+- Per service: `image`, `build` (string or `{context:, dockerfile:, args:, shadow_context:}`;
+  `context` is resolved relative to `compose.yml`, not wherever `wip` is invoked from; `dockerfile`
+  stays relative to `context` itself — see [.dockerignore](#dockerignore) for what `shadow_context`
+  does), `command` (shell or exec form), `environment`
   (mapping or `KEY=VALUE` array — a mapping value must not be null; host environment pass-through
   isn't supported), `ports`/`volumes` (short syntax only — `"host:container"` strings, not
   long-syntax mappings), `working_dir`, `user`, `depends_on` (ordering only — a `condition:` other
@@ -272,13 +274,14 @@ to load a different file instead.
 
 `wip build` reads `.dockerignore` from the build context and excludes anything it matches before
 handing the context to `wslc build`, since `wslc` sends the context as-is otherwise. Set
-`commands.build.shadow_context` in `wip.yml` to a directory on the Windows filesystem to enable a
-persistent shadow context for projects outside `/mnt/<drive>`. The first build copies every
-included file; later builds only copy added or changed files and remove deleted or newly ignored
-files. Without this setting the optimization is disabled, and it only applies under WSL2 — on WSL1
-(or anywhere else) the context is handed to `wslc build` directly. Projects already on `/mnt/c` (or
-another mounted Windows drive) also continue to build directly even when the setting is present.
-The path must live outside the build context itself, or `wip build` refuses it.
+`commands.build.shadow_context` in `wip.yml` (or `build.shadow_context` on a compose-native
+`build:` service in `compose.yml`) to a directory on the Windows filesystem to enable a persistent
+shadow context for projects outside `/mnt/<drive>`. The first build copies every included file;
+later builds only copy added or changed files and remove deleted or newly ignored files. Without
+this setting the optimization is disabled, and it only applies under WSL2 — on WSL1 (or anywhere
+else) the context is handed to `wslc build` directly. Projects already on `/mnt/c` (or another
+mounted Windows drive) also continue to build directly even when the setting is present. The path
+must live outside the build context itself, or `wip build`/`wip up` refuses it.
 
 ### Source sync
 

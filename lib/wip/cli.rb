@@ -76,8 +76,7 @@ module Wip
       build_context = BuildContext.new(context, shadow_root: settings['shadow_context'])
       build_context.stage(on_progress: progress.method(:tick)) do |staged_context|
         progress.finish
-        built = builder.build(settings: settings.merge('context' => staged_context), extra: extra)
-        execute(built, interactive: tty?(true))
+        run_staged_build(build_context, staged_context, settings, extra)
       end
     ensure
       progress&.finish
@@ -248,10 +247,12 @@ module Wip
       execute(exec_target(command, interactive: interactive), interactive: tty?(interactive))
     end
 
-    def execute(command, interactive: false, exit_on_failure: true)
+    def execute(command, interactive: false, exit_on_failure: true, chdir: nil)
       runner = CommandRunner.new(debug: debug?)
+      run_options = { interactive: interactive }
+      run_options[:chdir] = chdir if chdir
       code = reporter.step("running: #{CommandDisplay.for_debug(command)}", live: !interactive) do
-        runner.run(command, interactive: interactive)
+        runner.run(command, **run_options)
       end
       exit(code) if exit_on_failure && !code.zero?
       code
@@ -322,13 +323,21 @@ module Wip
       extra = compose_build_extra(spec)
       warn "wip: building service '#{name}' (tag: #{spec['tag']}) from #{spec['context']}"
       progress = StagingProgress.new
-      BuildContext.new(spec['context']).stage(on_progress: progress.method(:tick)) do |staged_context|
+      build_context = BuildContext.new(spec['context'], shadow_root: spec['shadow_context'])
+      build_context.stage(on_progress: progress.method(:tick)) do |staged_context|
         progress.finish
-        settings = { 'context' => staged_context, 'tag' => spec['tag'] }
-        execute(builder.build(settings: settings, extra: extra), interactive: tty?(true))
+        run_staged_build(build_context, staged_context, { 'tag' => spec['tag'] }, extra)
       end
     ensure
       progress&.finish
+    end
+
+    # wslc build crashes (ERROR_UNHANDLED_EXCEPTION) when handed an absolute
+    # context path; running from inside the context and passing "." avoids it.
+    def run_staged_build(build_context, staged_context, settings, extra)
+      warn "wip: using shadow build context at #{staged_context}" if build_context.shadow?
+      built = builder.build(settings: settings.merge('context' => '.'), extra: extra)
+      execute(built, interactive: tty?(true), chdir: staged_context)
     end
 
     def build_extra_options(extra)
@@ -356,7 +365,9 @@ module Wip
 
       Dir.mktmpdir('wip-sync-build-') do |dir|
         File.write(File.join(dir, 'Dockerfile'), settings.build['dockerfile'])
-        execute(builder.sync_build(dir))
+        # wslc build crashes (ERROR_UNHANDLED_EXCEPTION) when handed an absolute
+        # context path; running from inside the context and passing "." avoids it.
+        execute(builder.sync_build('.'), chdir: dir)
       end
     end
 

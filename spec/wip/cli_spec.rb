@@ -265,8 +265,8 @@ RSpec.describe Wip::CLI do
               RUN apk add --no-cache rsync
       YAML
       runner = stub_runner('')
-      expect(runner).to receive(:run).with(a_collection_including('build', '-t', 'wip-sync-app:latest'),
-                                           interactive: false).and_return(0).ordered
+      expect(runner).to receive(:run).with(a_collection_including('build', '-t', 'wip-sync-app:latest', '.'),
+                                           interactive: false, chdir: a_kind_of(String)).and_return(0).ordered
       expect(runner).to receive(:run).with(a_collection_including('--rm', 'wip-sync-app:latest', 'rsync'),
                                            interactive: false).and_return(0).ordered
 
@@ -287,7 +287,8 @@ RSpec.describe Wip::CLI do
       YAML
       runner = stub_runner('')
       builds = 0
-      allow(runner).to receive(:run).with(a_collection_including('build'), interactive: false) do
+      allow(runner).to receive(:run)
+        .with(a_collection_including('build'), interactive: false, chdir: a_kind_of(String)) do
         builds += 1
         0
       end
@@ -377,10 +378,11 @@ RSpec.describe Wip::CLI do
                                                                             resolve: 'wslc.exe'))
     staged_context = nil
     dockerfile_present = node_modules_present = nil
-    expect(runner).to receive(:run) do |command, **_kwargs|
-      staged_context = command.last
+    expect(runner).to receive(:run) do |command, **kwargs|
+      staged_context = kwargs[:chdir]
       dockerfile_present = File.exist?(File.join(staged_context, 'Dockerfile'))
       node_modules_present = File.exist?(File.join(staged_context, 'node_modules'))
+      expect(command.last).to eq('.')
       0
     end
 
@@ -412,8 +414,9 @@ RSpec.describe Wip::CLI do
       allow(Wip::CommandResolver).to receive(:new).and_return(instance_double(Wip::CommandResolver,
                                                                               resolve: 'wslc.exe'))
       staged_context = nil
-      expect(runner).to receive(:run) do |command, **_kwargs|
-        staged_context = command.last
+      expect(runner).to receive(:run) do |command, **kwargs|
+        staged_context = kwargs[:chdir]
+        expect(command.last).to eq('.')
         0
       end
 
@@ -640,8 +643,55 @@ RSpec.describe Wip::CLI do
       described_class.start(%w[up -d])
 
       expect(runner).to have_received(:run).with(
-        ['wslc.exe', 'build', '-t', 'wip-compose-app:latest', File.expand_path('.')], interactive: false
+        ['wslc.exe', 'build', '-t', 'wip-compose-app:latest', '.'], interactive: false, chdir: File.expand_path('.')
       )
+    end
+
+    it 'passes build.dockerfile to -f relative to the context, so it still resolves after chdir' do
+      File.write('compose.yml', <<~YAML)
+        services:
+          app:
+            build:
+              context: .
+              dockerfile: docker/Dockerfile.dev
+      YAML
+      runner = instance_double(Wip::CommandRunner, run: 0)
+      allow(Wip::CommandRunner).to receive(:new).and_return(runner)
+      allow(runner).to receive(:run).and_return(0)
+
+      described_class.start(%w[up -d])
+
+      expect(runner).to have_received(:run).with(
+        ['wslc.exe', 'build', '-t', 'wip-compose-app:latest', '-f', 'docker/Dockerfile.dev', '.'],
+        interactive: false, chdir: File.expand_path('.')
+      )
+    end
+
+    it 'stages a compose build: through its shadow_context when configured on WSL2' do
+      allow(Wip::Environment).to receive(:new)
+        .and_return(instance_double(Wip::Environment, wsl2?: true, interactive?: false))
+
+      Dir.mktmpdir do |shadow_root|
+        File.write('compose.yml', <<~YAML)
+          services:
+            app:
+              build:
+                context: .
+                shadow_context: #{shadow_root}
+        YAML
+        runner = instance_double(Wip::CommandRunner, run: 0)
+        allow(Wip::CommandRunner).to receive(:new).and_return(runner)
+        chdir = nil
+        expect(runner).to receive(:run) do |command, **kwargs|
+          chdir = kwargs[:chdir]
+          expect(command.last).to eq('.')
+          0
+        end
+
+        expect { described_class.start(%w[up -d]) }.to output(/using shadow build context at/).to_stderr
+
+        expect(chdir).to start_with(shadow_root)
+      end
     end
 
     it 'names the service being built so multiple build: entries are distinguishable' do
@@ -672,7 +722,8 @@ RSpec.describe Wip::CLI do
       described_class.start(%w[up --no-cache -d])
 
       expect(runner).to have_received(:run).with(
-        ['wslc.exe', 'build', '-t', 'wip-compose-app:latest', '--no-cache', File.expand_path('.')], interactive: false
+        ['wslc.exe', 'build', '-t', 'wip-compose-app:latest', '--no-cache', '.'],
+        interactive: false, chdir: File.expand_path('.')
       )
     end
 

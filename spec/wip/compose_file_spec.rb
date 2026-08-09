@@ -140,7 +140,7 @@ RSpec.describe Wip::ComposeFile do
     YAML
 
     spec = described_class.load(path).build_specs['app']
-    expect(spec['dockerfile']).to eq(File.expand_path('Dockerfile.dev'))
+    expect(spec['dockerfile']).to eq('Dockerfile.dev')
     expect(described_class.load(path).to_dependencies_hash['app']['image']).to eq('wip-compose-app:latest')
   end
 
@@ -164,6 +164,30 @@ RSpec.describe Wip::ComposeFile do
               - FOO=bar
     YAML
     expect(described_class.load(array).build_specs['app']['args']).to eq('FOO' => 'bar')
+  end
+
+  it 'passes build.shadow_context through untouched, unlike context which is resolved' do
+    path = write_compose(<<~YAML)
+      services:
+        app:
+          build:
+            context: .
+            shadow_context: /mnt/c/Users/me/AppData/Local/wip/build-contexts
+    YAML
+
+    expect(described_class.load(path).build_specs['app']['shadow_context'])
+      .to eq('/mnt/c/Users/me/AppData/Local/wip/build-contexts')
+  end
+
+  it 'omits shadow_context from the build spec when not configured' do
+    path = write_compose(<<~YAML)
+      services:
+        app:
+          build:
+            context: .
+    YAML
+
+    expect(described_class.load(path).build_specs['app']).not_to have_key('shadow_context')
   end
 
   it 'rejects unsupported build keys' do
