@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
 require 'open3'
+require 'pty'
+require 'io/console'
 
 module Wip
   # Executes a built command, pumping its I/O and returning the exit status.
@@ -53,16 +55,84 @@ module Wip
 
     # Piping stdin/stdout/stderr (as `run` does above) closes the child's
     # stdin immediately, which breaks anything that reads from the terminal
-    # (a shell, `rails console`, ...). Inherit the real file descriptors
-    # instead so the child gets a genuine TTY.
+    # (a shell, `rails console`, ...). Run it behind a pseudo-terminal instead
+    # of inheriting wip's real fds directly: a pty still gives the child a
+    # genuine controlling terminal (job control, Ctrl-C -> SIGINT, isatty-gated
+    # rendering all work the same as direct inheritance), but routes output
+    # through wip first, so report_hint can still see it — inherited fds go
+    # straight to the terminal and wip never would. wip's own terminal is
+    # switched to raw mode for the duration so only the pty's line discipline
+    # echoes input; without that, every keystroke would echo twice.
     def run_attached(command, env, chdir)
       opts = chdir ? { chdir: chdir } : {}
-      pid = Process.spawn(env, *command, opts)
-      _, status = Process.wait2(pid)
+      captured = +''
+      status = nil
+      PTY.spawn(env, *command, opts) do |output, input, pid|
+        sync_winsize(output)
+        with_winsize_sync(output) { with_raw_stdin { pump_attached(output, input, captured) } }
+        _, status = Process.wait2(pid)
+      end
+      report_hint(captured) unless status.success?
       exitstatus(status)
     rescue Errno::ENOENT => e
       @stderr.puts e.message
       127
+    rescue Interrupt
+      @stderr.puts "\nwip: interrupted"
+      130
+    end
+
+    def pump_attached(output, input, captured)
+      stdin_thread = forward_stdin(input)
+      loop do
+        chunk = output.readpartial(4096)
+        @stdout.write(chunk)
+        captured << chunk
+      end
+    rescue Errno::EIO, IOError
+      # the pty's slave side closed when the child exited
+    ensure
+      stdin_thread.kill
+    end
+
+    # Keeps the child's pty sized to wip's real terminal so full-screen
+    # programs (an editor, `less`, ...) render correctly. A non-tty @stdout
+    # (piped output, tests) has no size to read, so the pty keeps its default.
+    def sync_winsize(output)
+      output.winsize = @stdout.winsize if @stdout.respond_to?(:winsize) && @stdout.tty?
+    end
+
+    # The child's pty only gets the terminal size wip had at spawn time
+    # (sync_winsize, above) — it's a separate pty from wip's own real one, so
+    # later resizes of wip's terminal don't reach it on their own. Trap
+    # SIGWINCH for the duration to re-sync it live, restoring whatever handler
+    # was already installed (if any) once the command finishes.
+    def with_winsize_sync(output)
+      return yield unless @stdout.respond_to?(:winsize) && @stdout.tty?
+
+      previous = Signal.trap('WINCH') { sync_winsize(output) }
+      yield
+    ensure
+      Signal.trap('WINCH', previous) if previous
+    end
+
+    # A non-tty @stdin (piped input, tests) has no raw mode to switch to, so
+    # it's forwarded to the child as-is.
+    def with_raw_stdin(&)
+      return yield unless @stdin.respond_to?(:raw) && @stdin.tty?
+
+      @stdin.raw(&)
+    end
+
+    def forward_stdin(input)
+      Thread.new do
+        loop do
+          chunk = @stdin.readpartial(4096)
+          input.write(chunk)
+        end
+      rescue IOError, Errno::EIO, Errno::EBADF
+        nil
+      end
     end
 
     # An Interrupt during the main thread's `join` closes these pipes out from
