@@ -8,7 +8,7 @@ module Wip
     # Applied to every dependencies: entry, primary container included — there
     # is no separate, differently-shaped bucket for "the one you exec into."
     DEPENDENCY_DEFAULTS = { 'workdir' => nil, 'user' => nil, 'interactive' => false, 'remove' => true,
-                            'env' => {}, 'ports' => [], 'volumes' => [] }.freeze
+                            'env' => {}, 'ports' => [], 'volumes' => [], 'restart' => 'no' }.freeze
     SECRET_PATTERN = /token|password|secret|credential|auth/i
     # Which orchestration path `up`/`down`/`sync`/etc. take. Explicit rather than
     # inferred from a `compose:` block's presence, so a config reader doesn't have
@@ -209,6 +209,9 @@ module Wip
       raise ConfigError, "dependencies.#{name} must set image" if entry['image'].to_s.empty?
 
       entry['env']&.transform_values!(&:to_s)
+      # See ComposeFile#normalize_restart — same YAML gotcha applies here: an unquoted
+      # `restart: no` parses as the boolean false, not the string "no".
+      entry['restart'] = 'no' if entry['restart'] == false
     end
 
     def stringify(object)

@@ -82,21 +82,27 @@ module Wip
       progress&.finish
     end
 
+    # Real Compose values that trigger a restart when a container's exited/dead; `no` (the
+    # default) and anything unrecognized both mean "leave it alone." on-failure optionally
+    # takes a `:MAX_RETRIES` suffix (e.g. "on-failure:3") — start_with? handles that.
+    AUTO_RESTART_POLICIES = %w[always unless-stopped on-failure].freeze
+
     desc 'up', 'Start the configured container and its dependencies, creating them if necessary'
     option :detach, type: :boolean, default: false, aliases: '-d'
     option :sync, type: :boolean, default: true, desc: 'Mirror the source into the sync volume first (--no-sync skips)'
     option :no_cache, type: :boolean, default: false, desc: 'Build compose-native images without cached layers'
+    option :watch, type: :boolean, default: false, aliases: '-w',
+                   desc: 'Poll dependencies and restart any exited one whose restart: allows it (implies -d)'
+    option :interval, type: :numeric, default: 5, desc: 'Seconds between --watch polls (default: 5)'
     def up
-      if load_config.compose?
-        sync_before_boot if options[:sync]
-        return execute(compose_bridge.up(detach: options[:detach]), interactive: tty?(!options[:detach]))
-      end
+      return up_via_compose_bridge if load_config.compose?
 
       ensure_compose_images
       ensure_network
       sidecar_names.each { |name| ensure_dependency(name) }
       sync_before_boot if options[:sync]
       ensure_container
+      watch_restarts if options[:watch]
     end
 
     desc 'sync', 'Mirror the source tree into the sync volume'
@@ -407,16 +413,85 @@ module Wip
       warn "wip: run `wip sync --watch` in another terminal to keep #{settings.target} up to date"
     end
 
+    def up_via_compose_bridge
+      if options[:watch]
+        raise ConfigError, '`wip up --watch` is not supported under mode: compose (wip never parses a ' \
+                           'compose.yml service list in that mode, so there is nothing to poll)'
+      end
+
+      sync_before_boot if options[:sync]
+      execute(compose_bridge.up(detach: options[:detach]), interactive: tty?(!options[:detach]))
+    end
+
     def ensure_container
       container = load_config.container
-      interactive = tty?(!options[:detach])
+      interactive = tty?(!detach?)
       if resource_exists?(builder.find)
         warn "wip: starting existing container '#{container}'"
-        execute(builder.start(detach: options[:detach]), interactive: interactive)
+        execute(builder.start(detach: detach?), interactive: interactive)
       else
         warn "wip: container '#{container}' not found, creating it"
-        execute(builder.up(detach: options[:detach]), interactive: interactive)
+        execute(builder.up(detach: detach?), interactive: interactive)
       end
+    end
+
+    # --watch polls in a loop after boot, which can't share this one thread with an attached
+    # (`-it`) primary container — force the same effective behavior `-d` gives ensure_container.
+    def detach? = options[:detach] || options[:watch]
+
+    # Approximates Docker Compose's `restart:` policy via a foreground poll loop — not a
+    # background daemon/service (see README "Roadmap"); the same opt-in, keep-a-terminal-open
+    # shape as `wip sync --watch`.
+    def watch_restarts
+      names = load_config.dependencies.keys
+      interval = restart_interval
+      warn "wip: watching #{names.join(', ')} for exited restart: containers every #{interval}s " \
+           '(running detached; Ctrl-C to stop)'
+      loop do
+        names.each { |name| restart_if_exited(name) }
+        sleep interval
+      end
+    rescue Interrupt
+      warn "\nwip: watch stopped"
+    end
+
+    def restart_interval
+      raise ConfigError, '--interval must be a positive number' unless options[:interval].positive?
+
+      options[:interval]
+    end
+
+    # Status-based, not transition-based: each tick checks current state, not whether it *just*
+    # exited. Can't distinguish "crashed on its own" from "you ran `wip stop`/`wip down` in
+    # another terminal" — Ctrl-C this loop first if you're about to do either (see README).
+    def restart_if_exited(name)
+      policy = load_config.dependency(name)['restart']
+      return unless auto_restart?(policy)
+
+      status = container_status(name)
+      return unless %w[exited dead].include?(status)
+
+      warn "wip: '#{name}' is #{status}, restarting it (restart: #{policy})"
+      execute(builder.dependency_start(name), exit_on_failure: false)
+    end
+
+    def auto_restart?(policy) = AUTO_RESTART_POLICIES.any? { |value| policy.to_s.start_with?(value) }
+
+    # ASSUMPTION, unverified against a real wslc install (no test fixture/sample output exists
+    # anywhere in this repo today): `wslc list --all --format json` is presumed to emit a
+    # lowercase `State` field matching `docker ps --format json`'s own shape (created/running/
+    # paused/restarting/exited/removing/dead). Isolated to this one method so correcting a wrong
+    # guess is a one-line change. Logs the raw entry under --debug specifically so a wrong guess
+    # is immediately visible instead of silently no-op'ing forever.
+    def container_status(name)
+      code, output = probe(builder.dependency_find(name))
+      return nil unless code.zero?
+
+      entry = JSON.parse(output).first
+      warn "wip: [debug] '#{name}': #{entry.inspect}" if debug?
+      entry&.fetch('State', nil)
+    rescue JSON::ParserError
+      nil
     end
   end
 end

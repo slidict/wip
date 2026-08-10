@@ -84,7 +84,7 @@ RSpec.describe Wip::Config do
 
     expect(config.dependency('redis')).to include('image' => 'redis:latest', 'workdir' => nil,
                                                   'interactive' => false, 'remove' => true,
-                                                  'env' => {}, 'ports' => [], 'volumes' => [])
+                                                  'env' => {}, 'ports' => [], 'volumes' => [], 'restart' => 'no')
     expect(config.dependency('unknown')).to be_nil
   end
 
@@ -92,6 +92,12 @@ RSpec.describe Wip::Config do
     expect do
       described_class.new('container' => 'redis', 'dependencies' => { 'redis' => { 'command' => 'redis-server' } })
     end.to raise_error(Wip::ConfigError, /dependencies\.redis must set image/)
+  end
+
+  it 'normalizes an unquoted dependencies.<name>.restart: no (parsed by YAML as false) to "no"' do
+    config = described_class.new('container' => 'app',
+                                 'dependencies' => { 'app' => { 'image' => 'example:dev', 'restart' => false } })
+    expect(config.dependency('app')['restart']).to eq('no')
   end
 
   it 'exposes network, defaulting to nil' do

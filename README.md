@@ -159,9 +159,12 @@ The two are aliases for the same feature, not separate ones: pick whichever name
 
 `dependencies:` holds every container uniformly — the primary one `container:` points at and any
 sidecar services (a database, Redis, ...) alongside it. Each entry accepts `image` (required),
-`command`, `env`, `ports`, `volumes`, and `workdir`; there's no separate, differently-shaped block
-for "the one you exec into." `container:` has no default; once `dependencies:` has any entries,
-wip needs to be told explicitly which one is primary rather than guessing a name.
+`command`, `env`, `ports`, `volumes`, `workdir`, and `restart`; there's no separate, differently-shaped
+block for "the one you exec into." `container:` has no default; once `dependencies:` has any entries,
+wip needs to be told explicitly which one is primary rather than guessing a name. `restart` is stored
+but inert on its own — see
+[Restarting exited dependencies](#restarting-exited-dependencies-wip-up---watch) for what actually
+acts on it (`wip up --watch`).
 
 What sets the primary entry apart is operational, not structural: `wip up` brings up every other
 entry by name first (creating `network:` beforehand if it doesn't exist and set), then boots or
@@ -171,6 +174,44 @@ resolve. `wip down` tears the primary container and all sidecars down (the netwo
 in place). Only the primary container is a target for `exec`/`run`/`build`/`interaction:` — sidecars
 are only ever started and stopped, matching Compose's own service-vs-you-exec-into-one-of-them
 split.
+
+#### Restarting exited dependencies (`wip up --watch`)
+
+Real Compose auto-restarts a container tagged `restart: always`/`unless-stopped`/`on-failure` when
+it exits. `wslc` has no such policy, and no push-based "container exited" notification for `wip` to
+hook into, so the closest approximation is polling: `wip up --watch` brings everything up the same
+way `wip up -d` does, then keeps checking (`--interval SECONDS`, default 5) whether any
+dependency — the primary container included — has exited, restarting the ones whose `restart:`
+allows it.
+
+```console
+$ wip up --watch
+wip: watching app, mysql every 5s for exited restart: containers (running detached; Ctrl-C to stop)
+```
+
+- `restart:` accepts the same values Compose does — `no` (the default), `always`, `unless-stopped`,
+  `on-failure`, optionally with a `:MAX_RETRIES` suffix. `wip up --watch` treats the three
+  restarting values identically: it restarts on any exited/dead container regardless of exit code,
+  unlike real `on-failure`, which skips a clean (zero) exit — reading an exit code needs a heavier
+  call this polling loop doesn't make.
+- This is a foreground loop, not a background daemon or service — the project intentionally has
+  neither (see [Roadmap](#roadmap)). Keep the terminal it's running in open, the same as
+  `wip sync --watch`; Ctrl-C (or closing the terminal) stops the supervision.
+- `--watch` implies `-d`: it can't attach a TTY to the primary container and poll in a loop on the
+  same thread, so the primary container always runs detached under `--watch`, whether or not you
+  also passed `-d`.
+- Not available under `mode: compose` — wip never parses a service list in that mode, so there's
+  nothing for it to poll; use whatever restart support your external compose-for-`wslc` tool offers.
+- It's status-based, not event-based: each tick checks whether a dependency is currently exited, not
+  whether it *just* exited. It can't tell "crashed on its own" apart from "you ran `wip stop`/
+  `wip down` in another terminal" — Ctrl-C the `--watch` loop first, or it may race and restart
+  what you just stopped.
+- Re-running `wip up -d --watch` against an already-running stack is safe: an already-running
+  container's `start` is a no-op, the same as it is for plain `wip up`.
+- The exit-detection relies on `wslc list --all --format json` reporting a lowercase `State` field
+  (`exited`/`dead` when stopped), mirroring `docker ps`'s own JSON shape — unconfirmed against a
+  real `wslc` install as of this writing. If `--watch` never restarts anything you believe really
+  exited, run `wip up --watch --debug` and check the logged `list` entry for the actual field name.
 
 ### Compose mode
 
@@ -250,11 +291,13 @@ valid compose.yml over sections it doesn't need to look at:
   does), `command` (shell or exec form), `environment`
   (mapping or `KEY=VALUE` array — a mapping value must not be null; host environment pass-through
   isn't supported), `ports`/`volumes` (short syntax only — `"host:container"` strings, not
-  long-syntax mappings), `working_dir`, `user`, `depends_on` (ordering only — a `condition:` other
-  than `service_started` is rejected, since there's no health-check support). `tty`, `stdin_open`,
-  and `networks` are accepted but silently ignored: TTY/stdin allocation is already decided per
-  invocation (see "TTY allocation" below), not fixed per service, and every service already shares
-  the one project network `compose.project` sets up.
+  long-syntax mappings), `working_dir`, `user`, `restart` (stored as-is; `no` is the default —
+  `wip up --watch` is what actually acts on it, see
+  [Restarting exited dependencies](#restarting-exited-dependencies-wip-up---watch)), `depends_on`
+  (ordering only — a `condition:` other than `service_started` is rejected, since there's no
+  health-check support). `tty`, `stdin_open`, and `networks` are accepted but silently ignored:
+  TTY/stdin allocation is already decided per invocation (see "TTY allocation" below), not fixed
+  per service, and every service already shares the one project network `compose.project` sets up.
 - `wip logs` takes at most one `SERVICE` (defaulting to `compose.service`) — `wslc logs`, like
   `docker logs`, follows a single container, unlike a real compose tool's multi-service view.
 - `sync:` behaves exactly like `mode: container`'s (falls back to the primary service's own image,
@@ -422,7 +465,7 @@ to that tag directly — `sync.build`'s tag wins if both are set, so don't confi
 | `wip doctor` | Diagnose WSL2, interop, WSLC, config, architecture, and Git |
 | `wip config` | Print the effective configuration (secrets masked) |
 | `wip build [--no-cache] [-- OPTIONS]` | Build the image from the `build` definition. `wslc build` reuses matching local layers by default; `--no-cache` disables that. |
-| `wip up [-d] [--no-sync] [--no-cache]` | Start the primary `dependencies:` entry (`container:` names which one) and its sidecars (creating any that are missing, on `network:` if set). `-d` runs the main container in the background; with `sync:` configured, the source is mirrored into the volume first unless `--no-sync` |
+| `wip up [-d] [--no-sync] [--no-cache] [--watch] [--interval N]` | Start the primary `dependencies:` entry (`container:` names which one) and its sidecars (creating any that are missing, on `network:` if set). `-d` runs the main container in the background; with `sync:` configured, the source is mirrored into the volume first unless `--no-sync`. `--watch` polls every `N` seconds (default 5, implies `-d`) and restarts any exited dependency whose `restart:` allows it (not available under mode: compose) |
 | `wip stop` | Stop the primary container and its sidecar `dependencies:` without removing them |
 | `wip down` | Stop and remove the primary container and its sidecar `dependencies:` |
 | `wip exec [--no-interactive] COMMAND...` | Run a command in the existing container |
@@ -635,7 +678,11 @@ and its current limitations (`run`, and `interaction:` of type `run`/`build`).
 
 Beyond Compose parity, a resident/daemon process, a GUI, PowerShell-specific tuning, direct
 registry API/manifest parsing, self-update, and plugins are all unimplemented and not currently
-planned. What's still planned for `wip`, roughly in priority order:
+planned. (`wip up --watch`'s restart-policy poll loop isn't an exception to this — it's a
+foreground, opt-in loop you keep a terminal open for, the same shape as `wip sync --watch`, not a
+background service; see
+[Restarting exited dependencies](#restarting-exited-dependencies-wip-up---watch).) What's still
+planned for `wip`, roughly in priority order:
 
 1. **`wip provision`** — a dip-style one-shot bootstrap hook (build → up deps → install deps →
    create/migrate/seed DB) so a new contributor can go from `git clone` to a working environment

@@ -12,7 +12,7 @@ RSpec.describe Wip::Initializer do
       expect(initializer.compose?).to be(false)
       parsed = YAML.safe_load(initializer.call)
       expect(parsed).to include('version' => 1, 'mode' => 'container')
-      expect(parsed['dependencies']['app']).to include('image', 'workdir')
+      expect(parsed['dependencies']['app']).to include('image', 'workdir', 'restart')
       expect(parsed).to have_key('sync')
     end
   end
