@@ -1,7 +1,11 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
-require 'pty'
+begin
+  require 'pty'
+rescue LoadError
+  # PTY is unavailable on native Windows; PTY-dependent examples are skipped below
+end
 
 RSpec.describe Wip::CommandRunner do
   it 'returns the external command exit status' do
@@ -50,7 +54,7 @@ RSpec.describe Wip::CommandRunner do
     expect(stderr.string).to include('mounted-volume limit')
   end
 
-  it 'propagates a terminal resize (SIGWINCH) to the child pty while attached' do
+  it 'propagates a terminal resize (SIGWINCH) to the child pty while attached', skip: !defined?(PTY) do
     PTY.open do |master, slave|
       slave.winsize = [24, 80]
       runner = described_class.new(stdin: slave, stdout: slave, stderr: StringIO.new)
@@ -67,7 +71,7 @@ RSpec.describe Wip::CommandRunner do
     end
   end
 
-  it 'puts a real controlling terminal in raw mode and syncs the pty size, without raising' do
+  it 'puts a real controlling terminal in raw mode and syncs the pty size, without raising', skip: !defined?(PTY) do
     PTY.open do |master, slave|
       runner = described_class.new(stdin: slave, stdout: slave, stderr: StringIO.new)
 
@@ -75,6 +79,42 @@ RSpec.describe Wip::CommandRunner do
 
       expect(status).to eq(0)
       master.close
+    end
+  end
+
+  it 'falls back to inheriting real stdio on native Windows, where the pty gem is unavailable' do
+    allow(Gem).to receive(:win_platform?).and_return(true)
+    runner = described_class.new
+    expect(runner).to receive(:run_inherited).and_call_original
+    expect(runner).not_to receive(:run_attached)
+
+    expect(runner.run([RbConfig.ruby, '-e', 'exit 9'], interactive: true)).to eq(9)
+  end
+
+  it 'forwards real IO stdio (not just the process defaults) on the Windows fallback', skip: !defined?(PTY) do
+    allow(Gem).to receive(:win_platform?).and_return(true)
+
+    PTY.open do |master, slave|
+      runner = described_class.new(stdin: slave, stdout: slave, stderr: slave)
+
+      status = runner.run([RbConfig.ruby, '-e', "STDOUT.write('hello-from-child')"], interactive: true)
+
+      expect(status).to eq(0)
+      expect(master.read_nonblock(4096)).to include('hello-from-child')
+      master.close
+    end
+  end
+
+  it 'runs the Windows fallback inside chdir too' do
+    allow(Gem).to receive(:win_platform?).and_return(true)
+
+    Dir.mktmpdir do |dir|
+      marker = File.join(dir, 'marker')
+      script = "File.write('marker', Dir.pwd)"
+
+      described_class.new.run([RbConfig.ruby, '-e', script], interactive: true, chdir: dir)
+
+      expect(File.read(marker)).to eq(File.realpath(dir))
     end
   end
 
