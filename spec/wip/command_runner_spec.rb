@@ -78,6 +78,25 @@ RSpec.describe Wip::CommandRunner do
     end
   end
 
+  it 'falls back to inheriting real stdio on native Windows, where the pty gem is unavailable' do
+    allow(Gem).to receive(:win_platform?).and_return(true)
+
+    expect(described_class.new.run([RbConfig.ruby, '-e', 'exit 9'], interactive: true)).to eq(9)
+  end
+
+  it 'runs the Windows fallback inside chdir too' do
+    allow(Gem).to receive(:win_platform?).and_return(true)
+
+    Dir.mktmpdir do |dir|
+      marker = File.join(dir, 'marker')
+      script = "File.write('marker', Dir.pwd)"
+
+      described_class.new.run([RbConfig.ruby, '-e', script], interactive: true, chdir: dir)
+
+      expect(File.read(marker)).to eq(File.realpath(dir))
+    end
+  end
+
   it 'returns 130 and reports the interrupt instead of raising when Ctrl-C hits while waiting on pump threads' do
     raised = false
     allow_any_instance_of(Thread).to receive(:join).and_wrap_original do |original, *args|

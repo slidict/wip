@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 require 'open3'
-require 'pty'
+require 'pty' unless Gem.win_platform?
 require 'io/console'
 
 module Wip
@@ -18,7 +18,7 @@ module Wip
 
     def run(command, env: {}, interactive: false, chdir: nil)
       @stderr.puts "+ #{CommandDisplay.for_debug(command)}" if @debug
-      return run_attached(command, env, chdir) if interactive
+      return run_interactive(command, env, chdir) if interactive
 
       opts = chdir ? { chdir: chdir } : {}
       captured = +''
@@ -40,6 +40,10 @@ module Wip
     end
 
     private
+
+    def run_interactive(command, env, chdir)
+      Gem.win_platform? ? run_inherited(command, env, chdir) : run_attached(command, env, chdir)
+    end
 
     # exitstatus is nil when the process was killed by a signal instead of
     # exiting normally; fall back to the conventional 128+signal shell code
@@ -73,6 +77,26 @@ module Wip
         _, status = Process.wait2(pid)
       end
       report_hint(captured) unless status.success?
+      exitstatus(status)
+    rescue Errno::ENOENT => e
+      @stderr.puts e.message
+      127
+    rescue Interrupt
+      @stderr.puts "\nwip: interrupted"
+      130
+    end
+
+    # Ruby's PTY library wraps openpty(3), which native Windows builds don't
+    # ship (require 'pty' is skipped there entirely, see the top of this
+    # file). Fall back to letting the child inherit wip's real stdio
+    # directly, same as `run` would've done pre-pty for the piped case: it
+    # still gives the child a real console (job control, Ctrl-C, isatty
+    # rendering all work), just without a way for wip to see the output, so
+    # report_hint can't run on failure here.
+    def run_inherited(command, env, chdir)
+      opts = chdir ? { chdir: chdir } : {}
+      pid = Process.spawn(env, *command, opts)
+      _, status = Process.wait2(pid)
       exitstatus(status)
     rescue Errno::ENOENT => e
       @stderr.puts e.message
