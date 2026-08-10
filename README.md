@@ -1,3 +1,5 @@
+<img src="docs/logo.png" alt="wip logo" width="120" align="left">
+
 # wip
 
 [![Tests](https://github.com/slidict/wip/actions/workflows/test.yml/badge.svg)](https://github.com/slidict/wip/actions/workflows/test.yml)
