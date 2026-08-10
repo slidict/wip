@@ -16,6 +16,42 @@ module Wip
     class_option :debug_log, type: :string, desc: 'Where --debug snapshots go: a file path, or "-" for inline'
     default_task :dispatch
 
+    # Thor only recognizes class_options (--config, --debug, ...) once they
+    # appear after the command name (`wip up --config foo`). Pull them out of
+    # ARGV wherever they show up and reinsert them right after the command so
+    # `wip --config foo up` works too.
+    GLOBAL_SWITCHES = {
+      '--config' => :value,
+      '--env-file' => :value,
+      '--debug' => :flag,
+      '--debug-log' => :value
+    }.freeze
+
+    def self.start(given_args = ARGV, config = {})
+      super(reorder_global_options(given_args), config)
+    end
+
+    def self.reorder_global_options(args)
+      remaining = args.dup
+      extracted = []
+
+      until remaining.empty?
+        name, _, inline_value = remaining.first.to_s.partition('=')
+        kind = GLOBAL_SWITCHES[name]
+        break unless kind
+
+        switch = remaining.shift
+        extracted << switch
+        extracted << remaining.shift if kind == :value && inline_value.empty? && !remaining.empty?
+      end
+
+      command_index = remaining.index { |arg| !arg.start_with?('-') }
+      return args if command_index.nil?
+
+      remaining.insert(command_index + 1, *extracted)
+      remaining
+    end
+
     def self.exit_on_failure? = true
 
     # Thor only falls back to the default task when no command name is given at
