@@ -1,5 +1,9 @@
 # wip
 
+<p align="center">
+  <img src="docs/logo.png" alt="wip logo" width="240">
+</p>
+
 [![Tests](https://github.com/slidict/wip/actions/workflows/test.yml/badge.svg)](https://github.com/slidict/wip/actions/workflows/test.yml)
 [![Gem Version](https://img.shields.io/gem/v/wslc-wip.svg)](https://rubygems.org/gems/wslc-wip)
 [![License: MIT](https://img.shields.io/github/license/slidict/wip.svg)](LICENSE)
