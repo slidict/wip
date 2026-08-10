@@ -7,6 +7,10 @@ on:
     types:
       - completed
 
+concurrency:
+  group: gem-push
+  cancel-in-progress: false
+
 jobs:
   build:
     name: Build + Publish
@@ -71,21 +75,30 @@ jobs:
             gpr_endpoint="users/${OWNER}/packages/rubygems/${GEM_NAME}/versions"
           fi
 
-          gpr_status=$(curl -s -o /tmp/gpr_versions.json -w '%{http_code}' \
-            -H "Authorization: Bearer ${GH_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/${gpr_endpoint}")
-          if [ "$gpr_status" = "200" ]; then
+          if gh api --paginate "${gpr_endpoint}" > /tmp/gpr_versions.json 2>/tmp/gpr_error.log; then
             if jq -e --arg v "$PLAIN_VERSION" 'any(.[]; .name == $v)' /tmp/gpr_versions.json >/dev/null; then
               echo "gpr_exists=true" >> "$GITHUB_OUTPUT"
             else
               echo "gpr_exists=false" >> "$GITHUB_OUTPUT"
             fi
-          elif [ "$gpr_status" = "404" ]; then
+          elif grep -qi 'HTTP 404' /tmp/gpr_error.log; then
             echo "gpr_exists=false" >> "$GITHUB_OUTPUT"
           else
-            echo "Unexpected GitHub Packages API status: $gpr_status" >&2
+            cat /tmp/gpr_error.log >&2
+            echo "Unexpected GitHub Packages API failure" >&2
             exit 1
+          fi
+
+      - name: Check GitHub release
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Publish to GPR
@@ -112,7 +125,7 @@ jobs:
           gem push *.gem
 
       - name: Publish release notes
-        if: steps.existing.outputs.rubygems_exists == 'false'
+        if: steps.release.outputs.exists == 'false'
         uses: release-drafter/release-drafter@v7
         with:
           config-name: release-drafter.yml
