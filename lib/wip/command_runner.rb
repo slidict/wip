@@ -95,6 +95,10 @@ module Wip
     # report_hint can't run on failure here.
     def run_inherited(command, env, chdir)
       opts = chdir ? { chdir: chdir } : {}
+      opts[:in] = @stdin if io_stream?(@stdin)
+      opts[:out] = @stdout if io_stream?(@stdout)
+      opts[:err] = @stderr if io_stream?(@stderr)
+      pid = nil
       pid = Process.spawn(env, *command, opts)
       _, status = Process.wait2(pid)
       exitstatus(status)
@@ -102,8 +106,28 @@ module Wip
       @stderr.puts e.message
       127
     rescue Interrupt
+      reap_interrupted_child(pid)
       @stderr.puts "\nwip: interrupted"
       130
+    end
+
+    # Process.spawn can only redirect to real OS-backed streams (an IO, or
+    # something that wraps one via to_io) — StringIO and friends (used by
+    # tests, and by wip's own quiet/capture modes) aren't valid redirection
+    # targets. Fall back to the process's own inherited fds for those rather
+    # than passing them through and having Process.spawn reject them.
+    def io_stream?(stream) = stream.respond_to?(:to_io)
+
+    # The child shares wip's real controlling terminal here (unlike the pty
+    # path), so it already received the same Ctrl-C the terminal delivered to
+    # wip; there's nothing to kill, just something to reap so it doesn't
+    # linger as a zombie once wip moves on.
+    def reap_interrupted_child(pid)
+      return unless pid
+
+      Process.wait2(pid)
+    rescue Errno::ECHILD, Interrupt
+      nil
     end
 
     def pump_attached(output, input, captured)

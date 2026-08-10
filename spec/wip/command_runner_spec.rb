@@ -84,8 +84,25 @@ RSpec.describe Wip::CommandRunner do
 
   it 'falls back to inheriting real stdio on native Windows, where the pty gem is unavailable' do
     allow(Gem).to receive(:win_platform?).and_return(true)
+    runner = described_class.new
+    expect(runner).to receive(:run_inherited).and_call_original
+    expect(runner).not_to receive(:run_attached)
 
-    expect(described_class.new.run([RbConfig.ruby, '-e', 'exit 9'], interactive: true)).to eq(9)
+    expect(runner.run([RbConfig.ruby, '-e', 'exit 9'], interactive: true)).to eq(9)
+  end
+
+  it 'forwards real IO stdio (not just the process defaults) on the Windows fallback', skip: !defined?(PTY) do
+    allow(Gem).to receive(:win_platform?).and_return(true)
+
+    PTY.open do |master, slave|
+      runner = described_class.new(stdin: slave, stdout: slave, stderr: slave)
+
+      status = runner.run([RbConfig.ruby, '-e', "STDOUT.write('hello-from-child')"], interactive: true)
+
+      expect(status).to eq(0)
+      expect(master.read_nonblock(4096)).to include('hello-from-child')
+      master.close
+    end
   end
 
   it 'runs the Windows fallback inside chdir too' do
