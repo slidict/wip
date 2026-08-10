@@ -20,33 +20,21 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+          ref: main
           fetch-depth: 0
 
-      - name: Check if version file changed
-        id: version_file
-        run: |
-          if git diff --name-only HEAD~1 HEAD | grep -qx "lib/wip/version.rb"; then
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Extract version
-        if: steps.version_file.outputs.changed == 'true'
         id: version
         run: |
           version=$(grep -Eo "[0-9]+\.[0-9]+\.[0-9]+" lib/wip/version.rb | head -n 1)
           echo "tag=v$version" >> "$GITHUB_OUTPUT"
 
       - name: Set up Ruby 3.4
-        if: steps.version_file.outputs.changed == 'true'
         uses: ruby/setup-ruby@v1
         with:
           ruby-version: 3.4.3
 
       - name: Check existing versions
-        if: steps.version_file.outputs.changed == 'true'
         id: existing
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -96,7 +84,7 @@ jobs:
           fi
 
       - name: Publish to GPR
-        if: steps.version_file.outputs.changed == 'true' && steps.existing.outputs.gpr_exists == 'false'
+        if: steps.existing.outputs.gpr_exists == 'false'
         run: |
           mkdir -p $HOME/.gem
           touch $HOME/.gem/credentials
@@ -109,17 +97,17 @@ jobs:
           OWNER: ${{ github.repository_owner }}
 
       - name: Configure RubyGems trusted publishing credentials
-        if: steps.version_file.outputs.changed == 'true' && steps.existing.outputs.rubygems_exists == 'false'
+        if: steps.existing.outputs.rubygems_exists == 'false'
         uses: rubygems/configure-rubygems-credentials@dc5a8d8553e6ee01fc26761a49e99e733d17954a # v2
 
       - name: Publish to RubyGems
-        if: steps.version_file.outputs.changed == 'true' && steps.existing.outputs.rubygems_exists == 'false'
+        if: steps.existing.outputs.rubygems_exists == 'false'
         run: |
           gem build *.gemspec
           gem push *.gem
 
       - name: Publish release notes
-        if: steps.version_file.outputs.changed == 'true'
+        if: steps.existing.outputs.rubygems_exists == 'false'
         uses: release-drafter/release-drafter@v7
         with:
           config-name: release-drafter.yml
