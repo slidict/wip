@@ -8,7 +8,7 @@ module Wip
     # Applied to every dependencies: entry, primary container included — there
     # is no separate, differently-shaped bucket for "the one you exec into."
     DEPENDENCY_DEFAULTS = { 'workdir' => nil, 'user' => nil, 'interactive' => false, 'remove' => true,
-                            'env' => {}, 'ports' => [], 'volumes' => [] }.freeze
+                            'env' => {}, 'ports' => [], 'volumes' => [], 'restart' => 'no' }.freeze
     SECRET_PATTERN = /token|password|secret|credential|auth/i
     # Which orchestration path `up`/`down`/`sync`/etc. take. Explicit rather than
     # inferred from a `compose:` block's presence, so a config reader doesn't have
@@ -209,6 +209,16 @@ module Wip
       raise ConfigError, "dependencies.#{name} must set image" if entry['image'].to_s.empty?
 
       entry['env']&.transform_values!(&:to_s)
+      normalize_dependency_restart!(entry)
+    end
+
+    # Mirrors ComposeFile#normalize_restart: an unquoted `restart: no` parses as the boolean
+    # false rather than the string "no", and an explicit nil/"" should default the same way an
+    # absent key does (DEPENDENCY_DEFAULTS only fills in a genuinely *missing* key).
+    def normalize_dependency_restart!(entry)
+      return unless entry.key?('restart')
+
+      entry['restart'] = 'no' if entry['restart'] == false || entry['restart'].to_s.empty?
     end
 
     def stringify(object)

@@ -82,21 +82,41 @@ module Wip
       progress&.finish
     end
 
+    # Real Compose values that trigger a restart when a container's exited; `no` (the default)
+    # and anything unrecognized both mean "leave it alone." Exact match only — a typo'd value
+    # like "always-invalid" must stay inert, not accidentally match via a loose prefix check.
+    AUTO_RESTART_POLICIES = %w[always unless-stopped].freeze
+    ON_FAILURE_POLICY = /\Aon-failure(?::\d+)?\z/ # optional `:MAX_RETRIES` suffix, e.g. "on-failure:3"
+
+    # WSLC's `WslcContainerState` (confirmed via microsoft/WSL's own docs and
+    # ContainerModel.h — ContainerInformation#State has no custom JSON enum serializer, so
+    # nlohmann::json emits its raw ordinal): 0 invalid, 1 created, 2 running, 3 exited, 4
+    # deleted. Unlike Docker, there's no separate "dead" state — only `exited` is a live,
+    # restartable exit; `deleted` means the container itself is gone (needs `wip up` to
+    # recreate it, not `start`).
+    WSLC_CONTAINER_STATE_EXITED = 3
+
     desc 'up', 'Start the configured container and its dependencies, creating them if necessary'
     option :detach, type: :boolean, default: false, aliases: '-d'
     option :sync, type: :boolean, default: true, desc: 'Mirror the source into the sync volume first (--no-sync skips)'
     option :no_cache, type: :boolean, default: false, desc: 'Build compose-native images without cached layers'
+    option :watch, type: :boolean, default: false, aliases: '-w',
+                   desc: 'Poll dependencies and restart any exited one whose restart: allows it (implies -d)'
+    option :interval, type: :numeric, default: 5, desc: 'Seconds between --watch polls (default: 5)'
     def up
-      if load_config.compose?
-        sync_before_boot if options[:sync]
-        return execute(compose_bridge.up(detach: options[:detach]), interactive: tty?(!options[:detach]))
-      end
+      return up_via_compose_bridge if load_config.compose?
+
+      # Validated up front, before any startup side effect (image build, network/dependency/
+      # container creation) — otherwise a bad --interval would only surface as a ConfigError
+      # after already bringing everything up.
+      interval = restart_interval if options[:watch]
 
       ensure_compose_images
       ensure_network
       sidecar_names.each { |name| ensure_dependency(name) }
       sync_before_boot if options[:sync]
       ensure_container
+      watch_restarts(interval) if options[:watch]
     end
 
     desc 'sync', 'Mirror the source tree into the sync volume'
@@ -407,16 +427,79 @@ module Wip
       warn "wip: run `wip sync --watch` in another terminal to keep #{settings.target} up to date"
     end
 
+    def up_via_compose_bridge
+      if options[:watch]
+        raise ConfigError, '`wip up --watch` is not supported under mode: compose (wip never parses a ' \
+                           'compose.yml service list in that mode, so there is nothing to poll)'
+      end
+
+      sync_before_boot if options[:sync]
+      execute(compose_bridge.up(detach: options[:detach]), interactive: tty?(!options[:detach]))
+    end
+
     def ensure_container
       container = load_config.container
-      interactive = tty?(!options[:detach])
+      interactive = tty?(!detach?)
       if resource_exists?(builder.find)
         warn "wip: starting existing container '#{container}'"
-        execute(builder.start(detach: options[:detach]), interactive: interactive)
+        execute(builder.start(detach: detach?), interactive: interactive)
       else
         warn "wip: container '#{container}' not found, creating it"
-        execute(builder.up(detach: options[:detach]), interactive: interactive)
+        execute(builder.up(detach: detach?), interactive: interactive)
       end
+    end
+
+    # --watch polls in a loop after boot, which can't share this one thread with an attached
+    # (`-it`) primary container — force the same effective behavior `-d` gives ensure_container.
+    def detach? = options[:detach] || options[:watch]
+
+    # Approximates Docker Compose's `restart:` policy via a foreground poll loop — not a
+    # background daemon/service (see README "Roadmap"); the same opt-in, keep-a-terminal-open
+    # shape as `wip sync --watch`.
+    def watch_restarts(interval)
+      names = load_config.dependencies.keys
+      warn "wip: watching #{names.join(', ')} for exited restart: containers every #{interval}s " \
+           '(running detached; Ctrl-C to stop)'
+      loop do
+        names.each { |name| restart_if_exited(name) }
+        sleep interval
+      end
+    rescue Interrupt
+      warn "\nwip: watch stopped"
+    end
+
+    def restart_interval
+      raise ConfigError, '--interval must be a positive number' unless options[:interval].positive?
+
+      options[:interval]
+    end
+
+    # Status-based, not transition-based: each tick checks current state, not whether it *just*
+    # exited. Can't distinguish "crashed on its own" from "you ran `wip stop`/`wip down` in
+    # another terminal" — Ctrl-C this loop first if you're about to do either (see README).
+    def restart_if_exited(name)
+      policy = load_config.dependency(name)['restart']
+      return unless auto_restart?(policy)
+      return unless container_status(name) == WSLC_CONTAINER_STATE_EXITED
+
+      warn "wip: '#{name}' has exited, restarting it (restart: #{policy})"
+      execute(builder.dependency_start(name), exit_on_failure: false)
+    end
+
+    def auto_restart?(policy) = AUTO_RESTART_POLICIES.include?(policy) || ON_FAILURE_POLICY.match?(policy.to_s)
+
+    # Isolated to this one method: if a future wslc release changes this shape, fixing it here
+    # is a one-line change. Logs the raw entry under --debug so that's immediately visible
+    # instead of silently no-op'ing forever.
+    def container_status(name)
+      code, output = probe(builder.dependency_find(name))
+      return nil unless code.zero?
+
+      entry = JSON.parse(output).first
+      warn "wip: [debug] '#{name}': #{entry.inspect}" if debug?
+      entry&.fetch('State', nil)
+    rescue JSON::ParserError
+      nil
     end
   end
 end

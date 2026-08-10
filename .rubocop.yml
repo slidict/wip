@@ -13,6 +13,7 @@ Metrics/ClassLength:
   Exclude:
     - lib/wip/cli.rb
     - lib/wip/compose_file.rb
+    - lib/wip/config.rb
 Metrics/BlockLength:
   Exclude:
     - spec/**/*

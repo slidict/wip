@@ -167,6 +167,212 @@ RSpec.describe Wip::CLI do
     described_class.start(%w[up])
   end
 
+  describe '--watch' do
+    it '--watch implies -d for the primary container' do
+      File.write('wip.yml', <<~YAML)
+        version: 1
+        container: app
+        dependencies:
+          app:
+            image: example:dev
+            restart: always
+      YAML
+      allow(Wip::CommandResolver).to receive(:new).and_return(instance_double(Wip::CommandResolver,
+                                                                              resolve: 'wslc.exe'))
+      fake_runner = Class.new do
+        class << self
+          attr_accessor :calls
+        end
+        self.calls = []
+
+        def initialize(stdout: nil, **_kwargs)
+          @stdout = stdout
+        end
+
+        def run(command, **_kwargs)
+          self.class.calls << command
+          if command.include?('list')
+            @stdout&.write('[{"Name":"app","State":2}]') # 2 == WslcContainerState running
+            raise Interrupt if self.class.calls.count { |c| c.include?('list') } == 2
+          end
+          0
+        end
+      end
+      stub_const('Wip::CommandRunner', fake_runner)
+
+      described_class.start(%w[up --watch --interval 0.01]) # deliberately no -d
+
+      expect(fake_runner.calls).to eq([
+                                        %w[wslc.exe list --all --filter name=app --format json],
+                                        %w[wslc.exe start app], # no -a/-i here proves detach: true
+                                        %w[wslc.exe list --all --filter name=app --format json]
+                                      ])
+    end
+
+    it 'restarts an exited dependency whose restart: allows it, leaving one without a policy alone' do
+      File.write('wip.yml', <<~YAML)
+        version: 1
+        container: app
+        dependencies:
+          app:
+            image: example:dev
+          db:
+            image: mysql:8
+            restart: always
+      YAML
+      allow(Wip::CommandResolver).to receive(:new).and_return(instance_double(Wip::CommandResolver,
+                                                                              resolve: 'wslc.exe'))
+      app_list = %w[wslc.exe list --all --filter name=app --format json]
+      db_list = %w[wslc.exe list --all --filter name=db --format json]
+      fake_runner = Class.new do
+        class << self
+          attr_accessor :calls, :responses
+        end
+        self.calls = []
+        self.responses = {
+          # 3 == WslcContainerState exited (see cli.rb's WSLC_CONTAINER_STATE_EXITED)
+          app_list => '[{"Name":"app","State":3}]',
+          db_list => '[{"Name":"db","State":3}]'
+        }
+
+        def initialize(stdout: nil, **_kwargs)
+          @stdout = stdout
+        end
+
+        def run(command, **_kwargs)
+          self.class.calls << command
+          @stdout&.write(self.class.responses.fetch(command, ''))
+          raise Interrupt if command == self.class.responses.keys.last &&
+                             self.class.calls.count { |c| c == command } == 3
+
+          0
+        end
+      end
+      stub_const('Wip::CommandRunner', fake_runner)
+
+      described_class.start(%w[up -d --watch --interval 0.01])
+
+      # app has no restart: (defaults to "no"), so it's never polled past bring-up, and never
+      # restarted even though the stub reports it as exited too.
+      expect(fake_runner.calls.count { |c| c == app_list }).to eq(1)
+      expect(fake_runner.calls.count { |c| c == %w[wslc.exe start app] }).to eq(1)
+      # db has restart: always, so it's polled and restarted every tick until the 3rd db-list
+      # call (bring-up + 2 ticks) raises Interrupt to stop the loop.
+      expect(fake_runner.calls.count { |c| c == db_list }).to eq(3)
+      expect(fake_runner.calls.count { |c| c == %w[wslc.exe start db] }).to eq(2)
+    end
+
+    it 'never restarts a dependency whose restart: is an unrecognized value, even while exited' do
+      File.write('wip.yml', <<~YAML)
+        version: 1
+        container: app
+        dependencies:
+          app:
+            image: example:dev
+            restart: always-invalid
+      YAML
+      allow(Wip::CommandResolver).to receive(:new).and_return(instance_double(Wip::CommandResolver,
+                                                                              resolve: 'wslc.exe'))
+      fake_runner = Class.new do
+        class << self
+          attr_accessor :calls
+        end
+        self.calls = []
+
+        def initialize(stdout: nil, **_kwargs)
+          @stdout = stdout
+        end
+
+        def run(command, **_kwargs)
+          self.class.calls << command
+          @stdout&.write('[{"Name":"app","State":3}]') if command.include?('list')
+          0
+        end
+      end
+      stub_const('Wip::CommandRunner', fake_runner)
+      # An unrecognized restart: means restart_if_exited returns before ever probing status, so
+      # no wslc command runs on any tick to hook an Interrupt into — stub `sleep` (still called
+      # once per tick either way) to end the loop instead.
+      ticks = 0
+      allow_any_instance_of(described_class).to receive(:sleep) do |*_args|
+        ticks += 1
+        raise Interrupt if ticks == 2
+      end
+
+      described_class.start(%w[up -d --watch --interval 0.01])
+
+      expect(ticks).to eq(2)
+      # Only the bring-up list/start ever ran; the loop itself never issued another wslc command.
+      expect(fake_runner.calls).to eq([%w[wslc.exe list --all --filter name=app --format json],
+                                       %w[wslc.exe start app]])
+    end
+
+    it 'rejects a non-positive --interval before any startup side effect runs' do
+      fake_runner = Class.new do
+        class << self
+          attr_accessor :calls
+        end
+        self.calls = []
+
+        def initialize(stdout: nil, **_kwargs)
+          @stdout = stdout
+        end
+
+        def run(command, **_kwargs)
+          self.class.calls << command
+          @stdout&.write('[]')
+          0
+        end
+      end
+      stub_const('Wip::CommandRunner', fake_runner)
+      allow(Wip::CommandResolver).to receive(:new).and_return(instance_double(Wip::CommandResolver,
+                                                                              resolve: 'wslc.exe'))
+
+      expect { described_class.start(%w[up --watch --interval -1]) }
+        .to raise_error(Wip::ConfigError, /--interval must be a positive number/)
+      expect(fake_runner.calls).to be_empty
+    end
+
+    it 'logs the raw wslc list entry under --debug, to make a wrong State-field guess visible' do
+      File.write('wip.yml', <<~YAML)
+        version: 1
+        container: app
+        dependencies:
+          app:
+            image: example:dev
+            restart: always
+      YAML
+      allow(Wip::CommandResolver).to receive(:new).and_return(instance_double(Wip::CommandResolver,
+                                                                              resolve: 'wslc.exe'))
+      fake_runner = Class.new do
+        class << self
+          attr_accessor :calls
+        end
+        self.calls = []
+
+        def initialize(stdout: nil, **_kwargs)
+          @stdout = stdout
+        end
+
+        def run(command, **_kwargs)
+          self.class.calls << command
+          if command.include?('list')
+            @stdout&.write('[{"Name":"app","State":3}]')
+            # Raise on the 3rd `list` call (bring-up + tick 1), not the 2nd (tick 1 itself) —
+            # container_status must run to completion at least once so its debug line has a
+            # chance to print before the loop is interrupted.
+            raise Interrupt if self.class.calls.count { |c| c.include?('list') } == 3
+          end
+          0
+        end
+      end
+      stub_const('Wip::CommandRunner', fake_runner)
+
+      expect { described_class.start(%w[up --watch --interval 0.01 --debug]) }
+        .to output(/\[debug\] 'app': .*State.*3/).to_stderr
+    end
+  end
+
   describe 'sync mode' do
     let(:source) { File.expand_path('.') }
 
@@ -457,6 +663,11 @@ RSpec.describe Wip::CLI do
                                            interactive: false).and_return(0)
 
       described_class.start(%w[up -d])
+    end
+
+    it 'rejects --watch under mode: compose, since there is no parsed service list to poll' do
+      expect { described_class.start(%w[up --watch]) }
+        .to raise_error(Wip::ConfigError, /--watch.*not supported under mode: compose/)
     end
 
     it 'mirrors into the volume before compose starts the container when sync is enabled' do

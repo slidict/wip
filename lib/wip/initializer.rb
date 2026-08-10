@@ -159,6 +159,10 @@ module Wip
             # optional; remove the container after each run
             remove: true
 
+            # optional; restart policy `wip up --watch` polls for — always/unless-stopped/on-failure
+            # restart an exited container; "no" (the default) never does — see README
+            restart: "no"
+
             # optional; environment variables passed to the container, e.g. {FOO: bar}
             env: {}
 

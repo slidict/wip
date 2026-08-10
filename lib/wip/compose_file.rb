@@ -15,15 +15,17 @@ module Wip
   # "Compose mode (native)") — once wslc ships that support, or a
   # compose-for-wslc tool reliably supports `run`.
   class ComposeFile
-    Service = Struct.new(:image, :build, :command, :env, :ports, :volumes, :workdir, :user, :depends_on, :profiles,
-                         keyword_init: true)
+    Service = Struct.new(:image, :build, :command, :env, :ports, :volumes, :workdir, :user, :restart, :depends_on,
+                         :profiles, keyword_init: true)
 
-    SERVICE_KEYS = %w[image build command environment ports volumes working_dir user depends_on profiles].freeze
+    SERVICE_KEYS = %w[image build command environment ports volumes working_dir user restart depends_on
+                      profiles].freeze
     # Real Compose keys that read as meaningful here but have nothing to map onto: TTY/stdin
     # allocation is decided per invocation (CommandBuilder#tty?), not per service; every
     # service already shares one project network (config.rb); and `wslc run`/`exec` has no
-    # restart-policy or capability flag to forward `restart:`/`cap_add:` to.
-    IGNORED_SERVICE_KEYS = %w[tty stdin_open networks restart cap_add].freeze
+    # capability flag to forward `cap_add:` to. (`restart:` used to be here too, silently
+    # ignored — it's parsed below now and approximated by `wip up --watch`, see cli.rb.)
+    IGNORED_SERVICE_KEYS = %w[tty stdin_open networks cap_add].freeze
     BUILD_KEYS = %w[context dockerfile args shadow_context].freeze
     SUPPORTED_CONDITIONS = %w[service_started].freeze
     LIST_HINT = 'only supports short syntax ("host:container"), not long-syntax mappings'
@@ -65,14 +67,14 @@ module Wip
       end.to_h
     end
 
-    # Shaped like Config::DEPENDENCY_DEFAULTS expects: image/command/env/ports/volumes/workdir,
+    # Shaped like Config::DEPENDENCY_DEFAULTS expects: image/command/env/ports/volumes/workdir/restart,
     # in dependency order so callers iterating sidecars start them before their dependents.
     def to_dependencies_hash
       startable_order.to_h do |name|
         service = @services.fetch(name)
         [name, { 'image' => service.build ? image_tag(name, service) : service.image, 'command' => service.command,
                  'env' => service.env, 'ports' => service.ports, 'volumes' => service.volumes,
-                 'workdir' => service.workdir, 'user' => service.user }]
+                 'workdir' => service.workdir, 'user' => service.user, 'restart' => service.restart }]
       end
     end
 
@@ -97,6 +99,7 @@ module Wip
       Service.new(image: image, build: build, command: normalize_command(entry['command']),
                   env: normalize_env(name, entry['environment']), **normalize_service_lists(name, entry),
                   workdir: presence(entry['working_dir']), user: presence(entry['user']),
+                  restart: normalize_restart(entry['restart']),
                   depends_on: normalize_depends_on(name, entry['depends_on']))
     end
 
@@ -248,6 +251,20 @@ module Wip
       visiting.delete(name)
       visited[name] = true
       order << name
+    end
+
+    # Compose's own default (`no`) applies whether restart: is absent or explicitly falsy —
+    # including the very common unquoted `restart: no`, which YAML resolves to the boolean
+    # `false`, not the string "no" (confirmed against this repo's own Psych: `YAML.safe_load
+    # ("restart: no")` => {"restart"=>false}). Every other value is accepted as-is, even ones
+    # outside always/unless-stopped/on-failure[:N]: this parser's job is to read what's in
+    # compose.yml, not police it — `wip up --watch` (cli.rb) decides which values it acts on.
+    # Rejecting a real, valid Compose value here would break projects that already work today
+    # (compose.yml predates wip, unlike wip.yml itself).
+    def normalize_restart(value)
+      return 'no' if value == false
+
+      presence(value) || 'no'
     end
 
     def presence(value) = value.to_s.empty? ? nil : value.to_s

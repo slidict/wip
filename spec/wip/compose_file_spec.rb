@@ -36,7 +36,8 @@ RSpec.describe Wip::ComposeFile do
     deps = described_class.load(path).to_dependencies_hash
     expect(deps['app']).to eq('image' => 'example:dev', 'command' => 'bin/rails s',
                               'env' => { 'RAILS_ENV' => 'development' }, 'ports' => ['3000:3000'],
-                              'volumes' => ['app-src:/app'], 'workdir' => '/app', 'user' => nil)
+                              'volumes' => ['app-src:/app'], 'workdir' => '/app', 'user' => nil,
+                              'restart' => 'no')
   end
 
   it 'normalizes environment given as a KEY=VALUE array' do
@@ -216,6 +217,36 @@ RSpec.describe Wip::ComposeFile do
 
     deps = described_class.load(path).to_dependencies_hash
     expect(deps['app']['user']).to eq('1000:1000')
+  end
+
+  it 'defaults restart to "no" when not set' do
+    path = write_compose("services:\n  app:\n    image: example:dev\n")
+    expect(described_class.load(path).to_dependencies_hash['app']['restart']).to eq('no')
+  end
+
+  it 'reads restart: always/unless-stopped/on-failure[:N] as-is' do
+    path = write_compose(<<~YAML)
+      services:
+        a:
+          image: example:dev
+          restart: always
+        b:
+          image: example:dev
+          restart: unless-stopped
+        c:
+          image: example:dev
+          restart: "on-failure:3"
+    YAML
+
+    deps = described_class.load(path).to_dependencies_hash
+    expect(deps['a']['restart']).to eq('always')
+    expect(deps['b']['restart']).to eq('unless-stopped')
+    expect(deps['c']['restart']).to eq('on-failure:3')
+  end
+
+  it 'normalizes an unquoted restart: no (parsed by YAML as false) back to the string "no"' do
+    path = write_compose("services:\n  app:\n    image: example:dev\n    restart: no\n")
+    expect(described_class.load(path).to_dependencies_hash['app']['restart']).to eq('no')
   end
 
   it 'excludes services with a profiles: entry from to_dependencies_hash, like an inactive `docker compose` profile' do
