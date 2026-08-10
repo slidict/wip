@@ -17,9 +17,9 @@ module Wip
     default_task :dispatch
 
     # Thor only recognizes class_options (--config, --debug, ...) once they
-    # appear after the command name (`wip up --config foo`). Pull them out of
-    # ARGV wherever they show up and reinsert them right after the command so
-    # `wip --config foo up` works too.
+    # appear after the command name (`wip up --config foo`). Pull a leading
+    # run of them off the front of ARGV and reinsert it right after the
+    # command name so `wip --config foo up` works too.
     GLOBAL_SWITCHES = {
       '--config' => :value,
       '--env-file' => :value,
