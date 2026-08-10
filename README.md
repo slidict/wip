@@ -1,8 +1,6 @@
-# wip
+<img src="docs/logo.png" alt="wip logo" width="60" align="left">
 
-<p align="center">
-  <img src="docs/logo.png" alt="wip logo" width="240">
-</p>
+# wip
 
 [![Tests](https://github.com/slidict/wip/actions/workflows/test.yml/badge.svg)](https://github.com/slidict/wip/actions/workflows/test.yml)
 [![Gem Version](https://img.shields.io/gem/v/wslc-wip.svg)](https://rubygems.org/gems/wslc-wip)
