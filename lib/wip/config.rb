@@ -209,9 +209,16 @@ module Wip
       raise ConfigError, "dependencies.#{name} must set image" if entry['image'].to_s.empty?
 
       entry['env']&.transform_values!(&:to_s)
-      # See ComposeFile#normalize_restart — same YAML gotcha applies here: an unquoted
-      # `restart: no` parses as the boolean false, not the string "no".
-      entry['restart'] = 'no' if entry['restart'] == false
+      normalize_dependency_restart!(entry)
+    end
+
+    # Mirrors ComposeFile#normalize_restart: an unquoted `restart: no` parses as the boolean
+    # false rather than the string "no", and an explicit nil/"" should default the same way an
+    # absent key does (DEPENDENCY_DEFAULTS only fills in a genuinely *missing* key).
+    def normalize_dependency_restart!(entry)
+      return unless entry.key?('restart')
+
+      entry['restart'] = 'no' if entry['restart'] == false || entry['restart'].to_s.empty?
     end
 
     def stringify(object)

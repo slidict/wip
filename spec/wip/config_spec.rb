@@ -100,6 +100,16 @@ RSpec.describe Wip::Config do
     expect(config.dependency('app')['restart']).to eq('no')
   end
 
+  it 'normalizes an explicit nil or empty-string dependencies.<name>.restart: to "no"' do
+    nil_config = described_class.new('container' => 'app',
+                                     'dependencies' => { 'app' => { 'image' => 'example:dev', 'restart' => nil } })
+    blank_config = described_class.new('container' => 'app',
+                                       'dependencies' => { 'app' => { 'image' => 'example:dev', 'restart' => '' } })
+
+    expect(nil_config.dependency('app')['restart']).to eq('no')
+    expect(blank_config.dependency('app')['restart']).to eq('no')
+  end
+
   it 'exposes network, defaulting to nil' do
     expect(described_class.new({}).network).to be_nil
     expect(described_class.new('network' => 'app-tier').network).to eq('app-tier')

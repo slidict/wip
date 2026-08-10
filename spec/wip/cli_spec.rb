@@ -192,7 +192,7 @@ RSpec.describe Wip::CLI do
         def run(command, **_kwargs)
           self.class.calls << command
           if command.include?('list')
-            @stdout&.write('[{"Name":"app","State":"running"}]')
+            @stdout&.write('[{"Name":"app","State":2}]') # 2 == WslcContainerState running
             raise Interrupt if self.class.calls.count { |c| c.include?('list') } == 2
           end
           0
@@ -230,8 +230,9 @@ RSpec.describe Wip::CLI do
         end
         self.calls = []
         self.responses = {
-          app_list => '[{"Name":"app","State":"exited"}]',
-          db_list => '[{"Name":"db","State":"exited"}]'
+          # 3 == WslcContainerState exited (see cli.rb's WSLC_CONTAINER_STATE_EXITED)
+          app_list => '[{"Name":"app","State":3}]',
+          db_list => '[{"Name":"db","State":3}]'
         }
 
         def initialize(stdout: nil, **_kwargs)
@@ -261,18 +262,75 @@ RSpec.describe Wip::CLI do
       expect(fake_runner.calls.count { |c| c == %w[wslc.exe start db] }).to eq(2)
     end
 
-    it 'rejects a non-positive --interval for up --watch' do
-      runner = instance_double(Wip::CommandRunner)
-      allow(Wip::CommandRunner).to receive(:new) do |**kwargs|
-        kwargs[:stdout]&.write('[{"Name":"app","State":"running"}]')
-        runner
-      end
+    it 'never restarts a dependency whose restart: is an unrecognized value, even while exited' do
+      File.write('wip.yml', <<~YAML)
+        version: 1
+        container: app
+        dependencies:
+          app:
+            image: example:dev
+            restart: always-invalid
+      YAML
       allow(Wip::CommandResolver).to receive(:new).and_return(instance_double(Wip::CommandResolver,
                                                                               resolve: 'wslc.exe'))
-      allow(runner).to receive(:run).and_return(0)
+      fake_runner = Class.new do
+        class << self
+          attr_accessor :calls
+        end
+        self.calls = []
+
+        def initialize(stdout: nil, **_kwargs)
+          @stdout = stdout
+        end
+
+        def run(command, **_kwargs)
+          self.class.calls << command
+          @stdout&.write('[{"Name":"app","State":3}]') if command.include?('list')
+          0
+        end
+      end
+      stub_const('Wip::CommandRunner', fake_runner)
+      # An unrecognized restart: means restart_if_exited returns before ever probing status, so
+      # no wslc command runs on any tick to hook an Interrupt into — stub `sleep` (still called
+      # once per tick either way) to end the loop instead.
+      ticks = 0
+      allow_any_instance_of(described_class).to receive(:sleep) do |*_args|
+        ticks += 1
+        raise Interrupt if ticks == 2
+      end
+
+      described_class.start(%w[up -d --watch --interval 0.01])
+
+      expect(ticks).to eq(2)
+      # Only the bring-up list/start ever ran; the loop itself never issued another wslc command.
+      expect(fake_runner.calls).to eq([%w[wslc.exe list --all --filter name=app --format json],
+                                       %w[wslc.exe start app]])
+    end
+
+    it 'rejects a non-positive --interval before any startup side effect runs' do
+      fake_runner = Class.new do
+        class << self
+          attr_accessor :calls
+        end
+        self.calls = []
+
+        def initialize(stdout: nil, **_kwargs)
+          @stdout = stdout
+        end
+
+        def run(command, **_kwargs)
+          self.class.calls << command
+          @stdout&.write('[]')
+          0
+        end
+      end
+      stub_const('Wip::CommandRunner', fake_runner)
+      allow(Wip::CommandResolver).to receive(:new).and_return(instance_double(Wip::CommandResolver,
+                                                                              resolve: 'wslc.exe'))
 
       expect { described_class.start(%w[up --watch --interval -1]) }
         .to raise_error(Wip::ConfigError, /--interval must be a positive number/)
+      expect(fake_runner.calls).to be_empty
     end
 
     it 'logs the raw wslc list entry under --debug, to make a wrong State-field guess visible' do
@@ -299,7 +357,7 @@ RSpec.describe Wip::CLI do
         def run(command, **_kwargs)
           self.class.calls << command
           if command.include?('list')
-            @stdout&.write('[{"Name":"app","State":"exited"}]')
+            @stdout&.write('[{"Name":"app","State":3}]')
             # Raise on the 3rd `list` call (bring-up + tick 1), not the 2nd (tick 1 itself) —
             # container_status must run to completion at least once so its debug line has a
             # chance to print before the loop is interrupted.
@@ -311,7 +369,7 @@ RSpec.describe Wip::CLI do
       stub_const('Wip::CommandRunner', fake_runner)
 
       expect { described_class.start(%w[up --watch --interval 0.01 --debug]) }
-        .to output(/\[debug\] 'app': .*State.*exited/).to_stderr
+        .to output(/\[debug\] 'app': .*State.*3/).to_stderr
     end
   end
 

@@ -191,7 +191,7 @@ wip: watching app, mysql every 5s for exited restart: containers (running detach
 
 - `restart:` accepts the same values Compose does — `no` (the default), `always`, `unless-stopped`,
   `on-failure`, optionally with a `:MAX_RETRIES` suffix. `wip up --watch` treats the three
-  restarting values identically: it restarts on any exited/dead container regardless of exit code,
+  restarting values identically: it restarts on any exited container regardless of exit code,
   unlike real `on-failure`, which skips a clean (zero) exit — reading an exit code needs a heavier
   call this polling loop doesn't make.
 - This is a foreground loop, not a background daemon or service — the project intentionally has
@@ -208,10 +208,12 @@ wip: watching app, mysql every 5s for exited restart: containers (running detach
   what you just stopped.
 - Re-running `wip up -d --watch` against an already-running stack is safe: an already-running
   container's `start` is a no-op, the same as it is for plain `wip up`.
-- The exit-detection relies on `wslc list --all --format json` reporting a lowercase `State` field
-  (`exited`/`dead` when stopped), mirroring `docker ps`'s own JSON shape — unconfirmed against a
-  real `wslc` install as of this writing. If `--watch` never restarts anything you believe really
-  exited, run `wip up --watch --debug` and check the logged `list` entry for the actual field name.
+- The exit-detection reads `wslc list --all --format json`'s `State` field as a raw integer, per
+  `WslcContainerState` ([wsl.dev](https://wsl.dev/api-reference/c/enumerations/wslccontainerstate/)):
+  `0` invalid, `1` created, `2` running, `3` exited, `4` deleted. Unlike Docker, there's no separate
+  `dead` state — a `deleted` container is gone and needs `wip up` (not `--watch`) to recreate it.
+  If `--watch` never restarts anything you believe really exited, run `wip up --watch --debug` and
+  check the logged `list` entry against this enum.
 
 ### Compose mode
 

@@ -82,10 +82,19 @@ module Wip
       progress&.finish
     end
 
-    # Real Compose values that trigger a restart when a container's exited/dead; `no` (the
-    # default) and anything unrecognized both mean "leave it alone." on-failure optionally
-    # takes a `:MAX_RETRIES` suffix (e.g. "on-failure:3") — start_with? handles that.
-    AUTO_RESTART_POLICIES = %w[always unless-stopped on-failure].freeze
+    # Real Compose values that trigger a restart when a container's exited; `no` (the default)
+    # and anything unrecognized both mean "leave it alone." Exact match only — a typo'd value
+    # like "always-invalid" must stay inert, not accidentally match via a loose prefix check.
+    AUTO_RESTART_POLICIES = %w[always unless-stopped].freeze
+    ON_FAILURE_POLICY = /\Aon-failure(?::\d+)?\z/ # optional `:MAX_RETRIES` suffix, e.g. "on-failure:3"
+
+    # WSLC's `WslcContainerState` (confirmed via microsoft/WSL's own docs and
+    # ContainerModel.h — ContainerInformation#State has no custom JSON enum serializer, so
+    # nlohmann::json emits its raw ordinal): 0 invalid, 1 created, 2 running, 3 exited, 4
+    # deleted. Unlike Docker, there's no separate "dead" state — only `exited` is a live,
+    # restartable exit; `deleted` means the container itself is gone (needs `wip up` to
+    # recreate it, not `start`).
+    WSLC_CONTAINER_STATE_EXITED = 3
 
     desc 'up', 'Start the configured container and its dependencies, creating them if necessary'
     option :detach, type: :boolean, default: false, aliases: '-d'
@@ -97,12 +106,17 @@ module Wip
     def up
       return up_via_compose_bridge if load_config.compose?
 
+      # Validated up front, before any startup side effect (image build, network/dependency/
+      # container creation) — otherwise a bad --interval would only surface as a ConfigError
+      # after already bringing everything up.
+      interval = restart_interval if options[:watch]
+
       ensure_compose_images
       ensure_network
       sidecar_names.each { |name| ensure_dependency(name) }
       sync_before_boot if options[:sync]
       ensure_container
-      watch_restarts if options[:watch]
+      watch_restarts(interval) if options[:watch]
     end
 
     desc 'sync', 'Mirror the source tree into the sync volume'
@@ -442,9 +456,8 @@ module Wip
     # Approximates Docker Compose's `restart:` policy via a foreground poll loop — not a
     # background daemon/service (see README "Roadmap"); the same opt-in, keep-a-terminal-open
     # shape as `wip sync --watch`.
-    def watch_restarts
+    def watch_restarts(interval)
       names = load_config.dependencies.keys
-      interval = restart_interval
       warn "wip: watching #{names.join(', ')} for exited restart: containers every #{interval}s " \
            '(running detached; Ctrl-C to stop)'
       loop do
@@ -467,22 +480,17 @@ module Wip
     def restart_if_exited(name)
       policy = load_config.dependency(name)['restart']
       return unless auto_restart?(policy)
+      return unless container_status(name) == WSLC_CONTAINER_STATE_EXITED
 
-      status = container_status(name)
-      return unless %w[exited dead].include?(status)
-
-      warn "wip: '#{name}' is #{status}, restarting it (restart: #{policy})"
+      warn "wip: '#{name}' has exited, restarting it (restart: #{policy})"
       execute(builder.dependency_start(name), exit_on_failure: false)
     end
 
-    def auto_restart?(policy) = AUTO_RESTART_POLICIES.any? { |value| policy.to_s.start_with?(value) }
+    def auto_restart?(policy) = AUTO_RESTART_POLICIES.include?(policy) || ON_FAILURE_POLICY.match?(policy.to_s)
 
-    # ASSUMPTION, unverified against a real wslc install (no test fixture/sample output exists
-    # anywhere in this repo today): `wslc list --all --format json` is presumed to emit a
-    # lowercase `State` field matching `docker ps --format json`'s own shape (created/running/
-    # paused/restarting/exited/removing/dead). Isolated to this one method so correcting a wrong
-    # guess is a one-line change. Logs the raw entry under --debug specifically so a wrong guess
-    # is immediately visible instead of silently no-op'ing forever.
+    # Isolated to this one method: if a future wslc release changes this shape, fixing it here
+    # is a one-line change. Logs the raw entry under --debug so that's immediately visible
+    # instead of silently no-op'ing forever.
     def container_status(name)
       code, output = probe(builder.dependency_find(name))
       return nil unless code.zero?
