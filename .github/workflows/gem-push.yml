@@ -95,7 +95,11 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.version.outputs.tag }}
         run: |
-          if gh release view "$TAG" >/dev/null 2>&1; then
+          # release-drafter (Changelog workflow) keeps a draft release updated on every
+          # push to main, and `gh release view` matches drafts too. Only a published
+          # (non-draft) release means notes for this tag have actually gone out.
+          is_draft=$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null || echo "")
+          if [ "$is_draft" = "false" ]; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
