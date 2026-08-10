@@ -34,7 +34,6 @@ commands into a single `wip.yml`, and forwards them to `wslc.exe` / `wslc` as sa
 - [FAQ](#faq)
 - [Development](#development)
 - [Contributing](#contributing)
-- [Roadmap](#roadmap)
 - [License](#license)
 
 ## Which mode should you use?
@@ -195,7 +194,7 @@ wip: watching app, mysql for exited restart: containers every 5s (running detach
   unlike real `on-failure`, which skips a clean (zero) exit — reading an exit code needs a heavier
   call this polling loop doesn't make.
 - This is a foreground loop, not a background daemon or service — the project intentionally has
-  neither (see [Roadmap](#roadmap)). Keep the terminal it's running in open, the same as
+  neither. Keep the terminal it's running in open, the same as
   `wip sync --watch`; Ctrl-C (or closing the terminal) stops the supervision.
 - `--watch` implies `-d`: it can't attach a TTY to the primary container and poll in a loop on the
   same thread, so the primary container always runs detached under `--watch`, whether or not you
@@ -604,7 +603,7 @@ is maintained in this repo and actively extended, not treated as a permanent cei
 `compose-native` exists to close the gap for as long as `wslc` has no native Compose support of its
 own (tracked upstream in [microsoft/WSL#40948](https://github.com/microsoft/WSL/issues/40948)), and
 we intend to keep extending its Compose coverage until that lands — see
-[Compose mode (native)](#compose-mode-native) and [Roadmap](#roadmap). `wip.yml`'s shape (`mode:`,
+[Compose mode (native)](#compose-mode-native). `wip.yml`'s shape (`mode:`,
 `compose:`) isn't planned to change for existing `container`/`compose`/`compose-native` setups, so
 whatever we do once `wslc` catches up won't require rewriting your config.
 
@@ -658,53 +657,6 @@ both RSpec and RuboCop. GitHub Actions checks them on Ruby 3.2, 3.3, 3.4, and 4.
 Bug reports and pull requests are welcome on [GitHub](https://github.com/slidict/wip). See
 [CONTRIBUTING.md](CONTRIBUTING.md) for commit conventions, versioning policy, and the PR
 checklist.
-
-## Roadmap
-
-`wip` already covers most of what [`dip`](https://github.com/bibendi/dip) adds on top of Compose —
-named commands (`interaction:`), `run`/`exec` hidden behind a single verb, `.env` passthrough, and
-sidecar services via `dependencies:` + `network:`. Rather than waiting on `wslc`'s own Compose
-support ([microsoft/WSL#40948](https://github.com/microsoft/WSL/issues/40948)) or an external
-compose-for-`wslc` tool staying complete, `mode: compose-native` (see
-[Compose mode (native)](#compose-mode-native)) parses `compose.yml` itself and drives `wslc`
-directly — no external binary in the loop, `wip run` gets a real `--rm` container, and iterating
-on the parser is faster than chasing a third-party tool's own bugs. It's still a deliberately
-minimal subset (`depends_on` ordering but no health checks, single-container `logs`, no named
-volumes/scaling), and `dependencies:` + `network:` remains the escape hatch for sidecars it
-doesn't model. Fuller Compose semantics beyond that subset stay behind delegating to a separate
-compose-for-`wslc` tool in [compose mode](#compose-mode) — which of those actually work is
-entirely up to the external tool you point `compose.command` at; `wip` only forwards
-`-f FILE [-p PROJECT] up|down|exec|logs`, so treat that list as what Compose offers, not as
-something `wip` guarantees. See that section for what compose mode covers
-and its current limitations (`run`, and `interaction:` of type `run`/`build`).
-
-Beyond Compose parity, a resident/daemon process, a GUI, PowerShell-specific tuning, direct
-registry API/manifest parsing, self-update, and plugins are all unimplemented and not currently
-planned. (`wip up --watch`'s restart-policy poll loop isn't an exception to this — it's a
-foreground, opt-in loop you keep a terminal open for, the same shape as `wip sync --watch`, not a
-background service; see
-[Restarting exited dependencies](#restarting-exited-dependencies-wip-up---watch).) What's still
-planned for `wip`, roughly in priority order:
-
-1. **`wip provision`** — a dip-style one-shot bootstrap hook (build → up deps → install deps →
-   create/migrate/seed DB) so a new contributor can go from `git clone` to a working environment
-   in two commands (`wip provision && wip up`).
-2. **Config file merging** — `--config` currently accepts one file; support layering
-   (`wip.yml` + `wip.override.yml`, or a `WIP_CONFIG` list) for dev/CI/debug variants without
-   duplicating the whole file, plus a `wip config --resolved` view of the merged result.
-3. **Bind-mount boot time (`rails c`, `bundle`, ...)** — commands like `wip rails c` still start
-   noticeably slower than the equivalent under `docker compose`, mostly from WSL2 bind-mounted
-   (`.:/app`-style) volumes doing many small reads for gems/`node_modules` (use `--debug` to
-   confirm it's disk I/O and not `wip`'s own overhead). [Source sync](#source-sync) works around
-   this today by running the app off a named volume and mirroring the host tree into it, at the
-   cost of a one-way sync with a short delay. A tighter loop (host-side file watching instead of
-   interval polling, two-way sync) is the natural next step. We're also hoping for improvements on
-   the `wslc` side itself (faster bind-mount/cache behavior); `wip` will pick those up for free as
-   soon as they land.
-
-Each of these should stay additive to the existing `wip.yml` shape — no breaking changes to
-`container`, `network`, `commands`, `dependencies`, or `compose` are planned. A resident daemon
-and a GUI remain out of scope.
 
 ## License
 
