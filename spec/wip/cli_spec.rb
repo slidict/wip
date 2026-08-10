@@ -59,6 +59,38 @@ RSpec.describe Wip::CLI do
     FileUtils.rm_rf(File.dirname(log_path)) if log_path
   end
 
+  describe 'global options placed before the command' do
+    it 'accepts --config before the command, same as after it' do
+      runner = instance_double(Wip::CommandRunner, run: 0)
+      allow(Wip::CommandRunner).to receive(:new).and_return(runner)
+      allow(Wip::CommandResolver).to receive(:new).and_return(instance_double(Wip::CommandResolver,
+                                                                              resolve: 'wslc.exe'))
+
+      expect(runner).to receive(:run).with(%w[wslc.exe exec -w /app app bin/rails c], interactive: false)
+
+      described_class.start(%w[--config wip.yml rails c])
+    end
+
+    it 'accepts --config=value before the command' do
+      runner = instance_double(Wip::CommandRunner, run: 0)
+      allow(Wip::CommandRunner).to receive(:new).and_return(runner)
+      allow(Wip::CommandResolver).to receive(:new).and_return(instance_double(Wip::CommandResolver,
+                                                                              resolve: 'wslc.exe'))
+
+      expect(runner).to receive(:run).with(%w[wslc.exe exec -w /app app bin/rails c], interactive: false)
+
+      described_class.start(%w[--config=wip.yml rails c])
+    end
+
+    it 'does not reorder per-command options such as --watch placed before the command' do
+      expect { described_class.start(%w[--watch up]) }.to raise_error(/Unknown command/)
+    end
+  end
+
+  it 'prints help instead of raising when no command is given' do
+    expect { described_class.start(%w[--config wip.yml]) }.to output(/Commands:/).to_stdout
+  end
+
   it 'creates the container when `up` finds none existing via a quiet `wslc list` probe' do
     runner = instance_double(Wip::CommandRunner)
     allow(Wip::CommandRunner).to receive(:new) do |**kwargs|
