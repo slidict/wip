@@ -250,7 +250,7 @@ module Wip
 
     desc 'dispatch COMMAND [ARGS...]', 'Run a command defined in wip.yml'
     def dispatch(name = nil, *arguments)
-      raise ConfigError, 'A command is required' unless name
+      return help if name.nil?
 
       values = load_config.command(name) || raise(ConfigError, "Unknown command: #{name}")
       return dispatch_compose(name, values, arguments) if load_config.compose?
