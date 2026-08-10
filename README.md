@@ -186,7 +186,7 @@ allows it.
 
 ```console
 $ wip up --watch
-wip: watching app, mysql every 5s for exited restart: containers (running detached; Ctrl-C to stop)
+wip: watching app, mysql for exited restart: containers every 5s (running detached; Ctrl-C to stop)
 ```
 
 - `restart:` accepts the same values Compose does — `no` (the default), `always`, `unless-stopped`,
