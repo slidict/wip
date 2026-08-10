@@ -1,4 +1,4 @@
-<img src="docs/logo.png" alt="wip logo" width="60" align="left">
+<img src="docs/logo.png" alt="wip logo" width="120" align="left">
 
 # wip
 
