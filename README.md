@@ -43,9 +43,10 @@ key, every command's flags, guides, and troubleshooting — see the **[wip Wiki]
 | Have `compose.yml`, don't want to install a third-party tool | `mode: compose-native` |
 | Have `compose.yml` and already use/prefer a third-party compose-for-`wslc` tool | `mode: compose` |
 
-`wip init` picks `compose-native` automatically when it finds a `compose.yml`/`docker-compose.yml`
-next to it, and `container` otherwise — see [Commands](#commands). For the full breakdown and
-trade-offs, see [Choosing a Mode](https://github.com/slidict/wip/wiki/Choosing-a-Mode) on the wiki.
+`wip init` picks `compose-native` automatically when it finds a `compose.yml`, `compose.yaml`,
+`docker-compose.yml`, or `docker-compose.yaml` next to it, and `container` otherwise — see
+[Commands](#commands). For the full breakdown and trade-offs, see
+[Choosing a Mode](https://github.com/slidict/wip/wiki/Choosing-a-Mode) on the wiki.
 
 ## Requirements & installation
 
@@ -150,9 +151,9 @@ instead — see [Secret Masking](https://github.com/slidict/wip/wiki/Secret-Mask
 projects that already use `commands:`. The two are aliases for the same feature; declaring both in
 the same `wip.yml` is a `ConfigError`. See [Interactions](https://github.com/slidict/wip/wiki/Interactions).
 
-Every key above has its own wiki page with the full behavior, edge cases, and examples — start at
-the **[Configuration Reference](https://github.com/slidict/wip/wiki/Configuration-Reference)**.
-Notably:
+Every key above is covered across the wiki's feature pages, with the full behavior, edge cases,
+and examples — start at the
+**[Configuration Reference](https://github.com/slidict/wip/wiki/Configuration-Reference)**. Notably:
 
 - [Dependencies](https://github.com/slidict/wip/wiki/Dependencies) — the primary container vs. sidecars
 - [Restart Policies](https://github.com/slidict/wip/wiki/Restart-Policies) /
@@ -167,19 +168,19 @@ Notably:
 
 | Command | Description |
 |---|---|
-| `wip init [--force] [--template NAME]` | Write a starter `wip.yml`: `mode: compose-native` if a `compose.yml`/`docker-compose.yml` is found next to it, `mode: container` otherwise |
+| `wip init [--force] [--template NAME]` | Write a starter `wip.yml`: `mode: compose-native` if a `compose.yml`, `compose.yaml`, `docker-compose.yml`, or `docker-compose.yaml` is found next to it, `mode: container` otherwise |
 | `wip version` | wip's version, plus WSLC's if it can be detected |
 | `wip doctor` | Diagnose WSL2, interop, WSLC, config, architecture, and Git |
 | `wip config` | Print the effective configuration (secrets masked) |
 | `wip build [--no-cache] [-- OPTIONS]` | Build the image from the `build` definition |
-| `wip up [-d] [--no-sync] [--no-cache] [--watch] [--interval N]` | Start the primary `dependencies:` entry and its sidecars |
-| `wip stop` | Stop the primary container and its sidecar `dependencies:` without removing them |
-| `wip down` | Stop and remove the primary container and its sidecar `dependencies:` |
+| `wip up [-d] [--no-sync] [--no-cache] [--watch] [--interval N]` | Start the configured stack, creating it if necessary |
+| `wip stop` | Stop the configured stack without removing it |
+| `wip down` | Stop and remove the configured stack |
 | `wip exec [--no-interactive] COMMAND...` | Run a command in the existing container |
-| `wip run [--no-interactive] COMMAND...` | Run a command in a new `--rm` container |
+| `wip run [--no-interactive] COMMAND...` | Run a command in a new `--rm` container (`mode: compose` has no ephemeral run — falls back to `exec` in the running service, with a warning) |
 | `wip shell` | Open the configured shell, falling back to `bash` then `sh` |
-| `wip logs [-f] [SERVICE...]` | Follow compose service logs (compose modes only) |
-| `wip sync [-w] [--interval N]` | Mirror the source into the sync volume once, or keep re-syncing with `--watch` (needs `sync:`) |
+| `wip logs [-f] [SERVICE...]` | Follow compose service logs (compose modes only; under `mode: compose-native`, at most one `SERVICE`) |
+| `wip sync [-w\|--watch] [--interval N]` | Mirror the source into the sync volume once, or keep re-syncing with `--watch` (needs `sync:`) |
 | `wip NAME ARGS...` | Run `interaction.NAME`, appending any extra arguments |
 
 Every command has flags, per-mode behavior, and examples on its own wiki page — see the
