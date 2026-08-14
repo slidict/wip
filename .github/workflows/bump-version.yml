@@ -33,6 +33,8 @@ jobs:
       # disagrees with it.
       - name: Calculate next version
         id: version
+        env:
+          BUMP: ${{ inputs.bump }}
         run: |
           set -euo pipefail
           current=$(grep -oPm1 '(?<=<Version>)[^<]+' Directory.Build.props)
@@ -42,7 +44,7 @@ jobs:
           fi
 
           IFS=. read -r major minor patch <<< "$current"
-          case "${{ inputs.bump }}" in
+          case "$BUMP" in
             major) major=$((major + 1)); minor=0; patch=0 ;;
             minor) minor=$((minor + 1)); patch=0 ;;
             patch) patch=$((patch + 1)) ;;

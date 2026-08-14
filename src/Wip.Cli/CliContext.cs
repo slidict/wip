@@ -356,15 +356,37 @@ internal sealed partial class CliContext
             return false;
         }
 
+        using var document = ParseArray(output);
+        return document is not null && document.RootElement.GetArrayLength() > 0;
+    }
+
+    /// <summary>
+    /// Parses wslc's <c>--format json</c> output, or returns null when it is not a JSON array.
+    /// </summary>
+    /// <remarks>
+    /// Catching JsonException alone is not enough: <c>{}</c> and <c>null</c> parse fine, and
+    /// it is the array operation that then throws InvalidOperationException. A probe exists
+    /// to answer a question, so anything unrecognisable is "no" rather than a crash.
+    /// </remarks>
+    private static JsonDocument? ParseArray(string output)
+    {
+        JsonDocument document;
         try
         {
-            using var document = JsonDocument.Parse(output);
-            return document.RootElement.GetArrayLength() > 0;
+            document = JsonDocument.Parse(output);
         }
         catch (JsonException)
         {
-            return false;
+            return null;
         }
+
+        if (document.RootElement.ValueKind == JsonValueKind.Array)
+        {
+            return document;
+        }
+
+        document.Dispose();
+        return null;
     }
 
     private void EnsureNetwork()
@@ -391,16 +413,12 @@ internal sealed partial class CliContext
             return false;
         }
 
-        try
-        {
-            using var document = JsonDocument.Parse(output);
-            return document.RootElement.EnumerateArray().Any(entry =>
-                entry.TryGetProperty("Name", out var name) && name.GetString() == network);
-        }
-        catch (JsonException)
-        {
-            return false;
-        }
+        using var document = ParseArray(output);
+        return document is not null && document.RootElement.EnumerateArray().Any(entry =>
+            entry.ValueKind == JsonValueKind.Object &&
+            entry.TryGetProperty("Name", out var name) &&
+            name.ValueKind == JsonValueKind.String &&
+            name.GetString() == network);
     }
 
     /// <summary>
@@ -664,23 +682,25 @@ internal sealed partial class CliContext
             return null;
         }
 
-        try
-        {
-            using var document = JsonDocument.Parse(output);
-            var first = document.RootElement.EnumerateArray().FirstOrDefault();
-            if (Debug)
-            {
-                Console.Error.WriteLine($"wip: [debug] '{name}': {first}");
-            }
-
-            return first.ValueKind == JsonValueKind.Object && first.TryGetProperty("State", out var state)
-                ? state.GetInt32()
-                : null;
-        }
-        catch (JsonException)
+        using var document = ParseArray(output);
+        if (document is null)
         {
             return null;
         }
+
+        var first = document.RootElement.EnumerateArray().FirstOrDefault();
+        if (Debug)
+        {
+            Console.Error.WriteLine($"wip: [debug] '{name}': {first}");
+        }
+
+        // TryGetInt32 rather than GetInt32: a future wslc could report State as a string, and
+        // a watch loop should keep polling instead of taking the whole command down.
+        return first.ValueKind == JsonValueKind.Object &&
+               first.TryGetProperty("State", out var state) &&
+               state.TryGetInt32(out var value)
+            ? value
+            : null;
     }
 
     /// <summary>Runs <paramref name="body"/> every <paramref name="interval"/> seconds until Ctrl-C.</summary>

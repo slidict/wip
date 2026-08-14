@@ -29,7 +29,9 @@ public sealed class ComposeFile
     /// </summary>
     private static readonly string[] IgnoredServiceKeys = ["tty", "stdin_open", "networks", "cap_add"];
 
-    private static readonly string[] BuildKeys = ["context", "dockerfile", "args", "shadow_context"];
+    // shadow_context is deliberately absent: the build context is now always staged to a
+    // local cache, so the key has no effect and falls through to the unsupported-key error.
+    private static readonly string[] BuildKeys = ["context", "dockerfile", "args"];
     private static readonly string[] SupportedConditions = ["service_started"];
     private const string ListHint = "only supports short syntax (\"host:container\"), not long-syntax mappings";
 
@@ -228,12 +230,6 @@ public sealed class ComposeFile
         if (args.Count > 0 || mapping.ContainsKey("args"))
         {
             build["args"] = args;
-        }
-
-        var shadowContext = RubyValue.Presence(mapping.GetValueOrDefault("shadow_context"));
-        if (shadowContext is not null)
-        {
-            build["shadow_context"] = shadowContext;
         }
 
         return build;

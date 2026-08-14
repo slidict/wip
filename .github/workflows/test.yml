@@ -70,7 +70,12 @@ jobs:
       - name: Smoke test
         shell: pwsh
         run: |
-          $ErrorActionPreference = "Stop"
+          # wip reports progress on stderr, the way the Ruby build's `warn` did. PowerShell
+          # turns a native command's stderr into error records, so $ErrorActionPreference =
+          # 'Stop' would abort this script on `wip init` printing that it succeeded. Every
+          # native call below checks $LASTEXITCODE explicitly instead, and `throw` terminates
+          # on its own regardless of the preference.
+          $PSNativeCommandUseErrorActionPreference = $false
           $wip = Join-Path $env:GITHUB_WORKSPACE "artifacts/win-x64/wip.exe"
 
           if (-not (& $wip --help | Select-String -Quiet '^Commands:')) {

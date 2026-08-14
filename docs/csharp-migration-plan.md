@@ -2,11 +2,18 @@
 
 Target pipeline:
 
-```
+```text
 C# → Native AOT → wip.exe → ZIP → GitHub Releases → WinGet
 ```
 
-This document is the plan, not the implementation. Work starts at Phase 0 once it's agreed.
+This document is the plan the port followed. Phases 1 through 5 have landed; what remains
+open is recorded here rather than edited out, because the reasoning is what makes the
+remaining decisions reviewable.
+
+**Still open:** the path model in §3 — Phase 0 Spikes 1 and 2 need Windows with WSL2 and wslc
+present, so `Platform/WslPath.ForWslc` currently implements branch (a) of §3.2 as a
+provisional answer, isolated to that one function. §11 lists everything else awaiting a
+first-hand check.
 
 ---
 
@@ -23,7 +30,7 @@ These four settle what was the biggest open question in the earlier draft — wh
 
 ### Execution model
 
-```
+```text
 ┌─ Windows ─────────────────────────────────────────┐
 │  winget install Slidict.Wip                       │
 │         ↓                                         │
@@ -90,7 +97,7 @@ When a Windows executable is launched from a WSL2 shell, that process's working 
 
 So running `wip.exe up` from `~/myproject` yields:
 
-```
+```text
 sync.source   = \\wsl.localhost\Ubuntu\home\user\myproject
 generated -v  = \\wsl.localhost\Ubuntu\home\user\myproject:/host-src:ro
 ```
@@ -211,13 +218,15 @@ The two Thor workarounds in `cli.rb` should be redesigned rather than ported:
 
 WSL2 runs on Windows on ARM, and a WinGet manifest can list x64 and arm64 side by side.
 
-**Recommendation: win-x64 only for the first release.** Keep the naming scheme (§7.3) shaped so arm64 can be added later as one extra job. Availability of arm64 Windows runners needs checking.
+**Recommendation: win-x64 only for the first release.** Keep the naming scheme (§9.3) shaped so arm64 can be added later as one extra job. Availability of arm64 Windows runners needs checking.
 
 ### Decision C: Code signing
 
-An unsigned executable can draw SmartScreen warnings. A ZIP + portable install is less prone to this than an MSI, but reputation still starts from zero.
+An unsigned executable can draw SmartScreen's "Windows protected your PC" prompt. Packaging as a ZIP does **not** mitigate that: SmartScreen judges the downloaded file and its publisher reputation, not the container it arrived in, and enterprise policy can stop a user dismissing the warning at all. Shipping unsigned is therefore an explicit risk acceptance, not something the packaging choice avoids.
 
-**Recommendation: ship unsigned for now; revisit Azure Trusted Signing if it causes real friction.** Adding it later is one extra CI step, so it shouldn't block the start.
+**Recommendation: accept that risk for now; revisit Azure Trusted Signing if it causes real friction.**
+
+If signing is adopted, **it has to happen before packaging**: sign `wip.exe`, then zip, then hash, then attest, and publish that hash to WinGet. Signing after any of those steps changes the bytes the checksum and the attestation describe.
 
 ### Decision D: Version number
 
@@ -229,7 +238,7 @@ Relatedly, in the Ruby repository the gemspec's `source_code_uri` and `bug_track
 
 ## 6. Repository Layout
 
-```
+```text
 wip/
 ├── Directory.Build.props        # net10.0 / LangVersion / AOT settings / Version
 ├── Directory.Packages.props     # Central Package Management
@@ -318,7 +327,7 @@ Whether `InvariantGlobalization=true` is appropriate needs confirming (§11). Ca
 
 Put input/output pairs under `tests/golden/`:
 
-```
+```text
 tests/golden/
   001-container-basic/
     wip.yml
@@ -350,7 +359,7 @@ Cover the layers where input → output is a pure function:
 
 ### 9.1 Overview
 
-```
+```text
 git tag v2.0.0
       │
       ▼
@@ -380,7 +389,7 @@ Today the chain is: `Changelog` workflow succeeds → `workflow_run` → `gem-pu
 
 ### 9.3 Artifact naming
 
-```
+```text
 wip-2.0.0-win-x64.zip
 SHA256SUMS
 ```
@@ -395,13 +404,15 @@ Use `InstallerType: zip` with `NestedInstallerType: portable` — the mechanism 
 # Slidict.Wip.installer.yaml (skeleton)
 PackageIdentifier: Slidict.Wip
 PackageVersion: 2.0.0
-InstallerType: zip
-NestedInstallerType: portable
-NestedInstallerFiles:
-  - RelativeFilePath: wip.exe
-    PortableCommandAlias: wip
 Installers:
+  # Kept on the installer entry rather than at the root: that is where the schema always
+  # accepts them, and it is the shape adding an arm64 sibling needs anyway.
   - Architecture: x64
+    InstallerType: zip
+    NestedInstallerType: portable
+    NestedInstallerFiles:
+      - RelativeFilePath: wip.exe
+        PortableCommandAlias: wip
     InstallerUrl: https://github.com/slidict/wip/releases/download/v2.0.0/wip-2.0.0-win-x64.zip
     InstallerSha256: <sha256>
 ManifestType: installer
@@ -539,8 +550,9 @@ Close out what golden tests can't reach. Run **from both PowerShell and WSL2 bas
 4. **YamlDotNet's AOT track record** — zero reflection warnings via the representation model?
 5. **Whether `InvariantGlobalization=true` is appropriate** — any impact on `wip.yml`, paths, or container output containing non-ASCII text
 6. **The working directory form WSL2 gives a Windows process** — `\\wsl.localhost\` or `\\wsl$\`, and whether it varies by WSL version
-7. **Current WinGet manifest schema** — the present syntax for `NestedInstallerType: portable`
-8. **PackageIdentifier `Slidict.Wip`** — does it satisfy the publisher-name requirements?
+7. **Telling WSL2 apart from WSL1** — a zero exit from `wsl.exe --status` proves WSL is installed, not that the default version is 2. `wip doctor` therefore reports "WSL2 is available" for a WSL1-only machine. Distinguishing them means parsing that command's output, which is localised and UTF-16 encoded, so it needs a real machine to get right
+8. **Current WinGet manifest schema** — the present syntax for `NestedInstallerType: portable`
+9. **PackageIdentifier `Slidict.Wip`** — does it satisfy the publisher-name requirements?
 
 ---
 

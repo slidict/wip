@@ -33,16 +33,20 @@ jobs:
 
       # A tag that disagrees with the project version would publish an artifact whose own
       # `wip version` contradicts the release it came from, so this fails first.
+      # Expression values reach the script through env rather than being interpolated into
+      # its text: a tag name can contain quotes or command syntax, and this job runs with
+      # contents, id-token, and attestations write permissions.
       - name: Verify version matches tag
         id: version
         shell: pwsh
+        env:
+          TAG: ${{ github.ref_name }}
         run: |
-          $tag = "${{ github.ref_name }}"
           $version = ([xml](Get-Content Directory.Build.props)).Project.PropertyGroup.Version |
             Where-Object { $_ } | Select-Object -First 1
 
-          if ("v$version" -ne $tag) {
-            throw "tag $tag does not match <Version>$version</Version> in Directory.Build.props"
+          if ("v$version" -ne $env:TAG) {
+            throw "tag $env:TAG does not match <Version>$version</Version> in Directory.Build.props"
           }
 
           "version=$version" >> $env:GITHUB_OUTPUT
@@ -63,8 +67,10 @@ jobs:
       - name: Package
         id: package
         shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          $version = "${{ steps.version.outputs.version }}"
+          $version = $env:VERSION
           $name = "wip-$version-win-x64.zip"
           New-Item -ItemType Directory -Path dist | Out-Null
 

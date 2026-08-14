@@ -1,0 +1,18 @@
+# C# raw string literals carry the source file's own line endings, so a CRLF checkout
+# silently changes program output: the multi-line hints in ErrorInterpreter came out with
+# \r\n on Windows and \n on Linux, which broke the parity corpus on one platform only.
+# Normalising to LF in the working tree keeps those strings identical everywhere.
+* text=auto eol=lf
+
+# Recorded expectations and fixtures are compared byte for byte.
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+
+# Except where the tool reading the file requires CRLF.
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+*.png binary
+*.gif binary

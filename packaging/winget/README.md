@@ -39,13 +39,15 @@ else is stable.
 # Slidict.Wip.installer.yaml
 PackageIdentifier: Slidict.Wip
 PackageVersion: <version>
-InstallerType: zip
-NestedInstallerType: portable
-NestedInstallerFiles:
-  - RelativeFilePath: wip.exe
-    PortableCommandAlias: wip
 Installers:
+  # The installer-shape keys sit on the entry rather than at the root: that is where the
+  # schema always accepts them, and it is the shape an arm64 sibling needs anyway.
   - Architecture: x64
+    InstallerType: zip
+    NestedInstallerType: portable
+    NestedInstallerFiles:
+      - RelativeFilePath: wip.exe
+        PortableCommandAlias: wip
     InstallerUrl: https://github.com/slidict/wip/releases/download/v<version>/wip-<version>-win-x64.zip
     InstallerSha256: <sha256>
 ManifestType: installer
@@ -81,6 +83,17 @@ DefaultLocale: en-US
 ManifestType: version
 ManifestVersion: 1.6.0
 ```
+
+## If code signing is adopted
+
+`wip.exe` currently ships unsigned. Packaging it as a ZIP is **not** a SmartScreen
+mitigation — SmartScreen judges the file and its publisher reputation, not the container it
+arrived in — so shipping unsigned is an accepted risk rather than an avoided one.
+
+If that changes, the order in `release.yml` matters: **sign `wip.exe` first**, then zip, then
+hash, then attest. Signing after any of those steps rewrites the bytes that the published
+checksum and the build attestation describe, and the `InstallerSha256` here would no longer
+match what a user downloads.
 
 ## Artifact naming is load-bearing
 

@@ -19,7 +19,9 @@ public sealed partial class ResourceMonitor : IDisposable
 {
     private readonly TimeSpan interval;
     private readonly TextWriter output;
+    private readonly Lock gate = new();
     private Timer? timer;
+    private bool stopped;
 
     public ResourceMonitor(TextWriter? output = null, TimeSpan? interval = null)
     {
@@ -27,14 +29,52 @@ public sealed partial class ResourceMonitor : IDisposable
         this.interval = interval ?? TimeSpan.FromSeconds(5);
     }
 
-    public void Start(string label) =>
-        timer = new Timer(_ => output.WriteLine($"wip: [debug] still running ({Snapshot()}): {label}"),
-            null, interval, interval);
+    public void Start(string label) => timer = new Timer(_ => Report(label), null, interval, interval);
 
+    /// <summary>
+    /// Waits for any in-flight callback before returning.
+    /// </summary>
+    /// <remarks>
+    /// Timer.Dispose() does not wait for a running callback, and the caller disposes the log
+    /// writer immediately afterwards — so a tick still in progress would write to a disposed
+    /// stream from a thread-pool thread, where the exception is nobody's to catch. The wait
+    /// handle overload signals once callbacks are done; the flag and lock close the window
+    /// where one has already entered Report.
+    /// </remarks>
     public void Stop()
     {
-        timer?.Dispose();
-        timer = null;
+        Timer? running;
+        lock (gate)
+        {
+            stopped = true;
+            running = timer;
+            timer = null;
+        }
+
+        if (running is null)
+        {
+            return;
+        }
+
+        using var disposed = new ManualResetEvent(false);
+        if (running.Dispose(disposed))
+        {
+            disposed.WaitOne(TimeSpan.FromSeconds(5));
+        }
+    }
+
+    private void Report(string label)
+    {
+        // Snapshot() enumerates processes, so it runs outside the lock; only the shared
+        // writer needs protecting.
+        var line = $"wip: [debug] still running ({Snapshot()}): {label}";
+        lock (gate)
+        {
+            if (!stopped)
+            {
+                output.WriteLine(line);
+            }
+        }
     }
 
     public void Dispose() => Stop();

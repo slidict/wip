@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Runtime.InteropServices;
 
 namespace Wip.Platform;
@@ -31,29 +30,15 @@ public sealed class WindowsEnvironment : IEnvironment
         var other => $"linux/{other.ToString().ToLowerInvariant()}",
     };
 
-    private static bool DetectWsl2()
-    {
-        try
-        {
-            using var process = Process.Start(new ProcessStartInfo("wsl.exe")
-            {
-                ArgumentList = { "--status" },
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-            });
-
-            if (process is null)
-            {
-                return false;
-            }
-
-            process.WaitForExit();
-            return process.ExitCode == 0;
-        }
-        catch (Exception exception) when (exception is System.ComponentModel.Win32Exception or InvalidOperationException)
-        {
-            return false;
-        }
-    }
+    /// <summary>
+    /// Asks Windows whether the WSL2 backend is present.
+    /// </summary>
+    /// <remarks>
+    /// A zero exit from <c>wsl.exe --status</c> means WSL is installed; it does not prove the
+    /// default version is 2. Distinguishing them means parsing that output, which is
+    /// localised and UTF-16 encoded, so it needs to be checked against a real machine before
+    /// being relied on -- see docs/csharp-migration-plan.md §11. The Ruby build made exactly
+    /// this check, so this is no less accurate than what it replaced.
+    /// </remarks>
+    private static bool DetectWsl2() => ProcessProbe.Succeeds("wsl.exe", ["--status"]);
 }

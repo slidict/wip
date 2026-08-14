@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using Wip.Compose;
 using Wip.Configuration;
 using Wip.Execution;
@@ -138,25 +137,9 @@ public sealed class Doctor
 
     private static void CheckVersion(string command, List<Result> results, string label = "WSLC")
     {
-        try
-        {
-            using var process = Process.Start(new ProcessStartInfo(command)
-            {
-                ArgumentList = { "version" },
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-            });
-
-            process!.WaitForExit();
-            results.Add(process.ExitCode == 0
-                ? new Result(Level.Ok, $"{label} is available")
-                : new Result(Level.Fail, $"{label} version failed"));
-        }
-        catch (Exception exception) when (exception is System.ComponentModel.Win32Exception or InvalidOperationException)
-        {
-            results.Add(new Result(Level.Fail, $"{label} version failed"));
-        }
+        results.Add(ProcessProbe.Succeeds(command, ["version"])
+            ? new Result(Level.Ok, $"{label} is available")
+            : new Result(Level.Fail, $"{label} version failed"));
     }
 
     private void CheckCompose(Config config, List<Result> results)

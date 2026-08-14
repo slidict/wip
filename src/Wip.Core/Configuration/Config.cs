@@ -350,22 +350,23 @@ public sealed partial class Config
     }
 
     /// <summary>
-    /// <c>shadow_context</c> names a Windows-side mirror of the build context, so it only
-    /// means anything on a build command — and only as a real path.
+    /// <c>shadow_context</c> used to name a Windows-side mirror of the build context, opted
+    /// into per build command. The mirror is now unconditional — running on the Windows side,
+    /// staging locally is what gives wslc a readable directory rather than a tuning choice —
+    /// so the key does nothing. Rejecting it says so; silently ignoring it would leave a
+    /// project believing its builds were still configured the way it wrote them.
     /// </summary>
     private static void ValidateShadowContext(string name, OrderedDictionary<string, object?> entry, string type)
     {
-        if (!entry.TryGetValue("shadow_context", out var shadowContext))
+        _ = type;
+        if (!entry.ContainsKey("shadow_context"))
         {
             return;
         }
 
-        if (type == "build" && shadowContext is string text && text.Length > 0)
-        {
-            return;
-        }
-
-        throw new ConfigException($"commands.{name}.shadow_context must be a non-empty path for a build command");
+        throw new ConfigException(
+            $"commands.{name}.shadow_context is no longer supported — the build context is " +
+            "always staged to a local cache now, so remove the key");
     }
 
     private void ValidateDependencies()

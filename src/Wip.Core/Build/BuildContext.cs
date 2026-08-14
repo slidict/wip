@@ -239,7 +239,7 @@ public sealed class BuildContext
             var info = new FileInfo(source);
             if (info.LinkTarget is { } linkTarget)
             {
-                File.CreateSymbolicLink(temporary, linkTarget);
+                CreateSymbolicLink(temporary, linkTarget, source);
             }
             else
             {
@@ -252,6 +252,35 @@ public sealed class BuildContext
         finally
         {
             DeleteEntry(temporary);
+        }
+    }
+
+    /// <summary>
+    /// Recreates a symbolic link in the staged copy.
+    /// </summary>
+    /// <remarks>
+    /// Windows only permits this with SeCreateSymbolicLinkPrivilege, which an ordinary session
+    /// lacks unless Developer Mode is on. Copying the link's target instead would silently
+    /// pull whatever it points at — possibly from outside the build context — into the image,
+    /// which is the thing keeping links as links exists to prevent. So this fails loudly, and
+    /// says what to do about it.
+    /// </remarks>
+    private static void CreateSymbolicLink(string path, string target, string source)
+    {
+        try
+        {
+            File.CreateSymbolicLink(path, target);
+        }
+        catch (Exception exception) when (exception is UnauthorizedAccessException or IOException)
+        {
+            throw new WipException(
+                $"Could not recreate the symbolic link {source} in the staged build context: " +
+                $"{exception.Message}\n\n" +
+                "Creating symbolic links on Windows needs Developer Mode, or an elevated shell. " +
+                "Enable Developer Mode, or remove the link from the build context — wip will not " +
+                "copy what it points at, since that could pull files from outside the context into " +
+                "the image.",
+                exception);
         }
     }
 

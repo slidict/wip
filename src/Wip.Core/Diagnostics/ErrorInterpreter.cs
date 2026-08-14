@@ -14,21 +14,29 @@ public sealed partial class ErrorInterpreter
     {
         if (VolumeLimitReached().IsMatch(output))
         {
-            return VolumeLimitMessage;
+            return Normalize(VolumeLimitMessage);
         }
 
         if (RegistryRejected().IsMatch(output))
         {
-            return RegistryMessage;
+            return Normalize(RegistryMessage);
         }
 
         if (ArchitectureMismatch().IsMatch(output))
         {
-            return ArchitectureMessage();
+            return Normalize(ArchitectureMessage());
         }
 
-        return RsyncMissing().IsMatch(output) ? RsyncMessage : null;
+        return RsyncMissing().IsMatch(output) ? Normalize(RsyncMessage) : null;
     }
+
+    /// <summary>
+    /// These hints are raw string literals, so they carry whatever line endings the source
+    /// file had when it was compiled — a CRLF checkout changes the program's output. A
+    /// .gitattributes rule pins the checkout to LF; this makes the result independent of it
+    /// either way, because the failure mode is silent and only shows up on one platform.
+    /// </summary>
+    private static string Normalize(string message) => message.ReplaceLineEndings("\n");
 
     private const string VolumeLimitMessage = """
         The WSLC session has reached its mounted-volume limit.
