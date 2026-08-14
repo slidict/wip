@@ -57,8 +57,20 @@ internal static class GoldenCorpus
     /// The generator rewrote the fixture's own absolute path to &lt;FIXTURE&gt;; put it back
     /// so expectations can be compared against values produced from a real directory.
     /// </summary>
-    internal static string Resolve(string expected, string fixture) =>
-        expected.Replace("<FIXTURE>", Path.Combine(CasesDirectory, fixture));
+    /// <remarks>
+    /// Both spellings of the placeholder have to be handled: System.Text.Json escapes '&lt;'
+    /// as < whenever an expectation has been round-tripped through a JsonNode, so the
+    /// text reaching here may carry either form.
+    /// </remarks>
+    internal static string Resolve(string expected, string fixture)
+    {
+        var directory = Path.Combine(CasesDirectory, fixture);
+
+        // The substitution happens inside JSON text, so a Windows path's separators would
+        // otherwise read as escape sequences once it is parsed back.
+        var escaped = directory.Replace("\\", "\\\\");
+        return expected.Replace("<FIXTURE>", escaped).Replace("\\u003CFIXTURE\\u003E", escaped);
+    }
 
     internal static JsonSerializerOptions Options { get; } = new() { WriteIndented = false };
 
