@@ -65,19 +65,44 @@ jobs:
           --runtime win-x64
           --output artifacts/win-x64
 
+      # Exercises the published binary, not the test host: the unit suite runs against
+      # managed assemblies and cannot catch a problem introduced by AOT compilation itself.
       - name: Smoke test
         shell: pwsh
         run: |
-          $wip = "artifacts/win-x64/wip.exe"
-          & $wip --help | Select-String -Quiet '^Commands:' || throw "help output missing commands"
+          $ErrorActionPreference = "Stop"
+          $wip = Join-Path $env:GITHUB_WORKSPACE "artifacts/win-x64/wip.exe"
 
-          New-Item -ItemType Directory -Path "$env:RUNNER_TEMP/smoke" | Out-Null
-          Push-Location "$env:RUNNER_TEMP/smoke"
-          & (Join-Path $env:GITHUB_WORKSPACE $wip) init
-          if ($LASTEXITCODE -ne 0) { throw "wip init failed" }
-          & (Join-Path $env:GITHUB_WORKSPACE $wip) config | Out-Null
-          if ($LASTEXITCODE -ne 0) { throw "wip config could not read what wip init wrote" }
-          Pop-Location
+          if (-not (& $wip --help | Select-String -Quiet '^Commands:')) {
+            throw "help output is missing its command list"
+          }
+
+          if ((& $wip version | Select-Object -First 1) -notmatch '^wip \d+\.\d+\.\d+$') {
+            throw "version output did not look like a version"
+          }
+
+          # init writes the file config then has to read back, so this covers the YAML
+          # writer and loader agreeing with each other on a real filesystem.
+          $smoke = Join-Path $env:RUNNER_TEMP "smoke"
+          New-Item -ItemType Directory -Path $smoke -Force | Out-Null
+          Push-Location $smoke
+          try {
+            & $wip init
+            if ($LASTEXITCODE -ne 0) { throw "wip init failed" }
+
+            & $wip config | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "wip config could not read what wip init wrote" }
+
+            # A missing wip.yml has to be a one-line message and exit 1, not a stack trace.
+            Pop-Location
+            Push-Location $env:RUNNER_TEMP
+            $output = & $wip config 2>&1
+            if ($LASTEXITCODE -ne 1) { throw "expected exit 1 with no wip.yml, got $LASTEXITCODE" }
+            if ($output -match 'at Wip\.') { throw "error surfaced as a stack trace: $output" }
+          }
+          finally {
+            Pop-Location
+          }
 
       - name: Report binary size
         shell: pwsh
