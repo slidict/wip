@@ -9,19 +9,50 @@ it, registers `wip.exe` under a links directory, and puts that directory on PATH
 is published. The manifests below are what that produces; they live here so the shape is
 reviewable in this repository and can be validated by hand before the first submission.
 
+## The token is the risky part — read this first
+
+Automating the submission means storing a credential in a **public** repository's secrets.
+That is workable, but the shape of the credential matters more than the repository's
+visibility does.
+
+`winget-releaser` requires a **classic** PAT with `public_repo` scope; its documentation
+states that fine-grained tokens are not supported. Classic scopes are account-wide: a
+`public_repo` token can write to **every public repository that account can push to** — not
+just the winget-pkgs fork. On a maintainer's own account that includes this repository.
+
+What is *not* a risk here, having checked the triggers:
+
+- **Pull requests from forks cannot read it.** GitHub does not pass secrets to `pull_request`
+  runs from forked repositories, and the only workflow that fork PRs can start is `test.yml`,
+  which uses no secrets.
+- **No `pull_request_target` and no `workflow_run`.** Both run in the base repository's
+  context with secrets available, and both are the usual way a public repository leaks one.
+  Neither is used.
+
+What remains, and what is done about it:
+
+| Risk | Mitigation |
+|---|---|
+| A classic PAT cannot be scoped to one repository | Put the fork on a **dedicated bot account** that owns nothing else, and set the `WINGET_FORK_USER` repository variable to that account. The blast radius becomes one forked public repository. |
+| A third-party action is handed the token | Every action is **pinned to a commit SHA**, so a moved tag cannot swap the code that receives it. |
+| The token is available to any run of the workflow | The job declares `environment: winget`. Store the secret **on that environment** and add required reviewers, and each use needs a human approval. |
+| A leaked token stays useful indefinitely | Give it an **expiry**, and rotate on schedule. |
+
+**If that is more moving parts than you want:** leave `WINGET_TOKEN` unset. The job skips
+itself and explains why in the run summary, releases are unaffected, and submissions can be
+made by hand with `wingetcreate` — which needs no stored credential at all. The first
+submission is human-reviewed anyway, so the automation earns its keep from the second release
+onward, not the first.
+
 ## One-time setup
 
-1. **Fork microsoft/winget-pkgs** on the account that will own the submissions.
-2. **Create a classic personal access token** with the `public_repo` scope, and add it to this
-   repository as the `WINGET_TOKEN` secret. `GITHUB_TOKEN` cannot be used — it has no rights
-   on another repository — and the workflow skips itself rather than failing every release
-   while the secret is missing.
-
-   `winget-releaser` needs a *classic* PAT; a fine-grained one is not a drop-in
-   replacement. A classic token is coarse by construction, so prefer minting it on a
-   dedicated bot account that owns the fork and nothing else, and give it an expiry — that
-   way its blast radius is one forked public repository rather than everything the release
-   manager can reach.
+1. **Fork microsoft/winget-pkgs**, preferably on a dedicated bot account. If it is not the
+   same account that owns this repository, set the `WINGET_FORK_USER` repository variable to
+   that account's username.
+2. **Create a classic personal access token** with the `public_repo` scope, with an expiry.
+   Store it as `WINGET_TOKEN` — on the `winget` environment rather than as a repository
+   secret, so required reviewers can gate it. `GITHUB_TOKEN` cannot be used here: it has no
+   rights on another repository.
 3. **Confirm the package identifier.** `Slidict.Wip` is assumed throughout. The publisher
    half has to correspond to a real publisher name, so check it before the first submission:
    changing an identifier after the fact means a new package, not a rename.

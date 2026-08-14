@@ -260,9 +260,15 @@ listed here rather than left implicit — see
 
 - [ ] **Confirm the package identifier** — `Slidict.Wip` is assumed throughout. Changing it
       after publication creates a new package rather than renaming the existing one.
-- [ ] **Set up `WINGET_TOKEN` and fork `microsoft/winget-pkgs`** — see
-      [packaging/winget/README.md](packaging/winget/README.md). Until the secret exists the
-      WinGet job skips itself and says so; releases are unaffected.
+- [ ] **Decide whether to automate the WinGet submission at all** — it means storing a
+      classic PAT in a public repository's secrets, and classic scopes cannot be narrowed to
+      one repository. Fork PRs cannot reach it and the actions are SHA-pinned, but if the
+      remaining exposure is not worth it, leave `WINGET_TOKEN` unset and submit by hand with
+      `wingetcreate`: the job skips itself and releases are unaffected. The trade-off is laid
+      out in [packaging/winget/README.md](packaging/winget/README.md).
+- [ ] **If automating: bot account, environment, expiry** — put the fork on a dedicated
+      account (`WINGET_FORK_USER`), store the token on the `winget` environment with required
+      reviewers, and give it an expiry.
 - [ ] **Validate the manifest locally** — the first submission is human-reviewed, and a
       rejection costs days.
 - [ ] **Copy the Ruby implementation to its own repository** — it was removed here, so recover
