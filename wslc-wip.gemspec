@@ -8,7 +8,7 @@ Gem::Specification.new do |spec|
   spec.authors = ['Wip contributors']
   spec.summary = 'A developer-friendly CLI wrapper for Microsoft WSLC'
   spec.description = 'Wip provides project commands and diagnostics for WSLC development environments.'
-  spec.homepage = 'https://wslc-wip.slidict.com/'
+  spec.homepage = 'https://github.com/slidict/wip'
   spec.license = 'MIT'
   spec.required_ruby_version = '>= 3.2'
   spec.files = Dir['lib/**/*', 'exe/*', 'README.md', 'LICENSE']
@@ -18,7 +18,6 @@ Gem::Specification.new do |spec|
   spec.add_dependency 'thor', '~> 1.3'
   spec.metadata['rubygems_mfa_required'] = 'true'
   spec.metadata['homepage_uri'] = spec.homepage
-  spec.metadata['source_code_uri'] = 'https://github.com/slidict/wip'
   spec.metadata['changelog_uri'] = 'https://github.com/slidict/wip/releases'
-  spec.metadata['bug_tracker_uri'] = 'https://github.com/slidict/wip/issues'
+  spec.metadata['source_code_uri'] = 'https://github.com/slidict/wip/tree/v1.1.4'
 end
