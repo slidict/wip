@@ -14,6 +14,7 @@ public sealed class Initializer
     public static readonly OrderedDictionary<string, string> TemplateLabels = new(StringComparer.Ordinal)
     {
         ["rails"] = "Rails",
+        ["ruby"] = "Ruby",
         ["node"] = "Node.js",
         ["rust"] = "Rust",
         ["csharp"] = "C#",
@@ -31,6 +32,8 @@ public sealed class Initializer
             ".git", "log/", "tmp/", "storage/", "public/assets/", "public/packs/", ".bundle/",
             "vendor/bundle/", "coverage/", "node_modules/",
         ],
+        // Plain Ruby, for projects that are not Rails: no storage/ or public/ to skip.
+        ["ruby"] = [".git", "log/", "tmp/", ".bundle/", "vendor/bundle/", "coverage/"],
         ["node"] = [".git", "node_modules/", "dist/", "build/", ".next/", ".cache/", "coverage/"],
         ["rust"] = [".git", "target/"],
         ["csharp"] = [".git", "bin/", "obj/", ".vs/", "packages/"],
