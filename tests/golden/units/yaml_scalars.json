@@ -1,0 +1,252 @@
+[
+  {
+    "scalar": "no",
+    "class": "FalseClass",
+    "inspect": "false"
+  },
+  {
+    "scalar": "No",
+    "class": "FalseClass",
+    "inspect": "false"
+  },
+  {
+    "scalar": "NO",
+    "class": "FalseClass",
+    "inspect": "false"
+  },
+  {
+    "scalar": "yes",
+    "class": "TrueClass",
+    "inspect": "true"
+  },
+  {
+    "scalar": "Yes",
+    "class": "TrueClass",
+    "inspect": "true"
+  },
+  {
+    "scalar": "YES",
+    "class": "TrueClass",
+    "inspect": "true"
+  },
+  {
+    "scalar": "n",
+    "class": "String",
+    "inspect": "\"n\""
+  },
+  {
+    "scalar": "N",
+    "class": "String",
+    "inspect": "\"N\""
+  },
+  {
+    "scalar": "y",
+    "class": "String",
+    "inspect": "\"y\""
+  },
+  {
+    "scalar": "Y",
+    "class": "String",
+    "inspect": "\"Y\""
+  },
+  {
+    "scalar": "true",
+    "class": "TrueClass",
+    "inspect": "true"
+  },
+  {
+    "scalar": "True",
+    "class": "TrueClass",
+    "inspect": "true"
+  },
+  {
+    "scalar": "TRUE",
+    "class": "TrueClass",
+    "inspect": "true"
+  },
+  {
+    "scalar": "false",
+    "class": "FalseClass",
+    "inspect": "false"
+  },
+  {
+    "scalar": "False",
+    "class": "FalseClass",
+    "inspect": "false"
+  },
+  {
+    "scalar": "FALSE",
+    "class": "FalseClass",
+    "inspect": "false"
+  },
+  {
+    "scalar": "on",
+    "class": "TrueClass",
+    "inspect": "true"
+  },
+  {
+    "scalar": "On",
+    "class": "TrueClass",
+    "inspect": "true"
+  },
+  {
+    "scalar": "ON",
+    "class": "TrueClass",
+    "inspect": "true"
+  },
+  {
+    "scalar": "off",
+    "class": "FalseClass",
+    "inspect": "false"
+  },
+  {
+    "scalar": "Off",
+    "class": "FalseClass",
+    "inspect": "false"
+  },
+  {
+    "scalar": "OFF",
+    "class": "FalseClass",
+    "inspect": "false"
+  },
+  {
+    "scalar": "null",
+    "class": "NilClass",
+    "inspect": "nil"
+  },
+  {
+    "scalar": "Null",
+    "class": "NilClass",
+    "inspect": "nil"
+  },
+  {
+    "scalar": "NULL",
+    "class": "NilClass",
+    "inspect": "nil"
+  },
+  {
+    "scalar": "~",
+    "class": "NilClass",
+    "inspect": "nil"
+  },
+  {
+    "scalar": "",
+    "class": "NilClass",
+    "inspect": "nil"
+  },
+  {
+    "scalar": "0",
+    "class": "Integer",
+    "inspect": "0"
+  },
+  {
+    "scalar": "3000",
+    "class": "Integer",
+    "inspect": "3000"
+  },
+  {
+    "scalar": "-17",
+    "class": "Integer",
+    "inspect": "-17"
+  },
+  {
+    "scalar": "+5",
+    "class": "Integer",
+    "inspect": "5"
+  },
+  {
+    "scalar": "0o17",
+    "class": "String",
+    "inspect": "\"0o17\""
+  },
+  {
+    "scalar": "0x1f",
+    "class": "Integer",
+    "inspect": "31"
+  },
+  {
+    "scalar": "1_000",
+    "class": "Integer",
+    "inspect": "1000"
+  },
+  {
+    "scalar": "3.5",
+    "class": "Float",
+    "inspect": "3.5"
+  },
+  {
+    "scalar": "-0.5",
+    "class": "Float",
+    "inspect": "-0.5"
+  },
+  {
+    "scalar": ".5",
+    "class": "Float",
+    "inspect": "0.5"
+  },
+  {
+    "scalar": "1e3",
+    "class": "String",
+    "inspect": "\"1e3\""
+  },
+  {
+    "scalar": ".inf",
+    "class": "Float",
+    "inspect": "Infinity"
+  },
+  {
+    "scalar": "-.inf",
+    "class": "Float",
+    "inspect": "-Infinity"
+  },
+  {
+    "scalar": ".nan",
+    "class": "Float",
+    "inspect": "NaN"
+  },
+  {
+    "scalar": "2024-01-02",
+    "class": "Date",
+    "inspect": "#<Date: 2024-01-02 ((2460312j,0s,0n),+0s,-Infj)>"
+  },
+  {
+    "scalar": "12:30",
+    "class": "Integer",
+    "inspect": "45000"
+  },
+  {
+    "scalar": "plain text",
+    "class": "String",
+    "inspect": "\"plain text\""
+  },
+  {
+    "scalar": "no-dash",
+    "class": "String",
+    "inspect": "\"no-dash\""
+  },
+  {
+    "scalar": "yes!",
+    "class": "String",
+    "inspect": "\"yes!\""
+  },
+  {
+    "scalar": "ON.",
+    "class": "String",
+    "inspect": "\"ON.\""
+  },
+  {
+    "scalar": "\"3000\"",
+    "class": "String",
+    "inspect": "\"3000\""
+  },
+  {
+    "scalar": "'no'",
+    "class": "String",
+    "inspect": "\"no\""
+  },
+  {
+    "scalar": "\"true\"",
+    "class": "String",
+    "inspect": "\"true\""
+  }
+]

@@ -10,7 +10,9 @@
 $LOAD_PATH.unshift(File.expand_path('../../lib', __dir__))
 
 require 'json'
+require 'date'
 require 'shellwords'
+require 'yaml'
 require 'tmpdir'
 require 'wip'
 
@@ -128,6 +130,31 @@ ERROR_INTERPRETER_INPUTS = [
   'executable file not found: rsync'
 ].freeze
 
+# How Psych resolves an unquoted scalar decides real behaviour, not just typing:
+# `restart: no` becomes the boolean false rather than the string "no" (ComposeFile
+# and Config both special-case it), and `PORT: 3000` becomes an Integer while
+# `PORT: "3000"` stays a String. YamlDotNet does not resolve scalars on its own, so
+# the port reimplements this and needs the real answers to check against.
+YAML_SCALARS = [
+  'no', 'No', 'NO', 'yes', 'Yes', 'YES', 'n', 'N', 'y', 'Y',
+  'true', 'True', 'TRUE', 'false', 'False', 'FALSE',
+  'on', 'On', 'ON', 'off', 'Off', 'OFF',
+  'null', 'Null', 'NULL', '~', '',
+  '0', '3000', '-17', '+5', '0o17', '0x1f', '1_000',
+  '3.5', '-0.5', '.5', '1e3', '.inf', '-.inf', '.nan',
+  '2024-01-02', '12:30', 'plain text', 'no-dash', 'yes!', 'ON.',
+  '"3000"', "'no'", '"true"'
+].freeze
+
+def yaml_scalar_cases
+  YAML_SCALARS.map do |scalar|
+    parsed = YAML.safe_load("key: #{scalar}", permitted_classes: [Date, Time], aliases: false)['key']
+    { 'scalar' => scalar, 'class' => parsed.class.name, 'inspect' => parsed.inspect }
+  rescue Psych::Exception => e
+    { 'scalar' => scalar, 'class' => 'error', 'inspect' => e.class.name }
+  end
+end
+
 def capture
   { 'ok' => yield }
 rescue Wip::Error, ArgumentError => e
@@ -176,7 +203,8 @@ Dir.mkdir(UNITS_DIR) unless Dir.exist?(UNITS_DIR)
   'variable_interpolation' => { 'env' => VARIABLE_INTERPOLATION_ENV, 'cases' => variable_interpolation_cases },
   'dockerignore' => { 'patterns' => DOCKERIGNORE_PATTERNS, 'cases' => dockerignore_cases },
   'error_interpreter' => { 'architecture' => 'linux/amd64', 'cases' => error_interpreter_cases },
-  'command_display' => command_display_cases
+  'command_display' => command_display_cases,
+  'yaml_scalars' => yaml_scalar_cases
 }.each do |name, payload|
   File.write(File.join(UNITS_DIR, "#{name}.json"), "#{JSON.pretty_generate(payload)}\n")
   count = payload.is_a?(Hash) ? payload['cases'].size : payload.size
