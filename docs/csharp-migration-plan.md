@@ -1,321 +1,322 @@
-# wip C# / Native AOT 移行計画
+# wip C# / Native AOT Migration Plan
 
-目標パイプライン:
+Target pipeline:
 
 ```
 C# → Native AOT → wip.exe → ZIP → GitHub Releases → WinGet
 ```
 
-本ドキュメントは移行の「計画」であり、実装は含まない。合意した時点でフェーズ 0 から着手する。
+This document is the plan, not the implementation. Work starts at Phase 0 once it's agreed.
 
 ---
 
-## 1. 前提（確定事項）
+## 1. Settled Premises
 
-| # | 決定 | 内容 |
+| # | Decision | Detail |
 |---|---|---|
-| 1 | **ターゲット** | **Windows ネイティブ (win-x64) のみ**。Linux バイナリは出さない。WSL2 のシェルからは interop 経由で `wip.exe` を叩く |
-| 2 | **Ruby 実装** | 別リポジトリにコピーして退避。本リポジトリからは削除する |
-| 3 | **互換性** | **破壊的変更を許容**。既存の `wip.yml` との後方互換は要件としない |
-| 4 | **リポジトリ** | C# 実装が `slidict/wip` を引き継ぐ（Wiki・Issues・Releases の履歴を維持） |
+| 1 | **Target** | **Windows native (win-x64) only.** No Linux binary. From a WSL2 shell, `wip.exe` is invoked over interop |
+| 2 | **Ruby implementation** | Copied out to its own repository, then deleted from this one |
+| 3 | **Compatibility** | **Breaking changes are acceptable.** Backward compatibility with existing `wip.yml` files is not a requirement |
+| 4 | **Repository** | The C# implementation takes over `slidict/wip`, keeping the wiki, issues, and release history |
 
-この 4 点により、当初計画で最大の論点だった「WSL 内実行を維持するか」は解消し、**単一 RID・単一 OS の素直な移植**になる。
+These four settle what was the biggest open question in the earlier draft — whether to keep running inside WSL — and reduce the work to a straightforward single-RID, single-OS port.
 
-### 実行モデル
+### Execution model
 
 ```
 ┌─ Windows ─────────────────────────────────────────┐
 │  winget install Slidict.Wip                       │
 │         ↓                                         │
-│      wip.exe ──呼び出し──> wslc.exe                │
+│      wip.exe ──invokes──> wslc.exe                │
 │         ↑                                         │
-│         │ WSL interop (Windows PATH が Linux PATH  │
-│         │ に入るので bash から直接叩ける)           │
-│  ┌──────┴──── WSL2 (Ubuntu 等) ─────────────────┐  │
+│         │ WSL interop (the Windows PATH is folded │
+│         │ into the Linux PATH, so bash can call   │
+│         │ it directly)                            │
+│  ┌──────┴──── WSL2 (Ubuntu, etc.) ──────────────┐  │
 │  │  $ cd ~/myproject && wip.exe up -d          │  │
 │  └─────────────────────────────────────────────┘  │
 └───────────────────────────────────────────────────┘
 ```
 
-**wip.exe のプロセスは常に Windows 側で動く。** WSL2 は「コマンドを打つ場所」であって「実行される場所」ではない。この一点が §3 の論点を生む。
+**The wip.exe process always runs on the Windows side.** WSL2 is where the command is typed, not where it executes. That single fact is what creates the problem in §3.
 
-### 現状の棚卸し
+### Inventory of what exists today
 
-| 項目 | 現状 |
+| Item | Current state |
 |---|---|
-| 実装 | Ruby 3.2+ / Thor 1.3 |
-| 本体規模 | `lib/` + `exe/` で 23 ファイル・約 3,000 行 |
-| テスト | RSpec 17 ファイル・約 3,400 行 |
-| 配布 | RubyGems (`wslc-wip`) + GitHub Packages |
-| 依存 | Thor のみ |
+| Implementation | Ruby 3.2+ / Thor 1.3 |
+| Size | 23 files, ~3,000 lines across `lib/` and `exe/` |
+| Tests | 17 RSpec files, ~3,400 lines |
+| Distribution | RubyGems (`wslc-wip`) + GitHub Packages |
+| Dependencies | Thor, and nothing else |
 
-依存が Thor だけで、YAML/JSON を型にマッピングせず素の Hash として扱っている（`Config#stringify` 以降ずっと `@raw['dependencies']` 形式の辞書アクセス）。AOT 最大の地雷である「リフレクション依存シリアライザ」を最初から踏んでいないため、AOT 適性は高い。
+Thor is the only dependency, and YAML/JSON are handled as plain hashes rather than mapped onto types — `Config#stringify` normalizes every key to a string, and everything downstream is dictionary access like `@raw['dependencies']`. The biggest AOT hazard, a reflection-driven serializer, was never in the picture. AOT suitability is high.
 
 ---
 
-## 2. Windows 専用化で消える作業
+## 2. Work That Disappears With Windows-Only
 
-当初の 4 RID 案から、以下がまるごと不要になる。**移植の総量はおよそ 2〜3 割減る。**
+Compared to the earlier four-RID proposal, all of the following drops out. **Total port effort falls by roughly 20–30%.**
 
-| 消えるもの | 理由 |
+| Removed | Why |
 |---|---|
-| **openpty / forkpty の P/Invoke** | Linux 側の `CommandRunner#run_attached` が不要。§4.2 参照 |
-| **flock(2) の P/Invoke** | Windows は `FileStream.Lock` が効く。`BuildContext` のロックは BCL のみで書ける |
-| **`UnixFileMode` によるパーミッション保持** | 実行ビットの持ち回りが不要（`copy_entry(preserve)` の意図が消える） |
-| **`/proc/version` パース** | `Environment#wsl2?` は `wsl.exe --status` 一本に |
-| **`windows_interop?` チェック** | Windows 側で動く以上、常に自明。`Doctor` から削除 |
-| **`/mnt/c/...` パスの特別扱い** | `CommandResolver::CANDIDATES` から `/mnt/c/Windows/System32/wslc.exe` を削除 |
-| **linux-x64 / arm64 の RID** | CI マトリクスが 1〜2 ジョブに縮小 |
-| **tar.gz 配布と install スクリプト** | ZIP + WinGet のみ |
-| **`Gem.win_platform?` 分岐 (計 5 箇所)** | 分岐そのものが消える |
+| **openpty / forkpty P/Invoke** | The Linux `CommandRunner#run_attached` path is gone. See §4.2 |
+| **flock(2) P/Invoke** | `FileStream.Lock` works on Windows, so `BuildContext` locking is pure BCL |
+| **`UnixFileMode` permission preservation** | No executable bit to carry through — the intent behind `copy_entry(preserve)` vanishes |
+| **`/proc/version` parsing** | `Environment#wsl2?` reduces to a single `wsl.exe --status` call |
+| **`windows_interop?` check** | Self-evident when running on Windows. Drop it from `Doctor` |
+| **`/mnt/c/...` path special-casing** | Remove `/mnt/c/Windows/System32/wslc.exe` from `CommandResolver::CANDIDATES` |
+| **linux-x64 / arm64 RIDs** | The CI matrix shrinks to one or two jobs |
+| **tar.gz artifacts and an install script** | ZIP and WinGet only |
+| **`Gem.win_platform?` branches (5 sites)** | The branches themselves disappear |
 
 ---
 
-## 3. 🔴 中核リスク: パスモデル
+## 3. 🔴 Core Risk: The Path Model
 
-**この計画で唯一、実装方針が未確定のまま残る領域。** 他はすべて機械的な移植で片付く。
+**This is the one area where the plan cannot yet fix an implementation approach.** Everything else is a mechanical port.
 
-### 3.1 問題
+### 3.1 The problem
 
-wip は**ホストの絶対パスを wslc に渡す**箇所を 3 つ持つ:
+wip hands host absolute paths to wslc in three places:
 
-| 箇所 | 生成物 | コード |
+| Site | What it produces | Code |
 |---|---|---|
-| `sync:` のソースマウント | `-v <ホスト絶対パス>:/host-src:ro` | `SyncSettings#volume_specs` |
-| `volumes:` のバインドマウント | `-v <ホスト絶対パス>:/app` | `CommandBuilder#volume_specs` |
-| ビルドコンテキスト | `wslc build` の cwd | `CLI#run_staged_build` |
+| `sync:` source mount | `-v <host abs path>:/host-src:ro` | `SyncSettings#volume_specs` |
+| `volumes:` bind mounts | `-v <host abs path>:/app` | `CommandBuilder#volume_specs` |
+| Build context | the cwd for `wslc build` | `CLI#run_staged_build` |
 
-WSL2 のシェルから Windows exe を起動すると、その Windows プロセスの作業ディレクトリは **UNC パス** になる（`\\wsl.localhost\<distro>\home\user\proj` 形式。旧表記は `\\wsl$\...`）。
+When a Windows executable is launched from a WSL2 shell, that process's working directory becomes a **UNC path** — `\\wsl.localhost\<distro>\home\user\proj` (older form: `\\wsl$\...`).
 
-したがって `~/myproject` で `wip.exe up` を叩くと:
+So running `wip.exe up` from `~/myproject` yields:
 
 ```
-sync.source  = \\wsl.localhost\Ubuntu\home\user\myproject
-生成される -v = \\wsl.localhost\Ubuntu\home\user\myproject:/host-src:ro
+sync.source   = \\wsl.localhost\Ubuntu\home\user\myproject
+generated -v  = \\wsl.localhost\Ubuntu\home\user\myproject:/host-src:ro
 ```
 
-**この `-v` を wslc が受け付けるかは未知数**であり、受け付けない可能性が高い。現行 Ruby 実装は WSL 内で動いていたので `source` は `/home/user/myproject` という素直な Linux パスになっており、この問題自体が存在しなかった。
+**Whether wslc accepts that `-v` is unknown**, and it seems unlikely. The current Ruby implementation ran inside WSL, so `source` was a plain `/home/user/myproject` and the question never arose.
 
-なお現行コードには既に `wslc build` が絶対パスのコンテキストでクラッシュする（`ERROR_UNHANDLED_EXCEPTION`）という回避策コメントがあり、chdir + `"."` で凌いでいる。wslc のパス処理は元々素直ではない。
+Worth noting: the existing code already carries a workaround comment about `wslc build` crashing (`ERROR_UNHANDLED_EXCEPTION`) when handed an absolute context path, worked around by chdir-ing in and passing `"."`. wslc's path handling was never straightforward to begin with.
 
-### 3.2 対応方針（決定木）
+### 3.2 Decision tree
 
-**Phase 0 の最優先スパイクで、wslc.exe が実際に何を受け付けるかを実測する。** 結果に応じて 3 分岐:
+**The top-priority Phase 0 spike is to measure what wslc.exe actually accepts.** Three branches follow from the result:
 
-| 実測結果 | 採る方針 |
+| Measured result | Approach |
 |---|---|
-| **(a) wslc が Linux パスを受け付ける** | wip.exe が UNC → Linux パスに変換する（`\\wsl.localhost\Ubuntu\home\u\p` → `/home/u/p`）。**最もきれい。** wip.exe 内で完結し、外部プロセス起動も不要 |
-| **(b) wslc が Windows ローカルパスのみ受け付ける** | ビルドコンテキストは §3.3 の常時ステージングで解決。だが `volumes:` / `sync.source` の WSL 側バインドマウントは**成立しない** → プロジェクトを Windows 側 FS (`C:\...`) に置くことが要件になる。**要ドキュメント化された制約** |
-| **(c) wslc が UNC をそのまま扱える** | 変換不要。ただし 9p 越しの I/O 性能が実用に耐えるか別途計測が要る |
+| **(a) wslc accepts Linux paths** | wip.exe translates UNC → Linux (`\\wsl.localhost\Ubuntu\home\u\p` → `/home/u/p`). **Cleanest option** — self-contained inside wip.exe, no extra process launches |
+| **(b) wslc accepts only Windows-local paths** | The build context is solved by the unconditional staging in §3.3, but WSL-side bind mounts for `volumes:` / `sync.source` **cannot work** → projects must live on the Windows filesystem (`C:\...`). **A constraint that has to be documented** |
+| **(c) wslc handles UNC directly** | No translation needed, but I/O performance over 9p needs separate measurement before calling it usable |
 
-**現時点の見立ては (a) または (b)。** wslc はコンテナを WSL2 の VM 内で動かす以上、Linux パス表現を持っているはずで (a) の目が高いが、**確認せずに実装方針を決めない。**
+**Current expectation is (a) or (b).** Since wslc runs containers inside a WSL2 VM it presumably has some Linux path representation, which favors (a) — but **no implementation decision gets made without confirming this.**
 
-### 3.3 ビルドコンテキストは常時ローカルステージングにする
+### 3.3 Stage the build context locally, always
 
-パス問題のうち**ビルドコンテキストだけは方針が確定できる**。
+Of the three path sites, **the build context is the one that can be settled now.**
 
-現行の `shadow_context` は「WSL 側ソースを Windows 側にミラーして速くする」オプトイン機能だった。新モデルでは、UNC 越しのソースを wslc に直接読ませる構図になるため、**同じ機構がオプションではなく常に必要**になる。
+`shadow_context` currently exists as an opt-in: mirror a WSL-side source tree to the Windows side to make it fast. Under the new model, the same mechanism stops being optional — a UNC source read directly by wslc is exactly the case it was built to avoid.
 
-したがって:
+So:
 
-- `BuildContext` は**常に** Windows ローカル（`%LOCALAPPDATA%\wip\contexts\<sha256>`）にステージングする
-- `shadow_context` 設定キーは**廃止**し、キャッシュ位置を変えたい場合の任意設定 `context_cache` に置き換える（あるいはキーごと廃止）
-- 既存の増分 manifest 機構（変更ファイルのみコピー）はそのまま活かす
-- `wslc build` には常にローカルパスの cwd + `"."` を渡す → §3.1 のクラッシュ回避策も自然に満たす
+- `BuildContext` **always** stages to a Windows-local directory (`%LOCALAPPDATA%\wip\contexts\<sha256>`)
+- Retire the `shadow_context` config key; either drop it entirely or replace it with an optional `context_cache` that only chooses the cache location
+- Keep the existing incremental manifest machinery (copy only changed files) as-is
+- `wslc build` always receives a local cwd plus `"."`, which satisfies the §3.1 crash workaround naturally
 
-**性能上の注意:** UNC 越しのファイル走査は 9p プロトコル経由で遅い。manifest の fingerprint 取得を「1 ファイルずつ `stat`」で実装すると大きなツリーで致命的に遅くなる。`Directory.EnumerateFileSystemEntries` は列挙時に `FindFirstFile` のデータ（サイズ・mtime・属性）を同時に取れるので、**列挙結果から属性を取る実装にする**。ここは Phase 4 で実測する。
+**Performance note:** walking files over UNC goes through the 9p protocol and is slow. Computing manifest fingerprints with a per-file `stat` would be crippling on a large tree. `Directory.EnumerateFileSystemEntries` surfaces the `FindFirstFile` data (size, mtime, attributes) as part of enumeration, so **take attributes from the enumeration result rather than statting each entry.** Measure this in Phase 4.
 
-### 3.4 mtime 精度の変更
+### 3.4 mtime precision changes
 
-Ruby は `stat.mtime.nsec`（ナノ秒）、.NET は `File.GetLastWriteTimeUtc().Ticks`（100ns）。manifest のフォーマットが変わるため、**manifest にスキーマバージョンを持たせ、不一致なら 1 回だけフル再構築**して収束させる。
+Ruby uses `stat.mtime.nsec` (nanoseconds); .NET uses `File.GetLastWriteTimeUtc().Ticks` (100ns). The manifest format changes as a result, so **give the manifest a schema version and do a single full rebuild on mismatch** to converge.
 
-### 3.5 `wip` と `wip.exe` の呼び分け（UX）
+### 3.5 `wip` vs `wip.exe` (UX)
 
-WinGet の portable インストールは `wip.exe` という shim を links ディレクトリに置き、PATH を通す。
+A WinGet portable install drops a `wip.exe` shim into the links directory and puts it on PATH.
 
-- **PowerShell / cmd から**: `wip` で動く（PATHEXT が効く）
-- **WSL2 の bash から**: **`wip.exe` と拡張子まで打つ必要がある**。bash は PATHEXT を知らない
+- **From PowerShell / cmd:** `wip` works (PATHEXT handles it)
+- **From WSL2 bash:** **the `.exe` has to be typed** — bash knows nothing about PATHEXT
 
-拡張子なしで叩きたい場合、ユーザー側に `alias wip=wip.exe` などの一手間が要る。これを吸収する案:
+Typing it without the extension requires the user to add something like `alias wip=wip.exe`. Options for absorbing that:
 
-- `wip.exe install-wsl-shim` サブコマンドを用意し、WSL 内の `/usr/local/bin/wip` に `exec "$(which wip.exe)" "$@"` の 2 行スクリプトを書き込む
-- あるいは README に alias の追記手順を書くだけに留める
+- Ship a `wip.exe install-wsl-shim` subcommand that writes a two-line `/usr/local/bin/wip` script inside WSL (`exec "$(which wip.exe)" "$@"`)
+- Or just document the alias in the README
 
-**Phase 3 で判断する。** 機能としては小さいが、WSL2 が主たる利用場所である以上、体験差は大きい。
+**Decide in Phase 3.** It's a small feature, but WSL2 is the primary place this gets typed, so the difference in feel is not small.
 
 ---
 
-## 4. 残る技術課題
+## 4. Remaining Technical Work
 
-パスモデル以外に、判断が要るのは以下の 2 点のみ。
+Outside the path model, only two items need real judgment.
 
-### 4.1 YAML パース（低リスク）
+### 4.1 YAML parsing (low risk)
 
-現行実装が YAML をプレーンな Hash として扱っているため、**表現モデル（ノードツリー）でパースすればリフレクションは一切発生しない**:
+Because the current implementation treats YAML as plain hashes, **parsing into the representation model (node tree) avoids reflection entirely**:
 
-- `YamlDotNet` の `YamlStream` / `YamlMappingNode` を使う（デシリアライザを通さない）
-- Ruby 実装のコード形状をほぼそのまま写せるので、移植時のバグ混入も減る
+- Use YamlDotNet's `YamlStream` / `YamlMappingNode` and never go through a deserializer
+- The Ruby code's shape transfers almost verbatim, which also reduces the chance of introducing bugs during the port
 
-`ConfigLoader` は既に `YAML.safe_load_file(permitted_classes: [], aliases: false)` でアンカー/エイリアスを禁止済み。**この制約は C# 側でも維持する**（実装が単純になる）。
+`ConfigLoader` already forbids anchors and aliases via `YAML.safe_load_file(permitted_classes: [], aliases: false)`. **Keep that restriction in C#** — it makes the implementation simpler.
 
-JSON（`wslc list --format json` の読み取り）は `System.Text.Json` の `JsonDocument` がリフレクション不使用でそのまま AOT 動作する。POCO へのデシリアライズはしない。
+JSON (reading `wslc list --format json`) is handled by `System.Text.Json`'s `JsonDocument`, which is reflection-free and works under AOT as-is. No POCO deserialization.
 
-### 4.2 対話コマンドの端末制御
+### 4.2 Terminal handling for interactive commands
 
-現行の `CommandRunner` は 3 経路（パイプ / Linux openpty / Windows stdio 継承）を持つが、**Windows 専用化で openpty 経路が消え、2 経路に減る**。
+`CommandRunner` currently has three paths (piped / Linux openpty / Windows stdio inheritance). **Windows-only removes the openpty path, leaving two.**
 
-残る判断は、対話コマンド（`wip shell`、`wip exec -it`、`wip run rails console`）で:
+What remains to decide is how interactive commands (`wip shell`, `wip exec -it`, `wip run rails console`) behave:
 
-| 選択肢 | 内容 | 評価 |
+| Option | Detail | Assessment |
 |---|---|---|
-| **A（推奨）** | **stdio 継承**（`RedirectStandard* = false`）。現行 Windows 経路と同じ | ジョブ制御・Ctrl-C・isatty 判定は正しく動く。**代償: 対話コマンドで `ErrorInterpreter` のヒントが出せない**（Windows では現状も出ていないので機能後退ではない） |
-| B（将来） | ConPTY (`CreatePseudoConsole`) を P/Invoke | 出力キャプチャと対話性を両立できるが、実装量が大きい |
+| **A (recommended)** | **Inherit stdio** (`RedirectStandard* = false`), same as the current Windows path | Job control, Ctrl-C, and isatty detection all work correctly. **Cost: no `ErrorInterpreter` hints on interactive commands** — but Windows doesn't produce them today either, so this is not a regression |
+| B (later) | P/Invoke ConPTY (`CreatePseudoConsole`) | Gets both output capture and interactivity, at a significantly higher implementation cost |
 
-**推奨: A。** 非対話経路（`probe` / `resource_exists?` / 通常の `execute`）はキャプチャを維持するので、`wip up` / `wip doctor` のヒントは従来どおり出る。
+**Recommendation: A.** The non-interactive paths (`probe`, `resource_exists?`, ordinary `execute`) keep capturing output, so hints from `wip up` and `wip doctor` continue to work as before.
 
-**要スパイク:** WSL2 の bash から起動された Windows プロセスに、対話に耐える実コンソールが割り当たるか。Windows Terminal の ConPTY 経由になるはずだが、`wslc exec -it` が正しく TTY を認識するかは実測が要る（Phase 0）。
+**Needs a spike:** whether a Windows process launched from WSL2 bash gets a console good enough for interaction. It should arrive via Windows Terminal's ConPTY, but whether `wslc exec -it` correctly detects a TTY has to be measured (Phase 0).
 
-### 4.3 その他の細部
+### 4.3 Smaller details
 
-| Ruby | C# | 備考 |
+| Ruby | C# | Notes |
 |---|---|---|
-| `Shellwords.split` | **自前実装（50 行程度）** | BCL に相当機能なし。`command:` 文字列 → argv の分割に計 4 箇所で必要。golden テストで突き合わせる |
-| `File.rename`（アトミック置換） | `File.Move(src, dst, overwrite: true)` | |
-| `Find.prune` によるツリー枝刈り | `EnumerateFileSystemEntries` の手動再帰 | `RecurseSubdirectories` では枝刈りできない |
+| `Shellwords.split` | **Hand-written (~50 lines)** | No BCL equivalent. Needed in 4 places to split `command:` strings into argv. Cross-checked via golden tests |
+| `File.rename` (atomic replace) | `File.Move(src, dst, overwrite: true)` | |
+| `Find.prune` tree pruning | Manual recursion over `EnumerateFileSystemEntries` | `RecurseSubdirectories` gives no way to prune |
 | `Data.define` | `record` | |
-| `Open3.popen3` | `Process` + `ArgumentList` | **引数配列渡し（シェル解釈なし）という wip の設計上重要な性質はそのまま保てる** |
-| `Signal.trap('WINCH')` | 不要 | PTY 経路が消えるため |
-| 正規表現（`ErrorInterpreter` 等） | `[GeneratedRegex]` | ソース生成。AOT 相性◎ |
+| `Open3.popen3` | `Process` + `ArgumentList` | **Preserves wip's design-critical property: arguments passed as an array, never through a shell** |
+| `Signal.trap('WINCH')` | Not needed | The PTY path is gone |
+| Regexes (`ErrorInterpreter` etc.) | `[GeneratedRegex]` | Source-generated; excellent AOT fit |
 
 ---
 
-## 5. 決定が必要な残件
+## 5. Decisions Still Open
 
-### 決定 A: CLI フレームワーク
+### Decision A: CLI framework
 
-| 候補 | AOT 適性 | 備考 |
+| Candidate | AOT fit | Notes |
 |---|---|---|
-| **System.CommandLine 2.0（推奨）** | ◎ 公式に AOT 対応を掲げている | Thor 相当（サブコマンド、グローバルオプション、help 生成）が揃う |
-| Spectre.Console.Cli | △ | コマンド型の解決にリフレクションを使う箇所があり AOT で追加対応が要る |
-| 自前パーサ | ◎ | 依存ゼロ・最小サイズだが help 生成とエラー文言を全部書くことになる |
+| **System.CommandLine 2.0 (recommended)** | ◎ AOT support is an advertised goal | Covers the Thor equivalents: subcommands, global options, generated help |
+| Spectre.Console.Cli | △ | Resolves command types via reflection in places, needing extra AOT work |
+| Hand-rolled parser | ◎ | Zero dependencies and smallest binary, but every help string and error message is yours to write |
 
-**推奨: System.CommandLine 2.0。** 着手時に最新版と AOT 対応状況を確認する（§9）。
+**Recommendation: System.CommandLine 2.0**, confirming the current version and AOT status at kickoff (§11).
 
-`cli.rb` にある Thor 回避用の独自ロジック 2 つは、そのまま移植せず再設計する:
+The two Thor workarounds in `cli.rb` should be redesigned rather than ported:
 
-1. `reorder_global_options`（`wip --config foo up` の並べ替え）→ System.CommandLine のグローバルオプションは元々位置非依存なので、**処理ごと不要になる可能性が高い**
-2. `dispatch` フォールバック（未知のコマンド名を `wip.yml` の `commands:` として解決）→ 未マッチ時ハンドラを自前で挿す必要あり。**要スパイク**
+1. `reorder_global_options` (rewriting `wip --config foo up` into `wip up --config foo`) — System.CommandLine's global options are position-independent to begin with, so **this may well be deleted outright**
+2. The `dispatch` fallback (resolving an unknown command name against `commands:` in `wip.yml`) — needs a custom unmatched-input handler. **Needs a spike**
 
-### 決定 B: arm64 を出すか
+### Decision B: Ship arm64?
 
-Windows on ARM でも WSL2 は動く。WinGet マニフェストは x64 / arm64 を併記できる。
+WSL2 runs on Windows on ARM, and a WinGet manifest can list x64 and arm64 side by side.
 
-**推奨: 初回は win-x64 のみ。** 命名規則（§7.3）に arm64 を後から足せる形を用意しておき、要望が出たらジョブを 1 つ増やす。arm64 Windows ランナーの可用性確認が要る。
+**Recommendation: win-x64 only for the first release.** Keep the naming scheme (§7.3) shaped so arm64 can be added later as one extra job. Availability of arm64 Windows runners needs checking.
 
-### 決定 C: コード署名
+### Decision C: Code signing
 
-未署名の exe は SmartScreen の警告対象になりうる。ZIP + portable は MSI より警告に当たりにくいが、レピュテーションはゼロから積むことになる。
+An unsigned executable can draw SmartScreen warnings. A ZIP + portable install is less prone to this than an MSI, but reputation still starts from zero.
 
-**推奨: 当面は署名なしで出し、実害が出たら Azure Trusted Signing を検討。** 後から CI に署名ステップを 1 つ足すだけなので、初期の障害にはしない。
+**Recommendation: ship unsigned for now; revisit Azure Trusted Signing if it causes real friction.** Adding it later is one extra CI step, so it shouldn't block the start.
 
-### 決定 D: バージョン番号
+### Decision D: Version number
 
-実装言語の変更・最小要件の変更・`wip.yml` の破壊的変更が同時に起きるため、**v2.0.0 から開始**することを推奨する。
+The implementation language, the minimum requirements, and `wip.yml` all break at once, so **start at v2.0.0**.
 
-あわせて、退避先の Ruby リポジトリでは gemspec の `source_code_uri` / `bug_tracker_uri` を新リポジトリに向け直すこと（現在は `slidict/wip` を指している）。
+Relatedly, in the Ruby repository the gemspec's `source_code_uri` and `bug_tracker_uri` need repointing — they currently reference `slidict/wip`.
 
 ---
 
-## 6. リポジトリ構成
+## 6. Repository Layout
 
 ```
 wip/
-├── Directory.Build.props        # net10.0 / LangVersion / AOT 設定 / Version
+├── Directory.Build.props        # net10.0 / LangVersion / AOT settings / Version
 ├── Directory.Packages.props     # Central Package Management
 ├── wip.slnx
 ├── src/
-│   ├── Wip.Core/                # ロジック
+│   ├── Wip.Core/                # Logic
 │   │   ├── Configuration/       # Config, ConfigLoader, DotenvLoader, SyncSettings
 │   │   ├── Compose/             # ComposeFile, ComposeBridge, VariableInterpolation
 │   │   ├── Build/               # BuildContext, DockerIgnore, StagingProgress
 │   │   ├── Execution/           # CommandBuilder, CommandRunner, CommandResolver, CommandDisplay
 │   │   ├── Diagnostics/         # Doctor, ErrorInterpreter, DebugReporter, ResourceMonitor
 │   │   └── Platform/            # WindowsEnvironment, WslPath, Shellwords
-│   └── Wip.Cli/                 # PublishAot=true。エントリポイントとコマンド定義のみ
+│   └── Wip.Cli/                 # PublishAot=true. Entry point and command definitions only
 ├── tests/
-│   ├── Wip.Tests/               # xUnit（通常の CoreCLR で実行）
-│   └── golden/                  # 移行パリティ用フィクスチャ（§8）
-└── packaging/winget/            # WinGet マニフェストのテンプレート
+│   ├── Wip.Tests/               # xUnit (runs on ordinary CoreCLR)
+│   └── golden/                  # Migration parity fixtures (§8)
+└── packaging/winget/            # WinGet manifest templates
 ```
 
-`Wip.Core` と `Wip.Cli` を分けるのはテスト容易性のため。AOT 発行は `Wip.Cli` にのみ適用し、`Wip.Core` は xUnit から通常参照する。ただし `Wip.Core` にも `<IsAotCompatible>true</IsAotCompatible>` を立て、リフレクション依存をコンパイル時に検出させる。
+Splitting `Wip.Core` from `Wip.Cli` is for testability: AOT publishing applies only to `Wip.Cli`, while `Wip.Core` is referenced normally from xUnit. Still, set `<IsAotCompatible>true</IsAotCompatible>` on `Wip.Core` too, so reflection dependencies surface at compile time.
 
-**`Platform/WslPath` が新規追加分**（§3 の UNC ↔ Linux パス変換）。
+**`Platform/WslPath` is the one genuinely new component** — the UNC ↔ Linux path translation from §3.
 
-### 共通ビルド設定（`Directory.Build.props` の要点）
+### Shared build settings (`Directory.Build.props`, key entries)
 
 ```xml
 <TargetFramework>net10.0</TargetFramework>
 <RuntimeIdentifier>win-x64</RuntimeIdentifier>
 <Nullable>enable</Nullable>
 <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-<InvariantGlobalization>true</InvariantGlobalization>   <!-- ICU を落としてサイズ削減 -->
+<InvariantGlobalization>true</InvariantGlobalization>   <!-- drops ICU, shrinks the binary -->
 <UseSystemResourceKeys>true</UseSystemResourceKeys>
-<PublishAot>true</PublishAot>                            <!-- Wip.Cli のみ -->
+<PublishAot>true</PublishAot>                            <!-- Wip.Cli only -->
 <StripSymbols>true</StripSymbols>
 <IlcOptimizationPreference>Size</IlcOptimizationPreference>
 ```
 
-`InvariantGlobalization=true` の妥当性は要確認（§9）。`SECRET_PATTERN` のような大文字小文字無視比較は `StringComparison.OrdinalIgnoreCase` を明示すれば問題ない。
+Whether `InvariantGlobalization=true` is appropriate needs confirming (§11). Case-insensitive comparisons like `SECRET_PATTERN` are fine as long as `StringComparison.OrdinalIgnoreCase` is explicit.
 
-### サイズと起動時間の目標
+### Size and startup targets
 
-| 指標 | 目標 |
+| Metric | Target |
 |---|---|
-| `wip.exe` サイズ | 圧縮前 < 10 MB / ZIP 後 < 5 MB |
-| `wip version` 実行時間 | < 30 ms（現行 Ruby は 200–400 ms） |
-| ZIP 内容 | `wip.exe` 単体 |
+| `wip.exe` size | < 10 MB uncompressed / < 5 MB zipped |
+| `wip version` wall time | < 30 ms (Ruby today: 200–400 ms) |
+| ZIP contents | `wip.exe` alone |
 
 ---
 
-## 7. モジュール別 移植計画
+## 7. Module-by-Module Port Map
 
-| Ruby | 行数 | C# 移植先 | 難度 | 備考 |
+| Ruby | Lines | C# destination | Difficulty | Notes |
 |---|---:|---|:---:|---|
-| `version.rb` | 5 | `Directory.Build.props` の `<Version>` | 易 | 単一の版元をここに移す |
-| `errors.rb` | 7 | `WipException` 階層 | 易 | |
-| `command_display.rb` | 19 | `CommandDisplay` | 易 | |
-| `dotenv_loader.rb` | 39 | `DotenvLoader` | 易 | 正規表現をそのまま移植 |
-| `environment.rb` | 43 | `Platform/WindowsEnvironment` | **易**（↓） | `/proc/version` と interop 判定が消えて `wsl.exe --status` のみに |
-| `command_resolver.rb` | 48 | `CommandResolver` | **易**（↓） | PATHEXT のみ。Unix 実行ビット判定が不要に |
-| `variable_interpolation.rb` | 60 | `VariableInterpolation` | 易 | |
-| `staging_progress.rb` | 63 | `StagingProgress` | 易 | |
-| `debug_reporter.rb` | 66 | `DebugReporter` | 易 | |
-| `compose_bridge.rb` | 72 | `ComposeBridge` | 易 | |
-| `docker_ignore.rb` | 75 | `DockerIgnore` | 中 | glob マッチを自前実装。振る舞い一致が重要 |
-| `error_interpreter.rb` | 90 | `ErrorInterpreter` | 易 | `[GeneratedRegex]` 化 |
-| `resource_monitor.rb` | 94 | `ResourceMonitor` | 中 | |
-| `sync_settings.rb` | 157 | `SyncSettings` | **中→難**（↑） | `source` のパス表現が §3 の結論に依存 |
-| `doctor.rb` | 158 | `Doctor` | **易**（↓） | interop チェック削除。WSL2 検出が単純化 |
-| `initializer.rb` | 220 | `Initializer` | 中 | テンプレートは raw string literal (`"""`) |
-| `build_context.rb` | 219 | `BuildContext` | **中**（↓） | flock/UnixFileMode の P/Invoke が不要に。代わりに常時ローカルステージング化（§3.3） |
-| `command_builder.rb` | 234 | `CommandBuilder` | 中 | `Shellwords.split` が要る。`volume_specs` は §3 の結論に依存 |
-| `config.rb` | 273 | `Config` | 中 | `shadow_context` 検証を削除 or `context_cache` に置換 |
-| `compose_file.rb` | 272 | `ComposeFile` | 中 | 同上 |
-| `command_runner.rb` | 205 | `CommandRunner` | **中**（↓） | 3 経路 → 2 経路。openpty/raw モード/SIGWINCH がまるごと消える |
-| `cli.rb` | 541 | `Wip.Cli` | 中 | System.CommandLine への読み替え |
-| — | — | `Platform/WslPath` | **難**（新規） | §3。UNC ↔ Linux パス変換 |
-| — | — | `Platform/Shellwords` | 中（新規） | POSIX shell 準拠の分割 |
+| `version.rb` | 5 | `<Version>` in `Directory.Build.props` | Easy | Single source of truth moves here |
+| `errors.rb` | 7 | `WipException` hierarchy | Easy | |
+| `command_display.rb` | 19 | `CommandDisplay` | Easy | |
+| `dotenv_loader.rb` | 39 | `DotenvLoader` | Easy | Regexes port directly |
+| `environment.rb` | 43 | `Platform/WindowsEnvironment` | **Easy** (↓) | `/proc/version` and the interop check are gone; only `wsl.exe --status` remains |
+| `command_resolver.rb` | 48 | `CommandResolver` | **Easy** (↓) | PATHEXT only; no Unix executable-bit check |
+| `variable_interpolation.rb` | 60 | `VariableInterpolation` | Easy | |
+| `staging_progress.rb` | 63 | `StagingProgress` | Easy | |
+| `debug_reporter.rb` | 66 | `DebugReporter` | Easy | |
+| `compose_bridge.rb` | 72 | `ComposeBridge` | Easy | |
+| `docker_ignore.rb` | 75 | `DockerIgnore` | Medium | Hand-written glob matching; behavioral parity matters |
+| `error_interpreter.rb` | 90 | `ErrorInterpreter` | Easy | Convert to `[GeneratedRegex]` |
+| `resource_monitor.rb` | 94 | `ResourceMonitor` | Medium | |
+| `sync_settings.rb` | 157 | `SyncSettings` | **Medium→Hard** (↑) | How `source` is represented depends on the §3 outcome |
+| `doctor.rb` | 158 | `Doctor` | **Easy** (↓) | Interop check removed; WSL2 detection simplifies |
+| `initializer.rb` | 220 | `Initializer` | Medium | Templates become raw string literals (`"""`) |
+| `build_context.rb` | 219 | `BuildContext` | **Medium** (↓) | No flock/UnixFileMode P/Invoke; instead always stages locally (§3.3) |
+| `command_builder.rb` | 234 | `CommandBuilder` | Medium | Needs `Shellwords.split`; `volume_specs` depends on the §3 outcome |
+| `config.rb` | 273 | `Config` | Medium | Drop or replace the `shadow_context` validation |
+| `compose_file.rb` | 272 | `ComposeFile` | Medium | Same |
+| `command_runner.rb` | 205 | `CommandRunner` | **Medium** (↓) | Three paths become two; openpty, raw mode, and SIGWINCH all disappear |
+| `cli.rb` | 541 | `Wip.Cli` | Medium | Reworked onto System.CommandLine |
+| — | — | `Platform/WslPath` | **Hard** (new) | §3. UNC ↔ Linux path translation |
+| — | — | `Platform/Shellwords` | Medium (new) | POSIX shell-compatible splitting |
 
-（↑↓ は当初の 4 RID 案からの難度変化）
+(↑↓ mark changes in difficulty relative to the earlier four-RID plan.)
 
 ---
 
-## 8. パリティ担保（golden テスト）
+## 8. Parity Safety Net (Golden Tests)
 
-**Ruby 実装がこのリポジトリを離れる前に、フィクスチャを抽出しておく。** これが移行全体の安全網になる。
+**Extract the fixtures before the Ruby implementation leaves this repository.** This is the safety net for the whole migration.
 
-`tests/golden/` に入出力のペアを置く:
+Put input/output pairs under `tests/golden/`:
 
 ```
 tests/golden/
@@ -331,23 +332,23 @@ tests/golden/
   ...
 ```
 
-対象は「入力 → 出力が純粋関数になっている層」に絞る:
+Cover the layers where input → output is a pure function:
 
-- `CommandBuilder` が生成する argv 配列 ← **最重要。ここが一致すれば実行時の振る舞いも一致する**
-- `Config#to_h` の正規化結果 / `DotenvLoader` / `DockerIgnore#ignored?` / `Shellwords.split` / `ComposeFile#to_dependencies_hash`
+- The argv arrays produced by `CommandBuilder` ← **most important. If these match, runtime behavior matches**
+- `Config#to_h` normalization, `DotenvLoader`, `DockerIgnore#ignored?`, `Shellwords.split`, `ComposeFile#to_dependencies_hash`
 
-**破壊的変更を許容する以上、一部のフィクスチャは意図的に変わる。** 具体的には §3 のパス関連（`sync.source`、`volumes:`、`shadow_context`）。したがって golden テストの役割は「完全一致の強制」ではなく、**「意図しない変更の検出」**である:
+**Since breaking changes are allowed, some fixtures will change on purpose** — specifically the path-related ones from §3 (`sync.source`, `volumes:`, `shadow_context`). So the role of these tests is not to enforce an exact match but to **catch unintended changes**:
 
-- パス関連のケースは `expect` を新モデルに合わせて**意図的に書き換える**（差分がレビューに乗る）
-- それ以外の 8 割は**そのまま緑であるべき**
+- Path-related cases get their `expect` values **deliberately rewritten** to the new model, so the change shows up in review
+- The other ~80% **should stay green untouched**
 
-`CommandRunner` の端末挙動と `BuildContext` の実ファイル操作は golden 化できないため、§9 Phase 4 の手動テストマトリクスで担保する。
+`CommandRunner`'s terminal behavior and `BuildContext`'s real file operations can't be captured this way; they're covered by the manual test matrix in Phase 4.
 
 ---
 
-## 9. 配布パイプライン
+## 9. Distribution Pipeline
 
-### 9.1 全体像
+### 9.1 Overview
 
 ```
 git tag v2.0.0
@@ -359,39 +360,39 @@ git tag v2.0.0
 │  → actions/attest-build-provenance           │
 └──────────────────┬───────────────────────────┘
                    ▼
-        GitHub Release（release-drafter の下書きを publish）
+        GitHub Release (publish the release-drafter draft)
                    │  on: release published
                    ▼
-        winget.yml → microsoft/winget-pkgs へ PR 自動作成
+        winget.yml → opens a PR against microsoft/winget-pkgs
 ```
 
-Native AOT はクロス OS ビルドができないため **windows ランナー必須**。ただし Windows 専用化により**マトリクスは 1 ジョブで済む**（arm64 を出す場合のみ 2 ジョブ）。
+Native AOT cannot cross-compile across operating systems, so **a Windows runner is mandatory**. Being Windows-only, though, **the matrix is a single job** (two, if arm64 ships).
 
-### 9.2 リリーストリガの変更
+### 9.2 Changing the release trigger
 
-現行は `Changelog` ワークフロー成功 → `workflow_run` → `gem-push` という連鎖で追いにくい。**タグ駆動に単純化する**:
+Today the chain is: `Changelog` workflow succeeds → `workflow_run` → `gem-push`, which is hard to follow. **Simplify to tag-driven:**
 
-- `git tag v2.0.0 && git push --tags` → `release.yml` 起動
-- バージョンの単一の版元は `Directory.Build.props` の `<Version>`。CI がタグとの一致を検証し、不一致なら fail
-- `bump-version.yml` は `version.rb` ではなく `Directory.Build.props` を書き換えるよう改修
-- release-drafter によるリリースノート生成はそのまま活かす
-- `gem-push.yml` は削除
+- `git tag v2.0.0 && git push --tags` triggers `release.yml`
+- The single source of version truth is `<Version>` in `Directory.Build.props`; CI verifies it against the tag and fails on mismatch
+- Rework `bump-version.yml` to edit `Directory.Build.props` instead of `version.rb`
+- Keep release-drafter for release notes
+- Delete `gem-push.yml`
 
-### 9.3 成果物の命名
+### 9.3 Artifact naming
 
 ```
 wip-2.0.0-win-x64.zip
 SHA256SUMS
 ```
 
-WinGet マニフェストは URL にバージョンを埋め込むため、**この命名規則は一度決めたら変えない**（arm64 を後から足す前提の形にしてある）。
+WinGet manifests embed the version in the URL, so **this naming convention must not change once set** (it's already shaped to accept arm64 later).
 
-### 9.4 WinGet マニフェスト
+### 9.4 WinGet manifest
 
-`InstallerType: zip` + `NestedInstallerType: portable` を使う。ZIP に exe を 1 つ入れるだけの構成に対応した仕組みで、今回の形にそのまま合致する（マニフェストスキーマ 1.6 以降）。
+Use `InstallerType: zip` with `NestedInstallerType: portable` — the mechanism built for exactly this shape, a ZIP containing a single executable (manifest schema 1.6+).
 
 ```yaml
-# Slidict.Wip.installer.yaml（骨子）
+# Slidict.Wip.installer.yaml (skeleton)
 PackageIdentifier: Slidict.Wip
 PackageVersion: 2.0.0
 InstallerType: zip
@@ -407,145 +408,145 @@ ManifestType: installer
 ManifestVersion: 1.6.0
 ```
 
-必要なファイルは 3 点セット（version / installer / locale）。
+Three files are required: version, installer, and locale manifests.
 
-**準備が要るもの:**
+**Prerequisites:**
 
-1. **PackageIdentifier の確定** — `Slidict.Wip` を想定。publisher 部分が実在の発行者名と対応している必要がある
-2. **microsoft/winget-pkgs のフォーク** — 自動 PR の宛先
-3. **PAT (classic, `public_repo` スコープ)** — リポジトリシークレットに登録。`GITHUB_TOKEN` では他リポジトリに PR を出せない
-4. **自動化アクション** — `vedantmgoyal9/winget-releaser`（zip/portable 対応）または `wingetcreate update` を CI から呼ぶ
+1. **Confirm the PackageIdentifier** — `Slidict.Wip` is assumed; the publisher segment has to correspond to a real publisher name
+2. **A fork of microsoft/winget-pkgs** — the target for automated PRs
+3. **A classic PAT with `public_repo` scope**, stored as a repository secret. `GITHUB_TOKEN` cannot open PRs against another repository
+4. **An automation action** — `vedantmgoyal9/winget-releaser` (supports zip/portable) or calling `wingetcreate update` from CI
 
-**注意点:**
+**Things to watch:**
 
-- 初回投稿は winget-pkgs 側の人手レビューが入り、マージまで数日かかることがある。**Phase 5 に余裕を持たせる**
-- 検証には published な（draft/prerelease でない）リリースが必要 → WinGet ジョブは `on: release: types: [published]`
-- portable パッケージは winget が links ディレクトリに shim を作り PATH を通す。**WSL の bash からは `wip.exe` と打つ必要がある**（§3.5）
+- The first submission goes through human review on the winget-pkgs side and can take several days. **Leave slack in Phase 5**
+- Validation needs a published (non-draft, non-prerelease) release, so the WinGet job runs `on: release: types: [published]`
+- A portable package gets a winget-created shim on PATH. **From WSL bash, users still type `wip.exe`** (§3.5)
 
 ---
 
-## 10. フェーズ分割
+## 10. Phases
 
-### Phase 0 — スパイクとパイプライン検証
+### Phase 0 — Spikes and pipeline validation
 
-**方針: ロジックを 1 行も書く前に、(1) パスモデルの結論を出し、(2) 配布経路を最後まで通す。** 実装より先にこの 2 つを潰す。
+**Approach: before writing a single line of logic, (1) settle the path model and (2) get the distribution path working end to end.** Both come before implementation.
 
-**🔴 スパイク 1: パスモデル（最優先・他の判断がここに依存する）**
+**🔴 Spike 1: path model (highest priority — other decisions depend on it)**
 
-- [ ] WSL2 bash から Windows exe を起動したときの作業ディレクトリを実測（UNC になるか、どの表記か）
-- [ ] `wslc.exe run -v` に (a) Linux パス (b) Windows ローカルパス (c) UNC パス をそれぞれ渡し、**何が通るか実測**
-- [ ] `wslc.exe build` に UNC の cwd を渡した場合の挙動
-- [ ] → §3.2 の決定木で方針確定。**(b) だった場合は「プロジェクトは Windows FS に置く」制約を確定させ、README/Wiki に明記する**
+- [ ] Measure the working directory a Windows exe actually receives when launched from WSL2 bash (is it UNC, and in which form?)
+- [ ] Pass (a) Linux paths, (b) Windows-local paths, and (c) UNC paths to `wslc.exe run -v` and **measure which are accepted**
+- [ ] Check `wslc.exe build` behavior with a UNC cwd
+- [ ] → Settle the approach via the §3.2 decision tree. **If (b), lock in the "projects live on the Windows filesystem" constraint and document it in the README and wiki**
 
-**🔴 スパイク 2: 対話端末**
+**🔴 Spike 2: interactive terminal**
 
-- [ ] WSL2 bash から起動した Windows プロセスで `wslc exec -it` が TTY を正しく認識するか
-- [ ] Ctrl-C・ウィンドウリサイズが期待どおり効くか
+- [ ] Does `wslc exec -it` correctly detect a TTY in a Windows process launched from WSL2 bash?
+- [ ] Do Ctrl-C and window resizing behave as expected?
 
-**スパイク 3: AOT 実現性**
+**Spike 3: AOT feasibility**
 
-- [ ] .NET 10 SDK でソリューション骨格を作成
-- [ ] YamlDotNet（表現モデル方式）+ System.CommandLine を入れた状態で AOT 発行が通るか、リフレクション警告ゼロか
-- [ ] `wip version` だけ返すダミーを発行し、**サイズと起動時間を実測**
-- [ ] System.CommandLine で「未知コマンド → `commands:` フォールバック」が書けるか（§5 決定 A-2）
+- [ ] Stand up the solution skeleton on the .NET 10 SDK
+- [ ] Confirm AOT publishing succeeds with YamlDotNet (representation model) and System.CommandLine present, with zero reflection warnings
+- [ ] Publish a stub that only answers `wip version` and **measure size and startup time**
+- [ ] Confirm "unknown command → `commands:` fallback" is expressible in System.CommandLine (§5, Decision A-2)
 
-**パイプライン検証**
+**Pipeline validation**
 
-- [ ] windows ランナーでビルド → ZIP → プレリリース公開までを CI で通す
-- [ ] WinGet マニフェストを手動生成し、`winget validate` / `winget install --manifest` でローカル検証（**PR は出さない**）
+- [ ] Get build → ZIP → prerelease publish working in CI on a Windows runner
+- [ ] Generate a WinGet manifest by hand and validate locally with `winget validate` / `winget install --manifest` (**do not open a PR**)
 
-**完了条件: ダミー wip.exe が WinGet ローカルマニフェスト経由でインストールでき、WSL2 の bash から `wip.exe version` が動く。**
+**Exit criteria: the stub wip.exe installs through a local WinGet manifest, and `wip.exe version` runs from WSL2 bash.**
 
-### Phase 1 — Ruby 退避と安全網
+### Phase 1 — Retire Ruby, keep the safety net
 
-- [ ] `tests/golden/` のフィクスチャを既存 RSpec から抽出、**Ruby 側で緑を確認**
-- [ ] Ruby 実装を別リポジトリへコピー（gemspec のメタデータ URL を新リポジトリに向け直す）
-- [ ] 本リポジトリから `lib/` `exe/` `spec/` `Gemfile` `Rakefile` `*.gemspec` `.rubocop.yml` を削除
-- [ ] `gem-push.yml` を削除、`test.yml` を dotnet 用に差し替え
+- [ ] Extract `tests/golden/` fixtures from the existing RSpec suite and **confirm Ruby passes them**
+- [ ] Copy the Ruby implementation to its own repository (repoint the gemspec metadata URLs)
+- [ ] Delete `lib/`, `exe/`, `spec/`, `Gemfile`, `Rakefile`, `*.gemspec`, and `.rubocop.yml` from this repository
+- [ ] Delete `gem-push.yml`; replace `test.yml` with a dotnet equivalent
 
-### Phase 2 — 純粋ロジック層
+### Phase 2 — Pure logic layer
 
-- [ ] `Shellwords` / `DotenvLoader` / `DockerIgnore` / `VariableInterpolation` / `ErrorInterpreter`
-- [ ] `WslPath`（Phase 0 スパイク 1 の結論を実装）
-- [ ] `Config` / `ConfigLoader` / `SyncSettings` / `ComposeFile` / `ComposeBridge`
+- [ ] `Shellwords`, `DotenvLoader`, `DockerIgnore`, `VariableInterpolation`, `ErrorInterpreter`
+- [ ] `WslPath` (implementing the Spike 1 conclusion)
+- [ ] `Config`, `ConfigLoader`, `SyncSettings`, `ComposeFile`, `ComposeBridge`
 - [ ] `CommandBuilder`
-- [ ] **完了条件: golden テストが全緑（パス関連の意図的な差分を除く）**
+- [ ] **Exit criteria: golden tests fully green, apart from the deliberate path-related diffs**
 
-### Phase 3 — 実行・IO 層と CLI
+### Phase 3 — Execution/IO layer and CLI
 
-- [ ] `WindowsEnvironment` / `CommandResolver`
-- [ ] `CommandRunner`（キャプチャ経路 + stdio 継承経路）
-- [ ] `BuildContext`（常時ローカルステージング）/ `StagingProgress`
-- [ ] `Doctor` / `DebugReporter` / `ResourceMonitor` / `Initializer`
-- [ ] System.CommandLine で全コマンド定義（`version` `init` `doctor` `config` `build` `up` `sync` `stop` `down` `exec` `run` `shell` `logs` `dispatch`）
-- [ ] グローバルオプション（`--config` `--env-file` `--debug` `--debug-log`）
-- [ ] 未知コマンド → `wip.yml` の `commands:` へのフォールバック
-- [ ] **help 出力の文言を Wiki の記述と突き合わせる**
-- [ ] 終了コードのパリティ（`1` / `127` / `130`）
-- [ ] `install-wsl-shim` の要否を判断（§3.5）
+- [ ] `WindowsEnvironment`, `CommandResolver`
+- [ ] `CommandRunner` (capture path + stdio inheritance path)
+- [ ] `BuildContext` (always staging locally), `StagingProgress`
+- [ ] `Doctor`, `DebugReporter`, `ResourceMonitor`, `Initializer`
+- [ ] Define every command in System.CommandLine (`version`, `init`, `doctor`, `config`, `build`, `up`, `sync`, `stop`, `down`, `exec`, `run`, `shell`, `logs`, `dispatch`)
+- [ ] Global options (`--config`, `--env-file`, `--debug`, `--debug-log`)
+- [ ] Unknown command → `commands:` fallback from `wip.yml`
+- [ ] **Reconcile help output wording against the wiki**
+- [ ] Exit code parity (`1`, `127`, `130`)
+- [ ] Decide whether `install-wsl-shim` is worth shipping (§3.5)
 
-### Phase 4 — 実機検証
+### Phase 4 — Real-environment verification
 
-golden テストで拾えない領域を手動で潰す。**PowerShell と WSL2 bash の両方から**実施:
+Close out what golden tests can't reach. Run **from both PowerShell and WSL2 bash**:
 
-| シナリオ | PowerShell | WSL2 bash |
+| Scenario | PowerShell | WSL2 bash |
 |---|---|---|
 | `wip init` → `doctor` → `build` → `up -d` → `exec` | ☐ | ☐ |
-| `wip shell`（対話。Ctrl-C、Ctrl-D、リサイズ） | ☐ | ☐ |
-| `wip run rails console`（対話 TTY） | ☐ | ☐ |
-| `mode: compose-native` で `up` / `logs` | ☐ | ☐ |
+| `wip shell` (interactive: Ctrl-C, Ctrl-D, resize) | ☐ | ☐ |
+| `wip run rails console` (interactive TTY) | ☐ | ☐ |
+| `mode: compose-native` with `up` / `logs` | ☐ | ☐ |
 | `sync` / `sync --watch` | ☐ | ☐ |
-| `up --watch`（restart ポーリング） | ☐ | ☐ |
-| **プロジェクトが WSL FS 上（`~/proj`）** | ☐ | ☐ |
-| **プロジェクトが Windows FS 上（`C:\proj`）** | ☐ | ☐ |
-| `.dockerignore` を効かせた大きめのコンテキスト（**UNC 越しの走査性能を計測**） | ☐ | ☐ |
+| `up --watch` (restart polling) | ☐ | ☐ |
+| **Project on the WSL filesystem (`~/proj`)** | ☐ | ☐ |
+| **Project on the Windows filesystem (`C:\proj`)** | ☐ | ☐ |
+| A large context with `.dockerignore` active (**measure UNC walk performance**) | ☐ | ☐ |
 | `--debug` / `--debug-log` | ☐ | ☐ |
 
-- [ ] 自分たちのプロジェクトで 1〜2 週間ドッグフーディング
+- [ ] Dogfood on our own projects for one to two weeks
 
-### Phase 5 — 配布
+### Phase 5 — Ship
 
-- [ ] v2.0.0 リリース
-- [ ] winget-pkgs へ**初回 PR**（レビュー待ちの余裕を見込む）
-- [ ] README / Wiki の全面更新
-  - インストール手順を WinGet に変更
-  - **§3 の結論に応じたパス制約の明記**
-  - `shadow_context` 廃止の記載
-  - WSL2 からの呼び出し方（`wip.exe` / alias / shim）
-- [ ] 退避先リポジトリで gem の最終版を deprecation 告知付きで公開
+- [ ] Release v2.0.0
+- [ ] **First PR** to winget-pkgs (allow time for review)
+- [ ] Rewrite the README and wiki
+  - Installation switches to WinGet
+  - **Document the path constraint per the §3 outcome**
+  - Note the removal of `shadow_context`
+  - How to invoke from WSL2 (`wip.exe` / alias / shim)
+- [ ] Publish a final gem from the new Ruby repository with a deprecation notice
 
 ---
 
-## 11. リスクと未確定事項
+## 11. Risks and Open Questions
 
-### リスク
+### Risks
 
-| リスク | 影響 | 緩和策 |
+| Risk | Impact | Mitigation |
 |---|---|---|
-| 🔴 **wslc が WSL 側パスのバインドマウントを受け付けない** | **高** | Phase 0 スパイク 1 で最優先に確定。(b) なら「プロジェクトは Windows FS に置く」制約として文書化する。**この結論次第で `sync:` の設計意図そのものを見直す必要がある** |
-| **UNC 越しのファイル走査が遅く、大きなツリーで実用にならない** | 中 | 列挙時に属性を同時取得する実装（§3.3）。Phase 4 で実測し、駄目なら走査自体を wslc/wsl.exe 側に寄せる案を検討 |
-| **WSL bash から起動した exe が対話に耐えるコンソールを持たない** | 中 | Phase 0 スパイク 2。駄目なら ConPTY（§4.2 選択肢 B）へ |
-| **AOT でどこかのライブラリが動かない** | 中 | Phase 0 スパイク 3 で全依存を入れた状態を先に実測。駄目なら YAML は自前パーサ、CLI は自前パーサに退避可能 |
-| **winget-pkgs 初回レビューが長引く** | 低 | リリース自体は先に打てる（ZIP は Releases にある）。WinGet はレビュー完了後に告知 |
-| **`wip.exe` と打たせる UX の摩擦** | 低 | §3.5。shim か alias 手順で吸収 |
-| **Ruby 退避後に仕様の参照先を失う** | 中 | Phase 1 で golden フィクスチャを**先に**抽出する。退避先リポジトリも参照可能に保つ |
+| 🔴 **wslc rejects bind mounts of WSL-side paths** | **High** | Settle first in Phase 0 Spike 1. If (b), document "projects live on the Windows filesystem" as a constraint. **This outcome may require rethinking the purpose of `sync:` itself** |
+| **Walking files over UNC is too slow for large trees** | Medium | Take attributes from enumeration (§3.3). Measure in Phase 4; if inadequate, consider pushing the walk itself over to wslc/wsl.exe |
+| **An exe launched from WSL bash has no console fit for interaction** | Medium | Phase 0 Spike 2. Fall back to ConPTY (§4.2 option B) if needed |
+| **Some library doesn't work under AOT** | Medium | Phase 0 Spike 3 exercises every dependency up front. Fallbacks exist: hand-rolled YAML parser, hand-rolled CLI parser |
+| **winget-pkgs first review drags on** | Low | The release itself can ship regardless (the ZIP is on Releases). Announce WinGet once review clears |
+| **Friction from having to type `wip.exe`** | Low | §3.5. Absorbed by a shim or a documented alias |
+| **Losing the spec reference once Ruby leaves** | Medium | Extract the golden fixtures **first**, in Phase 1. Keep the new Ruby repository reachable |
 
-### 着手前に一次情報の確認が必要な事項
+### To confirm from primary sources before starting
 
-1. **wslc.exe のパス受け入れ仕様** — §3。本リポジトリに情報がないので実機確認しかない
-2. **.NET のバージョン** — net10.0（LTS）を前提にしているが、着手時のサポート状況を確認
-3. **System.CommandLine の最新版と AOT 対応の実態** — 特に未知コマンドのフォールバックが素直に書けるか
-4. **YamlDotNet の AOT 発行実績** — 表現モデル方式でリフレクション警告ゼロか
-5. **`InvariantGlobalization=true` の妥当性** — 日本語を含む `wip.yml` / パス / コンテナ出力の扱いに影響しないか
-6. **WSL2 が Windows プロセスに設定する作業ディレクトリの表記** — `\\wsl.localhost\` か `\\wsl$\` か、WSL のバージョンで変わるか
-7. **WinGet マニフェストスキーマの最新版** — `NestedInstallerType: portable` の現行書式
-8. **PackageIdentifier `Slidict.Wip`** — 発行者名の要件を満たすか
+1. **wslc.exe's path acceptance rules** — §3. Nothing in this repository answers it; it needs hands-on measurement
+2. **.NET version** — net10.0 (LTS) is assumed; confirm support status at kickoff
+3. **System.CommandLine's current version and real AOT status** — particularly whether the unknown-command fallback is expressible cleanly
+4. **YamlDotNet's AOT track record** — zero reflection warnings via the representation model?
+5. **Whether `InvariantGlobalization=true` is appropriate** — any impact on `wip.yml`, paths, or container output containing non-ASCII text
+6. **The working directory form WSL2 gives a Windows process** — `\\wsl.localhost\` or `\\wsl$\`, and whether it varies by WSL version
+7. **Current WinGet manifest schema** — the present syntax for `NestedInstallerType: portable`
+8. **PackageIdentifier `Slidict.Wip`** — does it satisfy the publisher-name requirements?
 
 ---
 
-## 12. まとめ
+## 12. Summary
 
-- **Windows 専用化により、移植量はおよそ 2〜3 割減った。** openpty・flock・UnixFileMode の P/Invoke、`/proc` パース、`Gem.win_platform?` 分岐、Linux RID とその配布経路がまるごと消える。
-- **破壊的変更の許容と Ruby の退避により、両実装の並行メンテという最大の負債を回避できる。** ただし退避前に golden フィクスチャを抜くこと（Phase 1）。
-- **残る本質的な難所は 1 つだけ: パスモデル（§3）。** 実行体が Windows 側に移ることで、ホスト絶対パスを wslc に渡す 3 箇所（`sync.source`、`volumes:`、ビルドコンテキスト）の意味が変わる。ビルドコンテキストは常時ローカルステージングで解決できるが、**バインドマウント 2 箇所は wslc の実仕様を測るまで方針を決められない。**
-- **進め方の要点**: Phase 0 でパスモデルの結論を出し、配布経路を通す。次に Ruby が去る前に golden フィクスチャを抜く。この 2 つを先にやれば、以降は機械的な移植になる。
+- **Going Windows-only cut the port by roughly 20–30%.** The openpty, flock, and UnixFileMode P/Invokes, `/proc` parsing, the `Gem.win_platform?` branches, and the Linux RIDs with their separate distribution path all disappear.
+- **Accepting breaking changes and moving Ruby out avoids the largest liability: maintaining two implementations in parallel.** The one prerequisite is extracting the golden fixtures before it goes (Phase 1).
+- **One genuinely hard problem remains: the path model (§3).** Moving execution to the Windows side changes the meaning of all three places that hand wslc a host absolute path — `sync.source`, `volumes:`, and the build context. The build context is solved by staging locally at all times, but **the two bind-mount sites can't be settled until wslc's real behavior is measured.**
+- **How to proceed:** settle the path model and get the distribution path working in Phase 0; extract the golden fixtures before Ruby leaves. With those two done, the rest is a mechanical port.
