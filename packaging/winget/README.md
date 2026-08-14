@@ -16,6 +16,12 @@ reviewable in this repository and can be validated by hand before the first subm
    repository as the `WINGET_TOKEN` secret. `GITHUB_TOKEN` cannot be used — it has no rights
    on another repository — and the workflow skips itself rather than failing every release
    while the secret is missing.
+
+   `winget-releaser` needs a *classic* PAT; a fine-grained one is not a drop-in
+   replacement. A classic token is coarse by construction, so prefer minting it on a
+   dedicated bot account that owns the fork and nothing else, and give it an expiry — that
+   way its blast radius is one forked public repository rather than everything the release
+   manager can reach.
 3. **Confirm the package identifier.** `Slidict.Wip` is assumed throughout. The publisher
    half has to correspond to a real publisher name, so check it before the first submission:
    changing an identifier after the fact means a new package, not a rename.
@@ -34,6 +40,11 @@ winget install --manifest packaging/winget/manifests
 
 Three files are required. `<version>` and `<sha256>` are filled in per release; everything
 else is stable.
+
+`ManifestVersion` below shows the shape, not a version to copy: winget-pkgs retires older
+schema versions and can reject a submission that uses one. The automation emits whatever
+schema its tooling targets, so **check the schema version currently accepted by winget-pkgs
+before the first submission** and let `winget validate` confirm it.
 
 ```yaml
 # Slidict.Wip.installer.yaml

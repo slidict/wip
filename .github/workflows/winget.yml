@@ -1,10 +1,20 @@
 name: WinGet
 
-# Runs on release publication rather than on the tag, because winget-pkgs validation
-# downloads the installer URL: the assets have to exist and the release must not be a draft.
+# Called by release.yml rather than triggered by `release: published`. A release created
+# with GITHUB_TOKEN does not start another workflow run, so an event-based trigger would
+# leave every automated release silently unsubmitted. Calling it directly makes the handoff
+# part of the release job's own graph.
 on:
-  release:
-    types: [published]
+  workflow_call:
+    inputs:
+      tag:
+        description: Release tag the assets belong to (e.g. v2.0.0).
+        required: true
+        type: string
+    secrets:
+      WINGET_TOKEN:
+        description: Classic PAT with public_repo scope, on an account that forked winget-pkgs.
+        required: false
   workflow_dispatch:
     inputs:
       tag:
@@ -24,12 +34,11 @@ jobs:
       # The secrets context cannot be read from an `if:` condition, so it is lifted into env
       # here and the steps below branch on that instead.
       WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+      TAG: ${{ inputs.tag }}
 
     steps:
       - name: Resolve version
         id: resolve
-        env:
-          TAG: ${{ inputs.tag || github.event.release.tag_name }}
         run: |
           set -euo pipefail
           echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
@@ -46,7 +55,7 @@ jobs:
           identifier: Slidict.Wip
           version: ${{ steps.resolve.outputs.version }}
           installers-regex: '^wip-.*-win-x64\.zip$'
-          release-tag: ${{ inputs.tag || github.event.release.tag_name }}
+          release-tag: ${{ inputs.tag }}
           token: ${{ env.WINGET_TOKEN }}
 
       - name: Explain a skipped submission

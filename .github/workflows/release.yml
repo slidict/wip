@@ -20,6 +20,9 @@ jobs:
       id-token: write
       attestations: write
 
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -96,3 +99,14 @@ jobs:
           files: |
             dist/*.zip
             dist/SHA256SUMS
+
+  # Called rather than triggered: a release created with GITHUB_TOKEN does not raise
+  # `release: published` for another workflow, so an event-based handoff would leave every
+  # automated release unsubmitted with nothing to show for it.
+  winget:
+    name: Submit to WinGet
+    needs: build
+    uses: ./.github/workflows/winget.yml
+    with:
+      tag: ${{ github.ref_name }}
+    secrets: inherit

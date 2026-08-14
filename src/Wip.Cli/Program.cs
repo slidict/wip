@@ -7,6 +7,72 @@ internal static class Program
 {
     internal static int Main(string[] args)
     {
+        var root = BuildRoot();
+
+        // System.CommandLine installs its own top-level handler that prints a raw stack
+        // trace. wip reports failures as a one-line message, so that handler is turned off
+        // and the exceptions are caught here instead.
+        var invocation = new InvocationConfiguration { EnableDefaultExceptionHandler = false };
+
+        try
+        {
+            return Parse(root, args).Invoke(invocation);
+        }
+        catch (ExitException exit)
+        {
+            return exit.Code;
+        }
+        catch (WipException exception)
+        {
+            Console.Error.WriteLine($"wip: {exception.Message}");
+            return 1;
+        }
+    }
+
+    /// <summary>
+    /// Routes an unrecognised first word to <c>dispatch</c>, so a name defined under
+    /// <c>commands:</c> in wip.yml runs as <c>wip test</c> and not only as
+    /// <c>wip dispatch test</c>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Both the decision and the rewrite avoid reading argv positionally, because argv
+    /// cannot be interpreted without knowing each option's arity. Deciding comes from a real
+    /// parse. Rewriting prepends rather than inserting: searching argv for the unmatched
+    /// token finds the wrong occurrence when an option value happens to equal it, so
+    /// <c>wip --config test test</c> would have turned into <c>--config dispatch</c> and
+    /// swallowed the command. Prepending is safe because recursive options are
+    /// position-independent, so they parse identically after <c>dispatch</c>.
+    /// </para>
+    /// <para>
+    /// The Ruby CLI needed a second rewrite here, reordering global options so that
+    /// <c>wip --config x up</c> reached Thor as <c>wip up --config x</c>. System.CommandLine's
+    /// recursive options are already position-independent, so that half is simply gone.
+    /// </para>
+    /// </remarks>
+    internal static ParseResult Parse(RootCommand root, string[] args)
+    {
+        var parsed = root.Parse(args);
+
+        // A matched subcommand, or nothing left over, means there is no custom name to route.
+        if (!ReferenceEquals(parsed.CommandResult.Command, root) || parsed.UnmatchedTokens.Count == 0)
+        {
+            return parsed;
+        }
+
+        // An unrecognised option is a usage error, not a command name; leave it to report
+        // itself rather than dragging it into `dispatch`.
+        if (parsed.UnmatchedTokens[0].StartsWith('-'))
+        {
+            return parsed;
+        }
+
+        return root.Parse([.. new[] { "dispatch" }.Concat(args)]);
+    }
+
+    /// <summary>Builds the command tree. Internal so <see cref="Parse"/> can be tested against it.</summary>
+    internal static RootCommand BuildRoot()
+    {
         var configOption = new Option<string?>("--config") { Description = "Path to wip.yml", Recursive = true };
         var envFileOption = new Option<string?>("--env-file")
         {
@@ -43,65 +109,7 @@ internal static class Program
             root.Subcommands.Add(command);
         }
 
-        // System.CommandLine installs its own top-level handler that prints a raw stack
-        // trace. wip reports failures as a one-line message, so that handler is turned off
-        // and the exceptions are caught here instead.
-        var invocation = new InvocationConfiguration { EnableDefaultExceptionHandler = false };
-
-        try
-        {
-            return Parse(root, args).Invoke(invocation);
-        }
-        catch (ExitException exit)
-        {
-            return exit.Code;
-        }
-        catch (WipException exception)
-        {
-            Console.Error.WriteLine($"wip: {exception.Message}");
-            return 1;
-        }
-    }
-
-    /// <summary>
-    /// Routes an unrecognised first word to <c>dispatch</c>, so a name defined under
-    /// <c>commands:</c> in wip.yml runs as <c>wip test</c> and not only as
-    /// <c>wip dispatch test</c>.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// The decision is made from a real parse rather than by scanning argv, because argv
-    /// cannot be read without knowing each option's arity: in <c>wip --config x config</c>
-    /// the first word that does not start with a dash is x, the value of --config, not a
-    /// command. Parsing first and reacting to what went unmatched sidesteps that entirely.
-    /// </para>
-    /// <para>
-    /// The Ruby CLI needed a second rewrite here, reordering global options so that
-    /// <c>wip --config x up</c> reached Thor as <c>wip up --config x</c>. System.CommandLine's
-    /// recursive options are already position-independent, so that half is simply gone.
-    /// </para>
-    /// </remarks>
-    private static ParseResult Parse(RootCommand root, string[] args)
-    {
-        var parsed = root.Parse(args);
-
-        // A matched subcommand, or nothing left over, means there is no custom name to route.
-        if (!ReferenceEquals(parsed.CommandResult.Command, root) || parsed.UnmatchedTokens.Count == 0)
-        {
-            return parsed;
-        }
-
-        var index = Array.IndexOf(args, parsed.UnmatchedTokens[0]);
-        if (index < 0)
-        {
-            return parsed;
-        }
-
-        var rewritten = new List<string>(args.Length + 1);
-        rewritten.AddRange(args[..index]);
-        rewritten.Add("dispatch");
-        rewritten.AddRange(args[index..]);
-        return root.Parse([.. rewritten]);
+        return root;
     }
 
     private static IEnumerable<Command> BuildCommands(Func<ParseResult, CliContext> context)

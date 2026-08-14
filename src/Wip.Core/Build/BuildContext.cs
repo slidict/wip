@@ -222,6 +222,11 @@ public sealed class BuildContext
     /// Copies via a temporary name and renames into place, so an interrupted update leaves
     /// the previous copy rather than no copy at all.
     /// </summary>
+    /// <remarks>
+    /// File.Move only replaces atomically within one volume — across volumes it degrades to
+    /// copy-then-delete, which is exactly what this is trying to avoid. The temporary is
+    /// created in the destination's own directory precisely so that can never happen.
+    /// </remarks>
     private static void CopyEntryAtomically(string source, string target)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(target)!);
@@ -239,7 +244,9 @@ public sealed class BuildContext
             var info = new FileInfo(source);
             if (info.LinkTarget is { } linkTarget)
             {
-                CreateSymbolicLink(temporary, linkTarget, source);
+                // Directory.Exists follows the link, which is what tells a directory link
+                // apart from a file one; they need different APIs to recreate.
+                CreateSymbolicLink(temporary, linkTarget, source, Directory.Exists(source));
             }
             else
             {
@@ -265,11 +272,18 @@ public sealed class BuildContext
     /// which is the thing keeping links as links exists to prevent. So this fails loudly, and
     /// says what to do about it.
     /// </remarks>
-    private static void CreateSymbolicLink(string path, string target, string source)
+    private static void CreateSymbolicLink(string path, string target, string source, bool isDirectory)
     {
         try
         {
-            File.CreateSymbolicLink(path, target);
+            if (isDirectory)
+            {
+                Directory.CreateSymbolicLink(path, target);
+            }
+            else
+            {
+                File.CreateSymbolicLink(path, target);
+            }
         }
         catch (Exception exception) when (exception is UnauthorizedAccessException or IOException)
         {

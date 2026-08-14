@@ -63,7 +63,9 @@ public static class ProcessProbe
         catch (Exception exception) when (
             exception is System.ComponentModel.Win32Exception
                 or InvalidOperationException
-                or PlatformNotSupportedException)
+                or PlatformNotSupportedException
+                // Killing a process tree reports a descendant's failure through this.
+                or AggregateException)
         {
             return false;
         }
@@ -74,11 +76,19 @@ public static class ProcessProbe
         try
         {
             process.Kill(entireProcessTree: true);
+
+            // Kill only requests termination. Waiting keeps the handle valid until the exit
+            // is real, so disposing it does not race the kill still in progress.
+            process.WaitForExit(5000);
         }
         catch (Exception exception) when (
-            exception is InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException)
+            exception is InvalidOperationException
+                or System.ComponentModel.Win32Exception
+                or NotSupportedException
+                or AggregateException)
         {
-            // It exited on its own between the timeout and this call.
+            // It exited on its own between the timeout and this call, or a descendant
+            // could not be reached — either way there is nothing left to do.
         }
     }
 }
