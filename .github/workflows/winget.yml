@@ -1,0 +1,58 @@
+name: WinGet
+
+# Runs on release publication rather than on the tag, because winget-pkgs validation
+# downloads the installer URL: the assets have to exist and the release must not be a draft.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to submit (e.g. v2.0.0).
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  submit:
+    name: Submit to winget-pkgs
+    runs-on: ubuntu-latest
+
+    env:
+      # The secrets context cannot be read from an `if:` condition, so it is lifted into env
+      # here and the steps below branch on that instead.
+      WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+
+    steps:
+      - name: Resolve version
+        id: resolve
+        env:
+          TAG: ${{ inputs.tag || github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      # Opens a pull request against microsoft/winget-pkgs from a fork on the account that
+      # owns WINGET_TOKEN. GITHUB_TOKEN cannot do this -- it has no rights on another
+      # repository -- so this needs a classic PAT with public_repo scope, and that account
+      # needs a fork of winget-pkgs. Without the secret the step is skipped rather than
+      # failing every release; see packaging/winget/README.md.
+      - name: Create winget-pkgs pull request
+        if: env.WINGET_TOKEN != ''
+        uses: vedantmgoyal9/winget-releaser@v2
+        with:
+          identifier: Slidict.Wip
+          version: ${{ steps.resolve.outputs.version }}
+          installers-regex: '^wip-.*-win-x64\.zip$'
+          release-tag: ${{ inputs.tag || github.event.release.tag_name }}
+          token: ${{ env.WINGET_TOKEN }}
+
+      - name: Explain a skipped submission
+        if: env.WINGET_TOKEN == ''
+        run: |
+          {
+            echo "WINGET_TOKEN is not set, so no winget-pkgs pull request was opened."
+            echo "See packaging/winget/README.md for the one-time setup."
+          } >> "$GITHUB_STEP_SUMMARY"

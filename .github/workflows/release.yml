@@ -1,0 +1,92 @@
+name: Release
+
+# Tag-driven, replacing the workflow_run chain the gem used. Pushing a v-tag is the whole
+# trigger, and the version in Directory.Build.props has to agree with it.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and publish release
+    runs-on: windows-latest
+
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      # A tag that disagrees with the project version would publish an artifact whose own
+      # `wip version` contradicts the release it came from, so this fails first.
+      - name: Verify version matches tag
+        id: version
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $version = ([xml](Get-Content Directory.Build.props)).Project.PropertyGroup.Version |
+            Where-Object { $_ } | Select-Object -First 1
+
+          if ("v$version" -ne $tag) {
+            throw "tag $tag does not match <Version>$version</Version> in Directory.Build.props"
+          }
+
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Run tests
+        run: dotnet test tests/Wip.Tests/Wip.Tests.csproj --configuration Release
+
+      - name: Publish
+        run: >
+          dotnet publish src/Wip.Cli/Wip.Cli.csproj
+          --configuration Release
+          --runtime win-x64
+          --output publish/win-x64
+
+      # The archive holds wip.exe alone. WinGet's zip installer type unpacks it and registers
+      # the nested executable as a portable command, so anything else in here would just be
+      # unpacked onto the user's disk for no reason.
+      - name: Package
+        id: package
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          $name = "wip-$version-win-x64.zip"
+          New-Item -ItemType Directory -Path dist | Out-Null
+
+          Compress-Archive -Path publish/win-x64/wip.exe -DestinationPath "dist/$name"
+
+          $hash = (Get-FileHash "dist/$name" -Algorithm SHA256).Hash
+          "$hash  $name" | Out-File -FilePath dist/SHA256SUMS -Encoding ascii
+
+          "archive=dist/$name" >> $env:GITHUB_OUTPUT
+          "sha256=$hash" >> $env:GITHUB_OUTPUT
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: ${{ steps.package.outputs.archive }}
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          generate_release_notes: true
+          files: |
+            dist/*.zip
+            dist/SHA256SUMS

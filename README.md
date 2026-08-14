@@ -3,13 +3,12 @@
 # wip
 
 [![Tests](https://github.com/slidict/wip/actions/workflows/test.yml/badge.svg)](https://github.com/slidict/wip/actions/workflows/test.yml)
-[![Gem Version](https://img.shields.io/gem/v/wslc-wip.svg)](https://rubygems.org/gems/wslc-wip)
 [![License: MIT](https://img.shields.io/github/license/slidict/wip.svg)](LICENSE)
-[![Ruby](https://img.shields.io/badge/ruby-%3E%3D%203.2-red.svg)](wslc-wip.gemspec)
+[![Platform](https://img.shields.io/badge/platform-windows%20x64-blue.svg)](#requirements--installation)
 
 Homepage: https://wslc-wip.slidict.com/ · **[Full documentation: wip Wiki](https://github.com/slidict/wip/wiki)**
 
-`wip` is a Ruby-built OSS CLI wrapper that brings a [`dip`](https://github.com/bibendi/dip)-like
+`wip` is an OSS CLI wrapper that brings a [`dip`](https://github.com/bibendi/dip)-like
 workflow to Microsoft WSLC. It collects a project's container, image, environment variables, and
 commands into a single `wip.yml`, and forwards them to `wslc.exe` / `wslc` as safe argument arrays
 (no shell interpolation).
@@ -50,13 +49,35 @@ key, every command's flags, guides, and troubleshooting — see the **[wip Wiki]
 
 ## Requirements & installation
 
-Ruby 3.2+, WSL2, and Microsoft WSLC.
+Windows with WSL2 and Microsoft WSLC. There is no runtime to install: `wip.exe` is a
+self-contained Native AOT binary.
 
-```bash
-gem install wslc-wip
+```powershell
+winget install Slidict.Wip
 ```
 
-From source: `bundle install && bundle exec exe/wip version`.
+Or download `wip-<version>-win-x64.zip` from
+[Releases](https://github.com/slidict/wip/releases) and put `wip.exe` on your PATH.
+
+From source: `dotnet publish src/Wip.Cli/Wip.Cli.csproj -c Release -r win-x64`.
+
+### Running it from a WSL2 shell
+
+wip.exe runs on the Windows side and drives `wslc.exe` directly, but it is meant to be typed
+from wherever you work — including a WSL2 shell, which reaches it over Windows interop:
+
+```bash
+$ cd ~/myproject && wip.exe up -d
+```
+
+**The `.exe` is required in bash**, which does not consult `PATHEXT` the way PowerShell and
+cmd do. Add `alias wip=wip.exe` to your shell profile if you would rather not type it.
+
+> **Note on project location.** A project on the WSL filesystem reaches wip as a UNC path
+> (`\\wsl.localhost\...`), which changes what `sync.source` and `volumes:` hand to wslc. What
+> wslc accepts there is still being measured — see
+> [the migration plan](docs/csharp-migration-plan.md) §3. Projects on the Windows filesystem
+> are unaffected.
 
 ## Quick start
 
@@ -64,8 +85,8 @@ This walks through `mode: container` (the default). Already have a `compose.yml`
 [Which mode should you use?](#which-mode-should-you-use) first, or read the wiki's
 [Getting Started](https://github.com/slidict/wip/wiki/Getting-Started) guide.
 
-```bash
-gem install wslc-wip
+```powershell
+winget install Slidict.Wip
 cd my-project
 wip init   # writes a starter wip.yml; edit the TODOs, then:
 wip doctor
@@ -135,7 +156,6 @@ interaction:
     type: build
     context: .
     tag: slidict/slidict:development
-    shadow_context: /mnt/c/Users/me/AppData/Local/wip/build-contexts
 sync: # optional; mirror the source into a named volume instead of bind-mounting it live
   exclude:
     - .git
@@ -161,7 +181,7 @@ and examples — start at the
 - [Compose Mode](https://github.com/slidict/wip/wiki/Compose-Mode) — bridging to a third-party compose-for-`wslc` tool
 - [Compose Native Mode](https://github.com/slidict/wip/wiki/Compose-Native-Mode) — wip parsing `compose.yml` itself
 - [Env Files](https://github.com/slidict/wip/wiki/Env-Files) — `.env` loading and precedence
-- [Dockerignore](https://github.com/slidict/wip/wiki/Dockerignore) / [Shadow Build Context](https://github.com/slidict/wip/wiki/Shadow-Build-Context)
+- [Dockerignore](https://github.com/slidict/wip/wiki/Dockerignore) — build context filtering (the build context is now always staged to a local cache, so the old `shadow_context:` key is gone)
 - [Source Sync](https://github.com/slidict/wip/wiki/Source-Sync) / [Sync Modes](https://github.com/slidict/wip/wiki/Sync-Modes) / [Continuous Sync](https://github.com/slidict/wip/wiki/Continuous-Sync)
 
 ## Commands
@@ -170,7 +190,7 @@ and examples — start at the
 |---|---|
 | `wip init [--force] [--template NAME]` | Write a starter `wip.yml`: `mode: compose-native` if a `compose.yml`, `compose.yaml`, `docker-compose.yml`, or `docker-compose.yaml` is found next to it, `mode: container` otherwise |
 | `wip version` | wip's version, plus WSLC's if it can be detected |
-| `wip doctor` | Diagnose WSL2, interop, WSLC, config, architecture, and Git |
+| `wip doctor` | Diagnose WSL2, WSLC, config, architecture, and Git |
 | `wip config` | Print the effective configuration (secrets masked) |
 | `wip build [--no-cache] [-- OPTIONS]` | Build the image from the `build` definition |
 | `wip up [-d] [--no-sync] [--no-cache] [--watch] [--interval N]` | Start the configured stack, creating it if necessary |
@@ -212,15 +232,19 @@ including [Configuration Errors](https://github.com/slidict/wip/wiki/Configurati
 ```bash
 git clone https://github.com/slidict/wip.git
 cd wip
-bundle install
-bundle exec rspec
-bundle exec rubocop
-bundle exec rake
+dotnet build wip.slnx
+dotnet test tests/Wip.Tests/Wip.Tests.csproj
+dotnet publish src/Wip.Cli/Wip.Cli.csproj -c Release -r win-x64
 ```
 
-The test suite doesn't need WSLC — the resolution, build, and execution layers are all
-swappable. This project uses RuboCop for Ruby style and static analysis; `bundle exec rake` runs
-both RSpec and RuboCop. GitHub Actions checks them on Ruby 3.2, 3.3, 3.4, and 4.0. See
+Requires the .NET 10 SDK. The test suite doesn't need WSLC — the resolution, build, and
+execution layers are all swappable — and it runs on Linux and macOS as well as Windows, though
+only Windows can produce the shipping binary (Native AOT cannot cross-compile between
+operating systems).
+
+Much of the suite replays a corpus generated by the Ruby implementation this replaced, so a
+behaviour change shows up as a failing expectation rather than as a surprise in the field; see
+[tests/golden/README.md](tests/golden/README.md). See
 [Development](https://github.com/slidict/wip/wiki/Development) and
 [Architecture](https://github.com/slidict/wip/wiki/Architecture) on the wiki for more.
 

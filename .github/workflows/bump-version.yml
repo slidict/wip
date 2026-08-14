@@ -19,78 +19,67 @@ permissions:
 
 jobs:
   bump-version:
-    name: Bump gem version
+    name: Bump project version
     runs-on: ubuntu-latest
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Set up Ruby
-        uses: ruby/setup-ruby@9eb537ca036ebaed86729dcb9309076e4c5c3b74 # v1.314.0
-        with:
-          ruby-version: "3.4"
-
+      # Directory.Build.props is the single source of truth for the version: the SDK stamps
+      # it into the assembly, and the release workflow refuses to publish a tag that
+      # disagrees with it.
       - name: Calculate next version
         id: version
-        env:
-          BUMP: ${{ inputs.bump }}
         run: |
-          ruby <<'RUBY' >> "$GITHUB_OUTPUT"
-          version_file = "lib/wip/version.rb"
-          content = File.read(version_file)
-          current = content[/VERSION\s*=\s*['"](\d+\.\d+\.\d+)['"]/, 1]
-          abort "Could not find current version in #{version_file}" unless current
+          set -euo pipefail
+          current=$(grep -oPm1 '(?<=<Version>)[^<]+' Directory.Build.props)
+          if [ -z "$current" ]; then
+            echo "Could not find <Version> in Directory.Build.props" >&2
+            exit 1
+          fi
 
-          major, minor, patch = current.split(".").map(&:to_i)
-          case ENV.fetch("BUMP")
-          when "major"
-            major += 1
-            minor = 0
-            patch = 0
-          when "minor"
-            minor += 1
-            patch = 0
-          when "patch"
-            patch += 1
-          else
-            abort "Unsupported bump value: #{ENV.fetch("BUMP")}"
-          end
-          target = [major, minor, patch].join(".")
+          IFS=. read -r major minor patch <<< "$current"
+          case "${{ inputs.bump }}" in
+            major) major=$((major + 1)); minor=0; patch=0 ;;
+            minor) minor=$((minor + 1)); patch=0 ;;
+            patch) patch=$((patch + 1)) ;;
+            *) echo "Unsupported bump value" >&2; exit 1 ;;
+          esac
 
-          puts "current=#{current}"
-          puts "next=#{target}"
-          RUBY
+          echo "current=$current" >> "$GITHUB_OUTPUT"
+          echo "next=$major.$minor.$patch" >> "$GITHUB_OUTPUT"
 
-      - name: Update version file
+      - name: Update version
         env:
-          NEXT_VERSION: ${{ steps.version.outputs.next }}
+          CURRENT: ${{ steps.version.outputs.current }}
+          NEXT: ${{ steps.version.outputs.next }}
         run: |
-          ruby -e 'path = "lib/wip/version.rb"; version = ENV.fetch("NEXT_VERSION"); content = File.read(path); updated = content.sub(/VERSION\s*=\s*(["\x27])\d+\.\d+\.\d+\1/, "VERSION = \x27#{version}\x27"); abort "Version was not updated" if updated == content; File.write(path, updated)'
-
-      - name: Verify gemspec
-        run: gem build wslc-wip.gemspec
+          set -euo pipefail
+          sed -i "s|<Version>${CURRENT}</Version>|<Version>${NEXT}</Version>|" Directory.Build.props
+          grep -q "<Version>${NEXT}</Version>" Directory.Build.props
 
       - name: Commit version bump
         env:
-          NEXT_VERSION: ${{ steps.version.outputs.next }}
+          NEXT: ${{ steps.version.outputs.next }}
         run: |
+          set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git checkout -B "bump-version-v${NEXT_VERSION}"
-          git add lib/wip/version.rb
-          git commit -m "chore: bump version to v${NEXT_VERSION}"
-          git push --force-with-lease origin "bump-version-v${NEXT_VERSION}"
+          git checkout -B "bump-version-v${NEXT}"
+          git add Directory.Build.props
+          git commit -m "chore: bump version to v${NEXT}"
+          git push --force-with-lease origin "bump-version-v${NEXT}"
 
       - name: Create pull request
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NEXT_VERSION: ${{ steps.version.outputs.next }}
+          NEXT: ${{ steps.version.outputs.next }}
         run: |
           gh pr create \
             --base "${GITHUB_REF_NAME}" \
-            --head "bump-version-v${NEXT_VERSION}" \
-            --title "chore: bump version to v${NEXT_VERSION}" \
-            --body "Bump wslc-wip gem version to v${NEXT_VERSION}."
+            --head "bump-version-v${NEXT}" \
+            --title "chore: bump version to v${NEXT}" \
+            --body "Bump wip version to v${NEXT}. Tag the merge commit as v${NEXT} to publish."
