@@ -11,6 +11,7 @@ module Wip
     # --template values wip init accepts, and the label used in the exclude: comment.
     TEMPLATE_LABELS = {
       'rails' => 'Rails',
+      'ruby' => 'Ruby',
       'node' => 'Node.js',
       'rust' => 'Rust',
       'csharp' => 'C#'
@@ -22,6 +23,7 @@ module Wip
     TEMPLATE_EXCLUDES = {
       'rails' => %w[.git log/ tmp/ storage/ public/assets/ public/packs/ .bundle/ vendor/bundle/
                     coverage/ node_modules/],
+      'ruby' => %w[.git log/ tmp/ .bundle/ vendor/bundle/ coverage/],
       'node' => %w[.git node_modules/ dist/ build/ .next/ .cache/ coverage/],
       'rust' => %w[.git target/],
       'csharp' => %w[.git bin/ obj/ .vs/ packages/]
