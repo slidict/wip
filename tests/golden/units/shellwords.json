@@ -1,0 +1,208 @@
+[
+  {
+    "input": "",
+    "result": {
+      "ok": []
+    }
+  },
+  {
+    "input": "   ",
+    "result": {
+      "ok": []
+    }
+  },
+  {
+    "input": "bin/rails",
+    "result": {
+      "ok": [
+        "bin/rails"
+      ]
+    }
+  },
+  {
+    "input": "bin/rails server -p 3000",
+    "result": {
+      "ok": [
+        "bin/rails",
+        "server",
+        "-p",
+        "3000"
+      ]
+    }
+  },
+  {
+    "input": "echo 'single quoted'",
+    "result": {
+      "ok": [
+        "echo",
+        "single quoted"
+      ]
+    }
+  },
+  {
+    "input": "echo \"double quoted\"",
+    "result": {
+      "ok": [
+        "echo",
+        "double quoted"
+      ]
+    }
+  },
+  {
+    "input": "echo \"with  inner   spaces\"",
+    "result": {
+      "ok": [
+        "echo",
+        "with  inner   spaces"
+      ]
+    }
+  },
+  {
+    "input": "echo hello\\ world",
+    "result": {
+      "ok": [
+        "echo",
+        "hello world"
+      ]
+    }
+  },
+  {
+    "input": "a\"b\"c",
+    "result": {
+      "ok": [
+        "abc"
+      ]
+    }
+  },
+  {
+    "input": "a'b'c",
+    "result": {
+      "ok": [
+        "abc"
+      ]
+    }
+  },
+  {
+    "input": "sh -c \"echo nested 'quotes'\"",
+    "result": {
+      "ok": [
+        "sh",
+        "-c",
+        "echo nested 'quotes'"
+      ]
+    }
+  },
+  {
+    "input": "sh -c 'echo \"double inside single\"'",
+    "result": {
+      "ok": [
+        "sh",
+        "-c",
+        "echo \"double inside single\""
+      ]
+    }
+  },
+  {
+    "input": "tab\tseparated words",
+    "result": {
+      "ok": [
+        "tab",
+        "separated",
+        "words"
+      ]
+    }
+  },
+  {
+    "input": "newline\nseparated",
+    "result": {
+      "ok": [
+        "newline",
+        "separated"
+      ]
+    }
+  },
+  {
+    "input": "trailing   ",
+    "result": {
+      "ok": [
+        "trailing"
+      ]
+    }
+  },
+  {
+    "input": "   leading",
+    "result": {
+      "ok": [
+        "leading"
+      ]
+    }
+  },
+  {
+    "input": "back\\\\slash",
+    "result": {
+      "ok": [
+        "back\\slash"
+      ]
+    }
+  },
+  {
+    "input": "empty \"\" args",
+    "result": {
+      "ok": [
+        "empty",
+        "",
+        "args"
+      ]
+    }
+  },
+  {
+    "input": "empty '' args",
+    "result": {
+      "ok": [
+        "empty",
+        "",
+        "args"
+      ]
+    }
+  },
+  {
+    "input": "$VAR stays literal",
+    "result": {
+      "ok": [
+        "$VAR",
+        "stays",
+        "literal"
+      ]
+    }
+  },
+  {
+    "input": "a\\\"b",
+    "result": {
+      "ok": [
+        "a\"b"
+      ]
+    }
+  },
+  {
+    "input": "unmatched \"quote",
+    "result": {
+      "error": "Unmatched quote: \"unmatched \\\"quote\""
+    }
+  },
+  {
+    "input": "unmatched 'quote",
+    "result": {
+      "error": "Unmatched quote: \"unmatched 'quote\""
+    }
+  },
+  {
+    "input": "trailing backslash \\",
+    "result": {
+      "ok": [
+        "trailing",
+        "backslash",
+        "\\"
+      ]
+    }
+  }
+]

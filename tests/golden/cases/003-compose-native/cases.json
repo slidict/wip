@@ -1,0 +1,725 @@
+{
+  "config.to_h": {
+    "ok": {
+      "version": 1,
+      "wslc": {
+        "command": "auto"
+      },
+      "mode": "compose-native",
+      "container": "web",
+      "network": "shopdemo",
+      "dependencies": {
+        "db": {
+          "image": "postgres:16",
+          "command": null,
+          "env": {
+            "POSTGRES_PASSWORD": "[REDACTED]"
+          },
+          "ports": [],
+          "volumes": [],
+          "workdir": null,
+          "user": null,
+          "restart": "no"
+        },
+        "cache": {
+          "image": "redis:7",
+          "command": null,
+          "env": {},
+          "ports": [],
+          "volumes": [],
+          "workdir": null,
+          "user": null,
+          "restart": "on-failure:3"
+        },
+        "web": {
+          "image": "wip-compose-web:latest",
+          "command": "bin/rails server -b 0.0.0.0",
+          "env": {
+            "RAILS_ENV": "development",
+            "DATABASE_URL": "postgres://db/app"
+          },
+          "ports": [
+            "3000:3000"
+          ],
+          "volumes": [
+            ".:/app"
+          ],
+          "workdir": "/app",
+          "user": null,
+          "restart": "unless-stopped"
+        }
+      },
+      "compose": {
+        "service": "web",
+        "project": "shopdemo"
+      },
+      "sync": null,
+      "commands": {
+        "rails": {
+          "workdir": "/app",
+          "user": null,
+          "interactive": true,
+          "remove": true,
+          "env": {
+            "RAILS_ENV": "development",
+            "DATABASE_URL": "postgres://db/app"
+          },
+          "ports": [
+            "3000:3000"
+          ],
+          "volumes": [
+            ".:/app"
+          ],
+          "restart": "unless-stopped",
+          "image": "wip-compose-web:latest",
+          "command": "bin/rails",
+          "type": "exec"
+        }
+      }
+    }
+  },
+  "config.to_h.unredacted": {
+    "ok": {
+      "version": 1,
+      "wslc": {
+        "command": "auto"
+      },
+      "mode": "compose-native",
+      "container": "web",
+      "network": "shopdemo",
+      "dependencies": {
+        "db": {
+          "image": "postgres:16",
+          "command": null,
+          "env": {
+            "POSTGRES_PASSWORD": "secret"
+          },
+          "ports": [],
+          "volumes": [],
+          "workdir": null,
+          "user": null,
+          "restart": "no"
+        },
+        "cache": {
+          "image": "redis:7",
+          "command": null,
+          "env": {},
+          "ports": [],
+          "volumes": [],
+          "workdir": null,
+          "user": null,
+          "restart": "on-failure:3"
+        },
+        "web": {
+          "image": "wip-compose-web:latest",
+          "command": "bin/rails server -b 0.0.0.0",
+          "env": {
+            "RAILS_ENV": "development",
+            "DATABASE_URL": "postgres://db/app"
+          },
+          "ports": [
+            "3000:3000"
+          ],
+          "volumes": [
+            ".:/app"
+          ],
+          "workdir": "/app",
+          "user": null,
+          "restart": "unless-stopped"
+        }
+      },
+      "compose": {
+        "service": "web",
+        "project": "shopdemo"
+      },
+      "sync": null,
+      "commands": {
+        "rails": {
+          "workdir": "/app",
+          "user": null,
+          "interactive": true,
+          "remove": true,
+          "env": {
+            "RAILS_ENV": "development",
+            "DATABASE_URL": "postgres://db/app"
+          },
+          "ports": [
+            "3000:3000"
+          ],
+          "volumes": [
+            ".:/app"
+          ],
+          "restart": "unless-stopped",
+          "image": "wip-compose-web:latest",
+          "command": "bin/rails",
+          "type": "exec"
+        }
+      }
+    }
+  },
+  "config.mode": {
+    "ok": "compose-native"
+  },
+  "config.container": {
+    "ok": "web"
+  },
+  "config.network": {
+    "ok": "shopdemo"
+  },
+  "config.wslc_command": {
+    "ok": "auto"
+  },
+  "config.dependencies.keys": {
+    "ok": [
+      "db",
+      "cache",
+      "web"
+    ]
+  },
+  "config.commands.keys": {
+    "ok": [
+      "rails"
+    ]
+  },
+  "config.compose_build_specs": {
+    "ok": {
+      "web": {
+        "context": "<FIXTURE>",
+        "dockerfile": "Dockerfile.dev",
+        "args": {
+          "RUBY_VERSION": "3.4"
+        },
+        "tag": "wip-compose-web:latest"
+      }
+    }
+  },
+  "config.sync.to_h": {
+    "ok": null
+  },
+  "dotenv": {
+    "ok": {}
+  },
+  "builder.up.detached": {
+    "ok": [
+      "wslc.exe",
+      "run",
+      "--name",
+      "web",
+      "--network",
+      "shopdemo",
+      "-d",
+      "-w",
+      "/app",
+      "-e",
+      "RAILS_ENV=development",
+      "-e",
+      "DATABASE_URL=postgres://db/app",
+      "-p",
+      "3000:3000",
+      "-v",
+      ".:/app",
+      "wip-compose-web:latest",
+      "bin/rails",
+      "server",
+      "-b",
+      "0.0.0.0"
+    ]
+  },
+  "builder.up.attached.tty": {
+    "ok": [
+      "wslc.exe",
+      "run",
+      "--name",
+      "web",
+      "--network",
+      "shopdemo",
+      "-it",
+      "-w",
+      "/app",
+      "-e",
+      "RAILS_ENV=development",
+      "-e",
+      "DATABASE_URL=postgres://db/app",
+      "-p",
+      "3000:3000",
+      "-v",
+      ".:/app",
+      "wip-compose-web:latest",
+      "bin/rails",
+      "server",
+      "-b",
+      "0.0.0.0"
+    ]
+  },
+  "builder.up.attached.notty": {
+    "ok": [
+      "wslc.exe",
+      "run",
+      "--name",
+      "web",
+      "--network",
+      "shopdemo",
+      "-w",
+      "/app",
+      "-e",
+      "RAILS_ENV=development",
+      "-e",
+      "DATABASE_URL=postgres://db/app",
+      "-p",
+      "3000:3000",
+      "-v",
+      ".:/app",
+      "wip-compose-web:latest",
+      "bin/rails",
+      "server",
+      "-b",
+      "0.0.0.0"
+    ]
+  },
+  "builder.start.detached": {
+    "ok": [
+      "wslc.exe",
+      "start",
+      "web"
+    ]
+  },
+  "builder.start.attached": {
+    "ok": [
+      "wslc.exe",
+      "start",
+      "web",
+      "-a",
+      "-i"
+    ]
+  },
+  "builder.find": {
+    "ok": [
+      "wslc.exe",
+      "list",
+      "--all",
+      "--filter",
+      "name=web",
+      "--format",
+      "json"
+    ]
+  },
+  "builder.stop": {
+    "ok": [
+      "wslc.exe",
+      "stop",
+      "web"
+    ]
+  },
+  "builder.remove": {
+    "ok": [
+      "wslc.exe",
+      "remove",
+      "-f",
+      "web"
+    ]
+  },
+  "builder.network_create": {
+    "ok": [
+      "wslc.exe",
+      "network",
+      "create",
+      "shopdemo"
+    ]
+  },
+  "builder.network_list": {
+    "ok": [
+      "wslc.exe",
+      "network",
+      "list",
+      "--format",
+      "json"
+    ]
+  },
+  "builder.exec.tty": {
+    "ok": [
+      "wslc.exe",
+      "exec",
+      "-it",
+      "-w",
+      "/app",
+      "-e",
+      "RAILS_ENV=development",
+      "-e",
+      "DATABASE_URL=postgres://db/app",
+      "web",
+      "bash",
+      "-lc",
+      "ls"
+    ]
+  },
+  "builder.exec.notty": {
+    "ok": [
+      "wslc.exe",
+      "exec",
+      "-w",
+      "/app",
+      "-e",
+      "RAILS_ENV=development",
+      "-e",
+      "DATABASE_URL=postgres://db/app",
+      "web",
+      "bash",
+      "-lc",
+      "ls"
+    ]
+  },
+  "builder.exec.noninteractive": {
+    "ok": [
+      "wslc.exe",
+      "exec",
+      "-w",
+      "/app",
+      "-e",
+      "RAILS_ENV=development",
+      "-e",
+      "DATABASE_URL=postgres://db/app",
+      "web",
+      "bash",
+      "-lc",
+      "ls"
+    ]
+  },
+  "builder.run.tty": {
+    "ok": [
+      "wslc.exe",
+      "run",
+      "--rm",
+      "-it",
+      "-w",
+      "/app",
+      "-e",
+      "RAILS_ENV=development",
+      "-e",
+      "DATABASE_URL=postgres://db/app",
+      "-p",
+      "3000:3000",
+      "-v",
+      ".:/app",
+      "wip-compose-web:latest",
+      "ls",
+      "-la"
+    ]
+  },
+  "builder.run.notty": {
+    "ok": [
+      "wslc.exe",
+      "run",
+      "--rm",
+      "-w",
+      "/app",
+      "-e",
+      "RAILS_ENV=development",
+      "-e",
+      "DATABASE_URL=postgres://db/app",
+      "-p",
+      "3000:3000",
+      "-v",
+      ".:/app",
+      "wip-compose-web:latest",
+      "ls",
+      "-la"
+    ]
+  },
+  "builder.build": {
+    "ok": [
+      "wslc.exe",
+      "build",
+      "-t",
+      "wip-compose-web:latest",
+      "."
+    ]
+  },
+  "builder.build.extra": {
+    "ok": [
+      "wslc.exe",
+      "build",
+      "-t",
+      "wip-compose-web:latest",
+      "--no-cache",
+      "."
+    ]
+  },
+  "builder.sync_run": {
+    "error": "No sync: block configured in wip.yml"
+  },
+  "builder.sync_exec": {
+    "error": "No sync: block configured in wip.yml"
+  },
+  "builder.sync_build": {
+    "error": "No sync: block configured in wip.yml"
+  },
+  "builder.logs.follow": {
+    "ok": [
+      "wslc.exe",
+      "logs",
+      "-f",
+      "web"
+    ]
+  },
+  "builder.logs.nofollow": {
+    "ok": [
+      "wslc.exe",
+      "logs",
+      "web"
+    ]
+  },
+  "builder.dependency_up[db]": {
+    "ok": [
+      "wslc.exe",
+      "run",
+      "--name",
+      "db",
+      "--network",
+      "shopdemo",
+      "-d",
+      "-e",
+      "POSTGRES_PASSWORD=secret",
+      "postgres:16"
+    ]
+  },
+  "builder.dependency_up.attached[db]": {
+    "ok": [
+      "wslc.exe",
+      "run",
+      "--name",
+      "db",
+      "--network",
+      "shopdemo",
+      "-e",
+      "POSTGRES_PASSWORD=secret",
+      "postgres:16"
+    ]
+  },
+  "builder.dependency_start[db]": {
+    "ok": [
+      "wslc.exe",
+      "start",
+      "db"
+    ]
+  },
+  "builder.dependency_find[db]": {
+    "ok": [
+      "wslc.exe",
+      "list",
+      "--all",
+      "--filter",
+      "name=db",
+      "--format",
+      "json"
+    ]
+  },
+  "builder.dependency_stop[db]": {
+    "ok": [
+      "wslc.exe",
+      "stop",
+      "db"
+    ]
+  },
+  "builder.dependency_remove[db]": {
+    "ok": [
+      "wslc.exe",
+      "remove",
+      "-f",
+      "db"
+    ]
+  },
+  "builder.dependency_up[cache]": {
+    "ok": [
+      "wslc.exe",
+      "run",
+      "--name",
+      "cache",
+      "--network",
+      "shopdemo",
+      "-d",
+      "redis:7"
+    ]
+  },
+  "builder.dependency_up.attached[cache]": {
+    "ok": [
+      "wslc.exe",
+      "run",
+      "--name",
+      "cache",
+      "--network",
+      "shopdemo",
+      "redis:7"
+    ]
+  },
+  "builder.dependency_start[cache]": {
+    "ok": [
+      "wslc.exe",
+      "start",
+      "cache"
+    ]
+  },
+  "builder.dependency_find[cache]": {
+    "ok": [
+      "wslc.exe",
+      "list",
+      "--all",
+      "--filter",
+      "name=cache",
+      "--format",
+      "json"
+    ]
+  },
+  "builder.dependency_stop[cache]": {
+    "ok": [
+      "wslc.exe",
+      "stop",
+      "cache"
+    ]
+  },
+  "builder.dependency_remove[cache]": {
+    "ok": [
+      "wslc.exe",
+      "remove",
+      "-f",
+      "cache"
+    ]
+  },
+  "builder.dependency_up[web]": {
+    "ok": [
+      "wslc.exe",
+      "run",
+      "--name",
+      "web",
+      "--network",
+      "shopdemo",
+      "-d",
+      "-w",
+      "/app",
+      "-e",
+      "RAILS_ENV=development",
+      "-e",
+      "DATABASE_URL=postgres://db/app",
+      "-p",
+      "3000:3000",
+      "-v",
+      ".:/app",
+      "wip-compose-web:latest",
+      "bin/rails",
+      "server",
+      "-b",
+      "0.0.0.0"
+    ]
+  },
+  "builder.dependency_up.attached[web]": {
+    "ok": [
+      "wslc.exe",
+      "run",
+      "--name",
+      "web",
+      "--network",
+      "shopdemo",
+      "-w",
+      "/app",
+      "-e",
+      "RAILS_ENV=development",
+      "-e",
+      "DATABASE_URL=postgres://db/app",
+      "-p",
+      "3000:3000",
+      "-v",
+      ".:/app",
+      "wip-compose-web:latest",
+      "bin/rails",
+      "server",
+      "-b",
+      "0.0.0.0"
+    ]
+  },
+  "builder.dependency_start[web]": {
+    "ok": [
+      "wslc.exe",
+      "start",
+      "web"
+    ]
+  },
+  "builder.dependency_find[web]": {
+    "ok": [
+      "wslc.exe",
+      "list",
+      "--all",
+      "--filter",
+      "name=web",
+      "--format",
+      "json"
+    ]
+  },
+  "builder.dependency_stop[web]": {
+    "ok": [
+      "wslc.exe",
+      "stop",
+      "web"
+    ]
+  },
+  "builder.dependency_remove[web]": {
+    "ok": [
+      "wslc.exe",
+      "remove",
+      "-f",
+      "web"
+    ]
+  },
+  "builder.custom[rails]": {
+    "ok": [
+      "wslc.exe",
+      "exec",
+      "-it",
+      "-w",
+      "/app",
+      "-e",
+      "RAILS_ENV=development",
+      "-e",
+      "DATABASE_URL=postgres://db/app",
+      "web",
+      "bin/rails"
+    ]
+  },
+  "builder.custom.args[rails]": {
+    "ok": [
+      "wslc.exe",
+      "exec",
+      "-it",
+      "-w",
+      "/app",
+      "-e",
+      "RAILS_ENV=development",
+      "-e",
+      "DATABASE_URL=postgres://db/app",
+      "web",
+      "bin/rails",
+      "--trace",
+      "extra"
+    ]
+  },
+  "config.command[rails]": {
+    "ok": {
+      "workdir": "/app",
+      "user": null,
+      "interactive": true,
+      "remove": true,
+      "env": {
+        "RAILS_ENV": "development",
+        "DATABASE_URL": "postgres://db/app"
+      },
+      "ports": [
+        "3000:3000"
+      ],
+      "volumes": [
+        ".:/app"
+      ],
+      "restart": "unless-stopped",
+      "image": "wip-compose-web:latest",
+      "command": "bin/rails",
+      "type": "exec"
+    }
+  }
+}

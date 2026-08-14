@@ -1,0 +1,57 @@
+{
+  "architecture": "linux/amd64",
+  "cases": [
+    {
+      "input": "",
+      "hint": null
+    },
+    {
+      "input": "some unrelated failure",
+      "hint": null
+    },
+    {
+      "input": "error 0x8007000E while attaching",
+      "hint": "The WSLC session has reached its mounted-volume limit.\n\nStop any containers you no longer need, then restart the session:\n\n  wslc container list\n  wslc container stop <container-name>\n  wslc system session terminate\n\nThen retry the command.\n"
+    },
+    {
+      "input": "too many mounted volumes",
+      "hint": "The WSLC session has reached its mounted-volume limit.\n\nStop any containers you no longer need, then restart the session:\n\n  wslc container list\n  wslc container stop <container-name>\n  wslc system session terminate\n\nThen retry the command.\n"
+    },
+    {
+      "input": "マウントされているボリュームが多すぎます",
+      "hint": "The WSLC session has reached its mounted-volume limit.\n\nStop any containers you no longer need, then restart the session:\n\n  wslc container list\n  wslc container stop <container-name>\n  wslc system session terminate\n\nThen retry the command.\n"
+    },
+    {
+      "input": "Error: pull access denied for private/image",
+      "hint": "The container registry rejected the request.\n\nTry logging in with:\n\n  wslc registry login -u <username> docker.io\n"
+    },
+    {
+      "input": "insufficient_scope: authorization failed",
+      "hint": "The container registry rejected the request.\n\nTry logging in with:\n\n  wslc registry login -u <username> docker.io\n"
+    },
+    {
+      "input": "no matching manifest for linux/amd64 in the manifest list entries",
+      "hint": "The image does not contain a manifest for the current CPU architecture.\n\nCurrent architecture:\n  linux/amd64\n\nInspect the image with:\n\n  docker buildx imagetools inspect <image>\n\nRebuild and push a multi-platform image with:\n\n  docker buildx build \\\n    --platform linux/amd64,linux/arm64 \\\n    -t <image> \\\n    --push .\n"
+    },
+    {
+      "input": "no matching manifest for linux/arm64",
+      "hint": "The image does not contain a manifest for the current CPU architecture.\n\nCurrent architecture:\n  linux/amd64\n\nInspect the image with:\n\n  docker buildx imagetools inspect <image>\n\nRebuild and push a multi-platform image with:\n\n  docker buildx build \\\n    --platform linux/amd64,linux/arm64 \\\n    -t <image> \\\n    --push .\n"
+    },
+    {
+      "input": "rsync: not found",
+      "hint": "`wip sync` needs rsync inside the image.\n\nInstall it in your Dockerfile:\n\n  RUN apt-get update && apt-get install -y rsync\n\nOr point sync.command at a tool the image already has.\n"
+    },
+    {
+      "input": "rsync: command not found",
+      "hint": "`wip sync` needs rsync inside the image.\n\nInstall it in your Dockerfile:\n\n  RUN apt-get update && apt-get install -y rsync\n\nOr point sync.command at a tool the image already has.\n"
+    },
+    {
+      "input": "exec: \"rsync\": executable file not found in $PATH",
+      "hint": "`wip sync` needs rsync inside the image.\n\nInstall it in your Dockerfile:\n\n  RUN apt-get update && apt-get install -y rsync\n\nOr point sync.command at a tool the image already has.\n"
+    },
+    {
+      "input": "executable file not found: rsync",
+      "hint": "`wip sync` needs rsync inside the image.\n\nInstall it in your Dockerfile:\n\n  RUN apt-get update && apt-get install -y rsync\n\nOr point sync.command at a tool the image already has.\n"
+    }
+  ]
+}

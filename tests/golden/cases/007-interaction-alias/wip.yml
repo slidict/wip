@@ -1,0 +1,19 @@
+version: 1
+container: app
+network: legacy-net
+dependencies:
+  app:
+    image: legacy:dev
+    workdir: /code
+    remove: false
+    env:
+      API_TOKEN: super-secret-token
+interaction:
+  bash:
+    command: bash
+    interactive: true
+  migrate:
+    command: bin/rails db:migrate
+    type: run
+    env:
+      RAILS_ENV: test

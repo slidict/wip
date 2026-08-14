@@ -1,0 +1,233 @@
+{
+  "config.to_h": {
+    "ok": {
+      "version": 1,
+      "wslc": {
+        "command": "auto"
+      },
+      "mode": "compose",
+      "container": null,
+      "network": null,
+      "dependencies": {},
+      "compose": {
+        "service": "web",
+        "project": "bridged",
+        "command": "wslc-compose",
+        "file": "stack.yml"
+      },
+      "sync": {
+        "source": "<FIXTURE>",
+        "target": "/app",
+        "mount": "/host-src",
+        "volume": "web-src",
+        "delete": true,
+        "exclude": [],
+        "command": "rsync",
+        "options": [],
+        "interval": 2,
+        "mode": "run",
+        "image": "alpine:3.20",
+        "build": null
+      },
+      "commands": {
+        "rails": {
+          "type": "exec",
+          "command": "bin/rails",
+          "interactive": true
+        }
+      }
+    }
+  },
+  "config.to_h.unredacted": {
+    "ok": {
+      "version": 1,
+      "wslc": {
+        "command": "auto"
+      },
+      "mode": "compose",
+      "container": null,
+      "network": null,
+      "dependencies": {},
+      "compose": {
+        "service": "web",
+        "project": "bridged",
+        "command": "wslc-compose",
+        "file": "stack.yml"
+      },
+      "sync": {
+        "source": "<FIXTURE>",
+        "target": "/app",
+        "mount": "/host-src",
+        "volume": "web-src",
+        "delete": true,
+        "exclude": [],
+        "command": "rsync",
+        "options": [],
+        "interval": 2,
+        "mode": "run",
+        "image": "alpine:3.20",
+        "build": null
+      },
+      "commands": {
+        "rails": {
+          "type": "exec",
+          "command": "bin/rails",
+          "interactive": true
+        }
+      }
+    }
+  },
+  "config.mode": {
+    "ok": "compose"
+  },
+  "config.container": {
+    "ok": null
+  },
+  "config.network": {
+    "ok": null
+  },
+  "config.wslc_command": {
+    "ok": "auto"
+  },
+  "config.dependencies.keys": {
+    "ok": []
+  },
+  "config.commands.keys": {
+    "ok": [
+      "rails"
+    ]
+  },
+  "config.compose_build_specs": {
+    "ok": {}
+  },
+  "config.sync.to_h": {
+    "ok": {
+      "source": "<FIXTURE>",
+      "target": "/app",
+      "mount": "/host-src",
+      "volume": "web-src",
+      "delete": true,
+      "exclude": [],
+      "command": "rsync",
+      "options": [],
+      "interval": 2,
+      "mode": "run",
+      "image": "alpine:3.20",
+      "build": null
+    }
+  },
+  "dotenv": {
+    "ok": {}
+  },
+  "builder.up.detached": {
+    "error": "container: must be set in wip.yml"
+  },
+  "builder.up.attached.tty": {
+    "error": "container: must be set in wip.yml"
+  },
+  "builder.up.attached.notty": {
+    "error": "container: must be set in wip.yml"
+  },
+  "builder.start.detached": {
+    "error": "container: must be set in wip.yml"
+  },
+  "builder.start.attached": {
+    "error": "container: must be set in wip.yml"
+  },
+  "builder.find": {
+    "error": "container: must be set in wip.yml"
+  },
+  "builder.stop": {
+    "error": "container: must be set in wip.yml"
+  },
+  "builder.remove": {
+    "error": "container: must be set in wip.yml"
+  },
+  "builder.network_create": {
+    "error": "Configured network must not be empty"
+  },
+  "builder.network_list": {
+    "ok": [
+      "wslc.exe",
+      "network",
+      "list",
+      "--format",
+      "json"
+    ]
+  },
+  "builder.exec.tty": {
+    "error": "container: must be set in wip.yml"
+  },
+  "builder.exec.notty": {
+    "error": "container: must be set in wip.yml"
+  },
+  "builder.exec.noninteractive": {
+    "error": "container: must be set in wip.yml"
+  },
+  "builder.run.tty": {
+    "error": "container: must be set in wip.yml"
+  },
+  "builder.run.notty": {
+    "error": "container: must be set in wip.yml"
+  },
+  "builder.build": {
+    "error": "container: must be set in wip.yml"
+  },
+  "builder.build.extra": {
+    "error": "container: must be set in wip.yml"
+  },
+  "builder.sync_run": {
+    "ok": [
+      "wslc.exe",
+      "run",
+      "--rm",
+      "-v",
+      "<FIXTURE>:/host-src:ro",
+      "-v",
+      "web-src:/app",
+      "alpine:3.20",
+      "rsync",
+      "-r",
+      "-l",
+      "-t",
+      "--whole-file",
+      "--delete",
+      "/host-src/",
+      "/app/"
+    ]
+  },
+  "builder.sync_exec": {
+    "error": "container: must be set in wip.yml"
+  },
+  "builder.sync_build": {
+    "error": "No sync.build configured in wip.yml"
+  },
+  "builder.logs.follow": {
+    "ok": [
+      "wslc.exe",
+      "logs",
+      "-f",
+      "web"
+    ]
+  },
+  "builder.logs.nofollow": {
+    "ok": [
+      "wslc.exe",
+      "logs",
+      "web"
+    ]
+  },
+  "builder.custom[rails]": {
+    "error": "container: must be set in wip.yml"
+  },
+  "builder.custom.args[rails]": {
+    "error": "container: must be set in wip.yml"
+  },
+  "config.command[rails]": {
+    "ok": {
+      "type": "exec",
+      "command": "bin/rails",
+      "interactive": true
+    }
+  }
+}

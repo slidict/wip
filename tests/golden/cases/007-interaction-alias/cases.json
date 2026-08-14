@@ -1,0 +1,517 @@
+{
+  "config.to_h": {
+    "ok": {
+      "version": 1,
+      "wslc": {
+        "command": "auto"
+      },
+      "mode": "container",
+      "container": "app",
+      "network": "legacy-net",
+      "dependencies": {
+        "app": {
+          "image": "legacy:dev",
+          "workdir": "/code",
+          "remove": false,
+          "env": {
+            "API_TOKEN": "[REDACTED]"
+          }
+        }
+      },
+      "compose": null,
+      "sync": null,
+      "commands": {
+        "bash": {
+          "workdir": "/code",
+          "user": null,
+          "interactive": true,
+          "remove": false,
+          "env": {
+            "API_TOKEN": "[REDACTED]"
+          },
+          "ports": [],
+          "volumes": [],
+          "restart": "no",
+          "image": "legacy:dev",
+          "type": "exec",
+          "command": "bash"
+        },
+        "migrate": {
+          "workdir": "/code",
+          "user": null,
+          "interactive": false,
+          "remove": false,
+          "env": {
+            "RAILS_ENV": "test"
+          },
+          "ports": [],
+          "volumes": [],
+          "restart": "no",
+          "image": "legacy:dev",
+          "type": "run",
+          "command": "bin/rails db:migrate"
+        }
+      }
+    }
+  },
+  "config.to_h.unredacted": {
+    "ok": {
+      "version": 1,
+      "wslc": {
+        "command": "auto"
+      },
+      "mode": "container",
+      "container": "app",
+      "network": "legacy-net",
+      "dependencies": {
+        "app": {
+          "image": "legacy:dev",
+          "workdir": "/code",
+          "remove": false,
+          "env": {
+            "API_TOKEN": "super-secret-token"
+          }
+        }
+      },
+      "compose": null,
+      "sync": null,
+      "commands": {
+        "bash": {
+          "workdir": "/code",
+          "user": null,
+          "interactive": true,
+          "remove": false,
+          "env": {
+            "API_TOKEN": "super-secret-token"
+          },
+          "ports": [],
+          "volumes": [],
+          "restart": "no",
+          "image": "legacy:dev",
+          "type": "exec",
+          "command": "bash"
+        },
+        "migrate": {
+          "workdir": "/code",
+          "user": null,
+          "interactive": false,
+          "remove": false,
+          "env": {
+            "RAILS_ENV": "test"
+          },
+          "ports": [],
+          "volumes": [],
+          "restart": "no",
+          "image": "legacy:dev",
+          "type": "run",
+          "command": "bin/rails db:migrate"
+        }
+      }
+    }
+  },
+  "config.mode": {
+    "ok": "container"
+  },
+  "config.container": {
+    "ok": "app"
+  },
+  "config.network": {
+    "ok": "legacy-net"
+  },
+  "config.wslc_command": {
+    "ok": "auto"
+  },
+  "config.dependencies.keys": {
+    "ok": [
+      "app"
+    ]
+  },
+  "config.commands.keys": {
+    "ok": [
+      "bash",
+      "migrate"
+    ]
+  },
+  "config.compose_build_specs": {
+    "ok": {}
+  },
+  "config.sync.to_h": {
+    "ok": null
+  },
+  "dotenv": {
+    "ok": {}
+  },
+  "builder.up.detached": {
+    "ok": [
+      "wslc.exe",
+      "run",
+      "--name",
+      "app",
+      "--network",
+      "legacy-net",
+      "-d",
+      "-w",
+      "/code",
+      "-e",
+      "API_TOKEN=super-secret-token",
+      "legacy:dev"
+    ]
+  },
+  "builder.up.attached.tty": {
+    "ok": [
+      "wslc.exe",
+      "run",
+      "--name",
+      "app",
+      "--network",
+      "legacy-net",
+      "-it",
+      "-w",
+      "/code",
+      "-e",
+      "API_TOKEN=super-secret-token",
+      "legacy:dev"
+    ]
+  },
+  "builder.up.attached.notty": {
+    "ok": [
+      "wslc.exe",
+      "run",
+      "--name",
+      "app",
+      "--network",
+      "legacy-net",
+      "-w",
+      "/code",
+      "-e",
+      "API_TOKEN=super-secret-token",
+      "legacy:dev"
+    ]
+  },
+  "builder.start.detached": {
+    "ok": [
+      "wslc.exe",
+      "start",
+      "app"
+    ]
+  },
+  "builder.start.attached": {
+    "ok": [
+      "wslc.exe",
+      "start",
+      "app",
+      "-a",
+      "-i"
+    ]
+  },
+  "builder.find": {
+    "ok": [
+      "wslc.exe",
+      "list",
+      "--all",
+      "--filter",
+      "name=app",
+      "--format",
+      "json"
+    ]
+  },
+  "builder.stop": {
+    "ok": [
+      "wslc.exe",
+      "stop",
+      "app"
+    ]
+  },
+  "builder.remove": {
+    "ok": [
+      "wslc.exe",
+      "remove",
+      "-f",
+      "app"
+    ]
+  },
+  "builder.network_create": {
+    "ok": [
+      "wslc.exe",
+      "network",
+      "create",
+      "legacy-net"
+    ]
+  },
+  "builder.network_list": {
+    "ok": [
+      "wslc.exe",
+      "network",
+      "list",
+      "--format",
+      "json"
+    ]
+  },
+  "builder.exec.tty": {
+    "ok": [
+      "wslc.exe",
+      "exec",
+      "-it",
+      "-w",
+      "/code",
+      "-e",
+      "API_TOKEN=super-secret-token",
+      "app",
+      "bash",
+      "-lc",
+      "ls"
+    ]
+  },
+  "builder.exec.notty": {
+    "ok": [
+      "wslc.exe",
+      "exec",
+      "-w",
+      "/code",
+      "-e",
+      "API_TOKEN=super-secret-token",
+      "app",
+      "bash",
+      "-lc",
+      "ls"
+    ]
+  },
+  "builder.exec.noninteractive": {
+    "ok": [
+      "wslc.exe",
+      "exec",
+      "-w",
+      "/code",
+      "-e",
+      "API_TOKEN=super-secret-token",
+      "app",
+      "bash",
+      "-lc",
+      "ls"
+    ]
+  },
+  "builder.run.tty": {
+    "ok": [
+      "wslc.exe",
+      "run",
+      "-it",
+      "-w",
+      "/code",
+      "-e",
+      "API_TOKEN=super-secret-token",
+      "legacy:dev",
+      "ls",
+      "-la"
+    ]
+  },
+  "builder.run.notty": {
+    "ok": [
+      "wslc.exe",
+      "run",
+      "-w",
+      "/code",
+      "-e",
+      "API_TOKEN=super-secret-token",
+      "legacy:dev",
+      "ls",
+      "-la"
+    ]
+  },
+  "builder.build": {
+    "ok": [
+      "wslc.exe",
+      "build",
+      "-t",
+      "legacy:dev",
+      "."
+    ]
+  },
+  "builder.build.extra": {
+    "ok": [
+      "wslc.exe",
+      "build",
+      "-t",
+      "legacy:dev",
+      "--no-cache",
+      "."
+    ]
+  },
+  "builder.sync_run": {
+    "error": "No sync: block configured in wip.yml"
+  },
+  "builder.sync_exec": {
+    "error": "No sync: block configured in wip.yml"
+  },
+  "builder.sync_build": {
+    "error": "No sync: block configured in wip.yml"
+  },
+  "builder.logs.follow": {
+    "ok": [
+      "wslc.exe",
+      "logs",
+      "-f",
+      "web"
+    ]
+  },
+  "builder.logs.nofollow": {
+    "ok": [
+      "wslc.exe",
+      "logs",
+      "web"
+    ]
+  },
+  "builder.dependency_up[app]": {
+    "ok": [
+      "wslc.exe",
+      "run",
+      "--name",
+      "app",
+      "--network",
+      "legacy-net",
+      "-d",
+      "-w",
+      "/code",
+      "-e",
+      "API_TOKEN=super-secret-token",
+      "legacy:dev"
+    ]
+  },
+  "builder.dependency_up.attached[app]": {
+    "ok": [
+      "wslc.exe",
+      "run",
+      "--name",
+      "app",
+      "--network",
+      "legacy-net",
+      "-w",
+      "/code",
+      "-e",
+      "API_TOKEN=super-secret-token",
+      "legacy:dev"
+    ]
+  },
+  "builder.dependency_start[app]": {
+    "ok": [
+      "wslc.exe",
+      "start",
+      "app"
+    ]
+  },
+  "builder.dependency_find[app]": {
+    "ok": [
+      "wslc.exe",
+      "list",
+      "--all",
+      "--filter",
+      "name=app",
+      "--format",
+      "json"
+    ]
+  },
+  "builder.dependency_stop[app]": {
+    "ok": [
+      "wslc.exe",
+      "stop",
+      "app"
+    ]
+  },
+  "builder.dependency_remove[app]": {
+    "ok": [
+      "wslc.exe",
+      "remove",
+      "-f",
+      "app"
+    ]
+  },
+  "builder.custom[bash]": {
+    "ok": [
+      "wslc.exe",
+      "exec",
+      "-it",
+      "-w",
+      "/code",
+      "-e",
+      "API_TOKEN=super-secret-token",
+      "app",
+      "bash"
+    ]
+  },
+  "builder.custom.args[bash]": {
+    "ok": [
+      "wslc.exe",
+      "exec",
+      "-it",
+      "-w",
+      "/code",
+      "-e",
+      "API_TOKEN=super-secret-token",
+      "app",
+      "bash",
+      "--trace",
+      "extra"
+    ]
+  },
+  "config.command[bash]": {
+    "ok": {
+      "workdir": "/code",
+      "user": null,
+      "interactive": true,
+      "remove": false,
+      "env": {
+        "API_TOKEN": "super-secret-token"
+      },
+      "ports": [],
+      "volumes": [],
+      "restart": "no",
+      "image": "legacy:dev",
+      "type": "exec",
+      "command": "bash"
+    }
+  },
+  "builder.custom[migrate]": {
+    "ok": [
+      "wslc.exe",
+      "run",
+      "-w",
+      "/code",
+      "-e",
+      "RAILS_ENV=test",
+      "legacy:dev",
+      "bin/rails",
+      "db:migrate"
+    ]
+  },
+  "builder.custom.args[migrate]": {
+    "ok": [
+      "wslc.exe",
+      "run",
+      "-w",
+      "/code",
+      "-e",
+      "RAILS_ENV=test",
+      "legacy:dev",
+      "bin/rails",
+      "db:migrate",
+      "--trace",
+      "extra"
+    ]
+  },
+  "config.command[migrate]": {
+    "ok": {
+      "workdir": "/code",
+      "user": null,
+      "interactive": false,
+      "remove": false,
+      "env": {
+        "RAILS_ENV": "test"
+      },
+      "ports": [],
+      "volumes": [],
+      "restart": "no",
+      "image": "legacy:dev",
+      "type": "run",
+      "command": "bin/rails db:migrate"
+    }
+  }
+}

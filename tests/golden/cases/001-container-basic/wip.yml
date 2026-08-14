@@ -1,0 +1,48 @@
+version: 1
+mode: container
+wslc:
+  command: auto
+container: app
+network: app-tier
+dependencies:
+  app:
+    image: slidict/slidict:development
+    workdir: /app
+    user: "1000:1000"
+    interactive: false
+    remove: true
+    command: server -p 3000
+    env:
+      RAILS_ENV: development
+      PORT: "3000"
+      DATABASE_PASSWORD: hunter2
+    ports:
+      - "3000:3000"
+      - "9229:9229"
+    volumes:
+      - .:/app
+      - bundle:/usr/local/bundle
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    env:
+      POSTGRES_PASSWORD: secret
+    ports:
+      - "5432:5432"
+  redis:
+    image: redis:7
+    restart: no
+commands:
+  rails:
+    command: bin/rails
+    interactive: true
+  rspec:
+    command: bundle exec rspec
+  psql:
+    command: psql -U postgres
+    container: db
+    interactive: true
+  build:
+    type: build
+    context: .
+    tag: slidict/slidict:development

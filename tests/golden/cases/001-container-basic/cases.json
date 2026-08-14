@@ -1,0 +1,1117 @@
+{
+  "config.to_h": {
+    "ok": {
+      "version": 1,
+      "wslc": {
+        "command": "auto"
+      },
+      "mode": "container",
+      "container": "app",
+      "network": "app-tier",
+      "dependencies": {
+        "app": {
+          "image": "slidict/slidict:development",
+          "workdir": "/app",
+          "user": "1000:1000",
+          "interactive": false,
+          "remove": true,
+          "command": "server -p 3000",
+          "env": {
+            "RAILS_ENV": "development",
+            "PORT": "3000",
+            "DATABASE_PASSWORD": "[REDACTED]"
+          },
+          "ports": [
+            "3000:3000",
+            "9229:9229"
+          ],
+          "volumes": [
+            ".:/app",
+            "bundle:/usr/local/bundle"
+          ]
+        },
+        "db": {
+          "image": "postgres:16",
+          "restart": "unless-stopped",
+          "env": {
+            "POSTGRES_PASSWORD": "[REDACTED]"
+          },
+          "ports": [
+            "5432:5432"
+          ]
+        },
+        "redis": {
+          "image": "redis:7",
+          "restart": "no"
+        }
+      },
+      "compose": null,
+      "sync": null,
+      "commands": {
+        "rails": {
+          "workdir": "/app",
+          "user": "1000:1000",
+          "interactive": true,
+          "remove": true,
+          "env": {
+            "RAILS_ENV": "development",
+            "PORT": "3000",
+            "DATABASE_PASSWORD": "[REDACTED]"
+          },
+          "ports": [
+            "3000:3000",
+            "9229:9229"
+          ],
+          "volumes": [
+            ".:/app",
+            "bundle:/usr/local/bundle"
+          ],
+          "restart": "no",
+          "image": "slidict/slidict:development",
+          "command": "bin/rails",
+          "type": "exec"
+        },
+        "rspec": {
+          "workdir": "/app",
+          "user": "1000:1000",
+          "interactive": false,
+          "remove": true,
+          "env": {
+            "RAILS_ENV": "development",
+            "PORT": "3000",
+            "DATABASE_PASSWORD": "[REDACTED]"
+          },
+          "ports": [
+            "3000:3000",
+            "9229:9229"
+          ],
+          "volumes": [
+            ".:/app",
+            "bundle:/usr/local/bundle"
+          ],
+          "restart": "no",
+          "image": "slidict/slidict:development",
+          "command": "bundle exec rspec",
+          "type": "exec"
+        },
+        "psql": {
+          "workdir": "/app",
+          "user": "1000:1000",
+          "interactive": true,
+          "remove": true,
+          "env": {
+            "RAILS_ENV": "development",
+            "PORT": "3000",
+            "DATABASE_PASSWORD": "[REDACTED]"
+          },
+          "ports": [
+            "3000:3000",
+            "9229:9229"
+          ],
+          "volumes": [
+            ".:/app",
+            "bundle:/usr/local/bundle"
+          ],
+          "restart": "no",
+          "image": "slidict/slidict:development",
+          "command": "psql -U postgres",
+          "type": "exec",
+          "container": "db"
+        },
+        "build": {
+          "workdir": "/app",
+          "user": "1000:1000",
+          "interactive": false,
+          "remove": true,
+          "env": {
+            "RAILS_ENV": "development",
+            "PORT": "3000",
+            "DATABASE_PASSWORD": "[REDACTED]"
+          },
+          "ports": [
+            "3000:3000",
+            "9229:9229"
+          ],
+          "volumes": [
+            ".:/app",
+            "bundle:/usr/local/bundle"
+          ],
+          "restart": "no",
+          "image": "slidict/slidict:development",
+          "command": "server -p 3000",
+          "type": "build",
+          "context": ".",
+          "tag": "slidict/slidict:development"
+        }
+      }
+    }
+  },
+  "config.to_h.unredacted": {
+    "ok": {
+      "version": 1,
+      "wslc": {
+        "command": "auto"
+      },
+      "mode": "container",
+      "container": "app",
+      "network": "app-tier",
+      "dependencies": {
+        "app": {
+          "image": "slidict/slidict:development",
+          "workdir": "/app",
+          "user": "1000:1000",
+          "interactive": false,
+          "remove": true,
+          "command": "server -p 3000",
+          "env": {
+            "RAILS_ENV": "development",
+            "PORT": "3000",
+            "DATABASE_PASSWORD": "hunter2"
+          },
+          "ports": [
+            "3000:3000",
+            "9229:9229"
+          ],
+          "volumes": [
+            ".:/app",
+            "bundle:/usr/local/bundle"
+          ]
+        },
+        "db": {
+          "image": "postgres:16",
+          "restart": "unless-stopped",
+          "env": {
+            "POSTGRES_PASSWORD": "secret"
+          },
+          "ports": [
+            "5432:5432"
+          ]
+        },
+        "redis": {
+          "image": "redis:7",
+          "restart": "no"
+        }
+      },
+      "compose": null,
+      "sync": null,
+      "commands": {
+        "rails": {
+          "workdir": "/app",
+          "user": "1000:1000",
+          "interactive": true,
+          "remove": true,
+          "env": {
+            "RAILS_ENV": "development",
+            "PORT": "3000",
+            "DATABASE_PASSWORD": "hunter2"
+          },
+          "ports": [
+            "3000:3000",
+            "9229:9229"
+          ],
+          "volumes": [
+            ".:/app",
+            "bundle:/usr/local/bundle"
+          ],
+          "restart": "no",
+          "image": "slidict/slidict:development",
+          "command": "bin/rails",
+          "type": "exec"
+        },
+        "rspec": {
+          "workdir": "/app",
+          "user": "1000:1000",
+          "interactive": false,
+          "remove": true,
+          "env": {
+            "RAILS_ENV": "development",
+            "PORT": "3000",
+            "DATABASE_PASSWORD": "hunter2"
+          },
+          "ports": [
+            "3000:3000",
+            "9229:9229"
+          ],
+          "volumes": [
+            ".:/app",
+            "bundle:/usr/local/bundle"
+          ],
+          "restart": "no",
+          "image": "slidict/slidict:development",
+          "command": "bundle exec rspec",
+          "type": "exec"
+        },
+        "psql": {
+          "workdir": "/app",
+          "user": "1000:1000",
+          "interactive": true,
+          "remove": true,
+          "env": {
+            "RAILS_ENV": "development",
+            "PORT": "3000",
+            "DATABASE_PASSWORD": "hunter2"
+          },
+          "ports": [
+            "3000:3000",
+            "9229:9229"
+          ],
+          "volumes": [
+            ".:/app",
+            "bundle:/usr/local/bundle"
+          ],
+          "restart": "no",
+          "image": "slidict/slidict:development",
+          "command": "psql -U postgres",
+          "type": "exec",
+          "container": "db"
+        },
+        "build": {
+          "workdir": "/app",
+          "user": "1000:1000",
+          "interactive": false,
+          "remove": true,
+          "env": {
+            "RAILS_ENV": "development",
+            "PORT": "3000",
+            "DATABASE_PASSWORD": "hunter2"
+          },
+          "ports": [
+            "3000:3000",
+            "9229:9229"
+          ],
+          "volumes": [
+            ".:/app",
+            "bundle:/usr/local/bundle"
+          ],
+          "restart": "no",
+          "image": "slidict/slidict:development",
+          "command": "server -p 3000",
+          "type": "build",
+          "context": ".",
+          "tag": "slidict/slidict:development"
+        }
+      }
+    }
+  },
+  "config.mode": {
+    "ok": "container"
+  },
+  "config.container": {
+    "ok": "app"
+  },
+  "config.network": {
+    "ok": "app-tier"
+  },
+  "config.wslc_command": {
+    "ok": "auto"
+  },
+  "config.dependencies.keys": {
+    "ok": [
+      "app",
+      "db",
+      "redis"
+    ]
+  },
+  "config.commands.keys": {
+    "ok": [
+      "rails",
+      "rspec",
+      "psql",
+      "build"
+    ]
+  },
+  "config.compose_build_specs": {
+    "ok": {}
+  },
+  "config.sync.to_h": {
+    "ok": null
+  },
+  "dotenv": {
+    "ok": {}
+  },
+  "builder.up.detached": {
+    "ok": [
+      "wslc.exe",
+      "run",
+      "--name",
+      "app",
+      "--network",
+      "app-tier",
+      "-d",
+      "-w",
+      "/app",
+      "-u",
+      "1000:1000",
+      "-e",
+      "RAILS_ENV=development",
+      "-e",
+      "PORT=3000",
+      "-e",
+      "DATABASE_PASSWORD=hunter2",
+      "-p",
+      "3000:3000",
+      "-p",
+      "9229:9229",
+      "-v",
+      ".:/app",
+      "-v",
+      "bundle:/usr/local/bundle",
+      "slidict/slidict:development",
+      "server",
+      "-p",
+      "3000"
+    ]
+  },
+  "builder.up.attached.tty": {
+    "ok": [
+      "wslc.exe",
+      "run",
+      "--name",
+      "app",
+      "--network",
+      "app-tier",
+      "-it",
+      "-w",
+      "/app",
+      "-u",
+      "1000:1000",
+      "-e",
+      "RAILS_ENV=development",
+      "-e",
+      "PORT=3000",
+      "-e",
+      "DATABASE_PASSWORD=hunter2",
+      "-p",
+      "3000:3000",
+      "-p",
+      "9229:9229",
+      "-v",
+      ".:/app",
+      "-v",
+      "bundle:/usr/local/bundle",
+      "slidict/slidict:development",
+      "server",
+      "-p",
+      "3000"
+    ]
+  },
+  "builder.up.attached.notty": {
+    "ok": [
+      "wslc.exe",
+      "run",
+      "--name",
+      "app",
+      "--network",
+      "app-tier",
+      "-w",
+      "/app",
+      "-u",
+      "1000:1000",
+      "-e",
+      "RAILS_ENV=development",
+      "-e",
+      "PORT=3000",
+      "-e",
+      "DATABASE_PASSWORD=hunter2",
+      "-p",
+      "3000:3000",
+      "-p",
+      "9229:9229",
+      "-v",
+      ".:/app",
+      "-v",
+      "bundle:/usr/local/bundle",
+      "slidict/slidict:development",
+      "server",
+      "-p",
+      "3000"
+    ]
+  },
+  "builder.start.detached": {
+    "ok": [
+      "wslc.exe",
+      "start",
+      "app"
+    ]
+  },
+  "builder.start.attached": {
+    "ok": [
+      "wslc.exe",
+      "start",
+      "app",
+      "-a",
+      "-i"
+    ]
+  },
+  "builder.find": {
+    "ok": [
+      "wslc.exe",
+      "list",
+      "--all",
+      "--filter",
+      "name=app",
+      "--format",
+      "json"
+    ]
+  },
+  "builder.stop": {
+    "ok": [
+      "wslc.exe",
+      "stop",
+      "app"
+    ]
+  },
+  "builder.remove": {
+    "ok": [
+      "wslc.exe",
+      "remove",
+      "-f",
+      "app"
+    ]
+  },
+  "builder.network_create": {
+    "ok": [
+      "wslc.exe",
+      "network",
+      "create",
+      "app-tier"
+    ]
+  },
+  "builder.network_list": {
+    "ok": [
+      "wslc.exe",
+      "network",
+      "list",
+      "--format",
+      "json"
+    ]
+  },
+  "builder.exec.tty": {
+    "ok": [
+      "wslc.exe",
+      "exec",
+      "-it",
+      "-w",
+      "/app",
+      "-u",
+      "1000:1000",
+      "-e",
+      "RAILS_ENV=development",
+      "-e",
+      "PORT=3000",
+      "-e",
+      "DATABASE_PASSWORD=hunter2",
+      "app",
+      "bash",
+      "-lc",
+      "ls"
+    ]
+  },
+  "builder.exec.notty": {
+    "ok": [
+      "wslc.exe",
+      "exec",
+      "-w",
+      "/app",
+      "-u",
+      "1000:1000",
+      "-e",
+      "RAILS_ENV=development",
+      "-e",
+      "PORT=3000",
+      "-e",
+      "DATABASE_PASSWORD=hunter2",
+      "app",
+      "bash",
+      "-lc",
+      "ls"
+    ]
+  },
+  "builder.exec.noninteractive": {
+    "ok": [
+      "wslc.exe",
+      "exec",
+      "-w",
+      "/app",
+      "-u",
+      "1000:1000",
+      "-e",
+      "RAILS_ENV=development",
+      "-e",
+      "PORT=3000",
+      "-e",
+      "DATABASE_PASSWORD=hunter2",
+      "app",
+      "bash",
+      "-lc",
+      "ls"
+    ]
+  },
+  "builder.run.tty": {
+    "ok": [
+      "wslc.exe",
+      "run",
+      "--rm",
+      "-it",
+      "-w",
+      "/app",
+      "-u",
+      "1000:1000",
+      "-e",
+      "RAILS_ENV=development",
+      "-e",
+      "PORT=3000",
+      "-e",
+      "DATABASE_PASSWORD=hunter2",
+      "-p",
+      "3000:3000",
+      "-p",
+      "9229:9229",
+      "-v",
+      ".:/app",
+      "-v",
+      "bundle:/usr/local/bundle",
+      "slidict/slidict:development",
+      "ls",
+      "-la"
+    ]
+  },
+  "builder.run.notty": {
+    "ok": [
+      "wslc.exe",
+      "run",
+      "--rm",
+      "-w",
+      "/app",
+      "-u",
+      "1000:1000",
+      "-e",
+      "RAILS_ENV=development",
+      "-e",
+      "PORT=3000",
+      "-e",
+      "DATABASE_PASSWORD=hunter2",
+      "-p",
+      "3000:3000",
+      "-p",
+      "9229:9229",
+      "-v",
+      ".:/app",
+      "-v",
+      "bundle:/usr/local/bundle",
+      "slidict/slidict:development",
+      "ls",
+      "-la"
+    ]
+  },
+  "builder.build": {
+    "ok": [
+      "wslc.exe",
+      "build",
+      "-t",
+      "slidict/slidict:development",
+      "."
+    ]
+  },
+  "builder.build.extra": {
+    "ok": [
+      "wslc.exe",
+      "build",
+      "-t",
+      "slidict/slidict:development",
+      "--no-cache",
+      "."
+    ]
+  },
+  "builder.sync_run": {
+    "error": "No sync: block configured in wip.yml"
+  },
+  "builder.sync_exec": {
+    "error": "No sync: block configured in wip.yml"
+  },
+  "builder.sync_build": {
+    "error": "No sync: block configured in wip.yml"
+  },
+  "builder.logs.follow": {
+    "ok": [
+      "wslc.exe",
+      "logs",
+      "-f",
+      "web"
+    ]
+  },
+  "builder.logs.nofollow": {
+    "ok": [
+      "wslc.exe",
+      "logs",
+      "web"
+    ]
+  },
+  "builder.dependency_up[app]": {
+    "ok": [
+      "wslc.exe",
+      "run",
+      "--name",
+      "app",
+      "--network",
+      "app-tier",
+      "-d",
+      "-w",
+      "/app",
+      "-u",
+      "1000:1000",
+      "-e",
+      "RAILS_ENV=development",
+      "-e",
+      "PORT=3000",
+      "-e",
+      "DATABASE_PASSWORD=hunter2",
+      "-p",
+      "3000:3000",
+      "-p",
+      "9229:9229",
+      "-v",
+      ".:/app",
+      "-v",
+      "bundle:/usr/local/bundle",
+      "slidict/slidict:development",
+      "server",
+      "-p",
+      "3000"
+    ]
+  },
+  "builder.dependency_up.attached[app]": {
+    "ok": [
+      "wslc.exe",
+      "run",
+      "--name",
+      "app",
+      "--network",
+      "app-tier",
+      "-w",
+      "/app",
+      "-u",
+      "1000:1000",
+      "-e",
+      "RAILS_ENV=development",
+      "-e",
+      "PORT=3000",
+      "-e",
+      "DATABASE_PASSWORD=hunter2",
+      "-p",
+      "3000:3000",
+      "-p",
+      "9229:9229",
+      "-v",
+      ".:/app",
+      "-v",
+      "bundle:/usr/local/bundle",
+      "slidict/slidict:development",
+      "server",
+      "-p",
+      "3000"
+    ]
+  },
+  "builder.dependency_start[app]": {
+    "ok": [
+      "wslc.exe",
+      "start",
+      "app"
+    ]
+  },
+  "builder.dependency_find[app]": {
+    "ok": [
+      "wslc.exe",
+      "list",
+      "--all",
+      "--filter",
+      "name=app",
+      "--format",
+      "json"
+    ]
+  },
+  "builder.dependency_stop[app]": {
+    "ok": [
+      "wslc.exe",
+      "stop",
+      "app"
+    ]
+  },
+  "builder.dependency_remove[app]": {
+    "ok": [
+      "wslc.exe",
+      "remove",
+      "-f",
+      "app"
+    ]
+  },
+  "builder.dependency_up[db]": {
+    "ok": [
+      "wslc.exe",
+      "run",
+      "--name",
+      "db",
+      "--network",
+      "app-tier",
+      "-d",
+      "-e",
+      "POSTGRES_PASSWORD=secret",
+      "-p",
+      "5432:5432",
+      "postgres:16"
+    ]
+  },
+  "builder.dependency_up.attached[db]": {
+    "ok": [
+      "wslc.exe",
+      "run",
+      "--name",
+      "db",
+      "--network",
+      "app-tier",
+      "-e",
+      "POSTGRES_PASSWORD=secret",
+      "-p",
+      "5432:5432",
+      "postgres:16"
+    ]
+  },
+  "builder.dependency_start[db]": {
+    "ok": [
+      "wslc.exe",
+      "start",
+      "db"
+    ]
+  },
+  "builder.dependency_find[db]": {
+    "ok": [
+      "wslc.exe",
+      "list",
+      "--all",
+      "--filter",
+      "name=db",
+      "--format",
+      "json"
+    ]
+  },
+  "builder.dependency_stop[db]": {
+    "ok": [
+      "wslc.exe",
+      "stop",
+      "db"
+    ]
+  },
+  "builder.dependency_remove[db]": {
+    "ok": [
+      "wslc.exe",
+      "remove",
+      "-f",
+      "db"
+    ]
+  },
+  "builder.dependency_up[redis]": {
+    "ok": [
+      "wslc.exe",
+      "run",
+      "--name",
+      "redis",
+      "--network",
+      "app-tier",
+      "-d",
+      "redis:7"
+    ]
+  },
+  "builder.dependency_up.attached[redis]": {
+    "ok": [
+      "wslc.exe",
+      "run",
+      "--name",
+      "redis",
+      "--network",
+      "app-tier",
+      "redis:7"
+    ]
+  },
+  "builder.dependency_start[redis]": {
+    "ok": [
+      "wslc.exe",
+      "start",
+      "redis"
+    ]
+  },
+  "builder.dependency_find[redis]": {
+    "ok": [
+      "wslc.exe",
+      "list",
+      "--all",
+      "--filter",
+      "name=redis",
+      "--format",
+      "json"
+    ]
+  },
+  "builder.dependency_stop[redis]": {
+    "ok": [
+      "wslc.exe",
+      "stop",
+      "redis"
+    ]
+  },
+  "builder.dependency_remove[redis]": {
+    "ok": [
+      "wslc.exe",
+      "remove",
+      "-f",
+      "redis"
+    ]
+  },
+  "builder.custom[rails]": {
+    "ok": [
+      "wslc.exe",
+      "exec",
+      "-it",
+      "-w",
+      "/app",
+      "-u",
+      "1000:1000",
+      "-e",
+      "RAILS_ENV=development",
+      "-e",
+      "PORT=3000",
+      "-e",
+      "DATABASE_PASSWORD=hunter2",
+      "app",
+      "bin/rails"
+    ]
+  },
+  "builder.custom.args[rails]": {
+    "ok": [
+      "wslc.exe",
+      "exec",
+      "-it",
+      "-w",
+      "/app",
+      "-u",
+      "1000:1000",
+      "-e",
+      "RAILS_ENV=development",
+      "-e",
+      "PORT=3000",
+      "-e",
+      "DATABASE_PASSWORD=hunter2",
+      "app",
+      "bin/rails",
+      "--trace",
+      "extra"
+    ]
+  },
+  "config.command[rails]": {
+    "ok": {
+      "workdir": "/app",
+      "user": "1000:1000",
+      "interactive": true,
+      "remove": true,
+      "env": {
+        "RAILS_ENV": "development",
+        "PORT": "3000",
+        "DATABASE_PASSWORD": "hunter2"
+      },
+      "ports": [
+        "3000:3000",
+        "9229:9229"
+      ],
+      "volumes": [
+        ".:/app",
+        "bundle:/usr/local/bundle"
+      ],
+      "restart": "no",
+      "image": "slidict/slidict:development",
+      "command": "bin/rails",
+      "type": "exec"
+    }
+  },
+  "builder.custom[rspec]": {
+    "ok": [
+      "wslc.exe",
+      "exec",
+      "-w",
+      "/app",
+      "-u",
+      "1000:1000",
+      "-e",
+      "RAILS_ENV=development",
+      "-e",
+      "PORT=3000",
+      "-e",
+      "DATABASE_PASSWORD=hunter2",
+      "app",
+      "bundle",
+      "exec",
+      "rspec"
+    ]
+  },
+  "builder.custom.args[rspec]": {
+    "ok": [
+      "wslc.exe",
+      "exec",
+      "-w",
+      "/app",
+      "-u",
+      "1000:1000",
+      "-e",
+      "RAILS_ENV=development",
+      "-e",
+      "PORT=3000",
+      "-e",
+      "DATABASE_PASSWORD=hunter2",
+      "app",
+      "bundle",
+      "exec",
+      "rspec",
+      "--trace",
+      "extra"
+    ]
+  },
+  "config.command[rspec]": {
+    "ok": {
+      "workdir": "/app",
+      "user": "1000:1000",
+      "interactive": false,
+      "remove": true,
+      "env": {
+        "RAILS_ENV": "development",
+        "PORT": "3000",
+        "DATABASE_PASSWORD": "hunter2"
+      },
+      "ports": [
+        "3000:3000",
+        "9229:9229"
+      ],
+      "volumes": [
+        ".:/app",
+        "bundle:/usr/local/bundle"
+      ],
+      "restart": "no",
+      "image": "slidict/slidict:development",
+      "command": "bundle exec rspec",
+      "type": "exec"
+    }
+  },
+  "builder.custom[psql]": {
+    "ok": [
+      "wslc.exe",
+      "exec",
+      "-it",
+      "-w",
+      "/app",
+      "-u",
+      "1000:1000",
+      "-e",
+      "RAILS_ENV=development",
+      "-e",
+      "PORT=3000",
+      "-e",
+      "DATABASE_PASSWORD=hunter2",
+      "db",
+      "psql",
+      "-U",
+      "postgres"
+    ]
+  },
+  "builder.custom.args[psql]": {
+    "ok": [
+      "wslc.exe",
+      "exec",
+      "-it",
+      "-w",
+      "/app",
+      "-u",
+      "1000:1000",
+      "-e",
+      "RAILS_ENV=development",
+      "-e",
+      "PORT=3000",
+      "-e",
+      "DATABASE_PASSWORD=hunter2",
+      "db",
+      "psql",
+      "-U",
+      "postgres",
+      "--trace",
+      "extra"
+    ]
+  },
+  "config.command[psql]": {
+    "ok": {
+      "workdir": "/app",
+      "user": "1000:1000",
+      "interactive": true,
+      "remove": true,
+      "env": {
+        "RAILS_ENV": "development",
+        "PORT": "3000",
+        "DATABASE_PASSWORD": "hunter2"
+      },
+      "ports": [
+        "3000:3000",
+        "9229:9229"
+      ],
+      "volumes": [
+        ".:/app",
+        "bundle:/usr/local/bundle"
+      ],
+      "restart": "no",
+      "image": "slidict/slidict:development",
+      "command": "psql -U postgres",
+      "type": "exec",
+      "container": "db"
+    }
+  },
+  "builder.custom[build]": {
+    "ok": [
+      "wslc.exe",
+      "build",
+      "-t",
+      "slidict/slidict:development",
+      "."
+    ]
+  },
+  "builder.custom.args[build]": {
+    "ok": [
+      "wslc.exe",
+      "build",
+      "-t",
+      "slidict/slidict:development",
+      "--trace",
+      "extra",
+      "."
+    ]
+  },
+  "config.command[build]": {
+    "ok": {
+      "workdir": "/app",
+      "user": "1000:1000",
+      "interactive": false,
+      "remove": true,
+      "env": {
+        "RAILS_ENV": "development",
+        "PORT": "3000",
+        "DATABASE_PASSWORD": "hunter2"
+      },
+      "ports": [
+        "3000:3000",
+        "9229:9229"
+      ],
+      "volumes": [
+        ".:/app",
+        "bundle:/usr/local/bundle"
+      ],
+      "restart": "no",
+      "image": "slidict/slidict:development",
+      "command": "server -p 3000",
+      "type": "build",
+      "context": ".",
+      "tag": "slidict/slidict:development"
+    }
+  }
+}

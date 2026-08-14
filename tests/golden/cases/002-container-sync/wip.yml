@@ -1,0 +1,30 @@
+version: 1
+mode: container
+container: app
+dependencies:
+  app:
+    image: myapp:dev
+    workdir: /srv/app
+    volumes:
+      - .:/srv/app
+      - node_modules:/srv/app/node_modules
+sync:
+  source: .
+  target: /srv/app
+  mount: /host-src
+  volume: app-src
+  delete: true
+  exclude:
+    - .git
+    - tmp/
+  interval: 3
+  mode: exec
+  build:
+    dockerfile: |
+      FROM alpine:3.20
+      RUN apk add --no-cache rsync
+    tag: wip-sync-app:latest
+commands:
+  console:
+    command: bin/console
+    interactive: true

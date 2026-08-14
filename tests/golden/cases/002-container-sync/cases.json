@@ -1,0 +1,541 @@
+{
+  "config.to_h": {
+    "ok": {
+      "version": 1,
+      "wslc": {
+        "command": "auto"
+      },
+      "mode": "container",
+      "container": "app",
+      "network": null,
+      "dependencies": {
+        "app": {
+          "image": "myapp:dev",
+          "workdir": "/srv/app",
+          "volumes": [
+            ".:/srv/app",
+            "node_modules:/srv/app/node_modules"
+          ]
+        }
+      },
+      "compose": null,
+      "sync": {
+        "source": "<FIXTURE>",
+        "target": "/srv/app",
+        "mount": "/host-src",
+        "volume": "app-src",
+        "delete": true,
+        "exclude": [
+          ".git",
+          "tmp/"
+        ],
+        "command": "rsync",
+        "options": [],
+        "interval": 3,
+        "mode": "exec",
+        "image": null,
+        "build": {
+          "dockerfile": "FROM alpine:3.20\nRUN apk add --no-cache rsync\n",
+          "tag": "wip-sync-app:latest"
+        }
+      },
+      "commands": {
+        "console": {
+          "workdir": "/srv/app",
+          "user": null,
+          "interactive": true,
+          "remove": true,
+          "env": {},
+          "ports": [],
+          "volumes": [
+            ".:/srv/app",
+            "node_modules:/srv/app/node_modules"
+          ],
+          "restart": "no",
+          "image": "myapp:dev",
+          "type": "exec",
+          "command": "bin/console"
+        }
+      }
+    }
+  },
+  "config.to_h.unredacted": {
+    "ok": {
+      "version": 1,
+      "wslc": {
+        "command": "auto"
+      },
+      "mode": "container",
+      "container": "app",
+      "network": null,
+      "dependencies": {
+        "app": {
+          "image": "myapp:dev",
+          "workdir": "/srv/app",
+          "volumes": [
+            ".:/srv/app",
+            "node_modules:/srv/app/node_modules"
+          ]
+        }
+      },
+      "compose": null,
+      "sync": {
+        "source": "<FIXTURE>",
+        "target": "/srv/app",
+        "mount": "/host-src",
+        "volume": "app-src",
+        "delete": true,
+        "exclude": [
+          ".git",
+          "tmp/"
+        ],
+        "command": "rsync",
+        "options": [],
+        "interval": 3,
+        "mode": "exec",
+        "image": null,
+        "build": {
+          "dockerfile": "FROM alpine:3.20\nRUN apk add --no-cache rsync\n",
+          "tag": "wip-sync-app:latest"
+        }
+      },
+      "commands": {
+        "console": {
+          "workdir": "/srv/app",
+          "user": null,
+          "interactive": true,
+          "remove": true,
+          "env": {},
+          "ports": [],
+          "volumes": [
+            ".:/srv/app",
+            "node_modules:/srv/app/node_modules"
+          ],
+          "restart": "no",
+          "image": "myapp:dev",
+          "type": "exec",
+          "command": "bin/console"
+        }
+      }
+    }
+  },
+  "config.mode": {
+    "ok": "container"
+  },
+  "config.container": {
+    "ok": "app"
+  },
+  "config.network": {
+    "ok": null
+  },
+  "config.wslc_command": {
+    "ok": "auto"
+  },
+  "config.dependencies.keys": {
+    "ok": [
+      "app"
+    ]
+  },
+  "config.commands.keys": {
+    "ok": [
+      "console"
+    ]
+  },
+  "config.compose_build_specs": {
+    "ok": {}
+  },
+  "config.sync.to_h": {
+    "ok": {
+      "source": "<FIXTURE>",
+      "target": "/srv/app",
+      "mount": "/host-src",
+      "volume": "app-src",
+      "delete": true,
+      "exclude": [
+        ".git",
+        "tmp/"
+      ],
+      "command": "rsync",
+      "options": [],
+      "interval": 3,
+      "mode": "exec",
+      "image": null,
+      "build": {
+        "dockerfile": "FROM alpine:3.20\nRUN apk add --no-cache rsync\n",
+        "tag": "wip-sync-app:latest"
+      }
+    }
+  },
+  "dotenv": {
+    "ok": {}
+  },
+  "builder.up.detached": {
+    "ok": [
+      "wslc.exe",
+      "run",
+      "--name",
+      "app",
+      "-d",
+      "-w",
+      "/srv/app",
+      "-v",
+      "node_modules:/srv/app/node_modules",
+      "-v",
+      "<FIXTURE>:/host-src:ro",
+      "-v",
+      "app-src:/srv/app",
+      "myapp:dev"
+    ]
+  },
+  "builder.up.attached.tty": {
+    "ok": [
+      "wslc.exe",
+      "run",
+      "--name",
+      "app",
+      "-it",
+      "-w",
+      "/srv/app",
+      "-v",
+      "node_modules:/srv/app/node_modules",
+      "-v",
+      "<FIXTURE>:/host-src:ro",
+      "-v",
+      "app-src:/srv/app",
+      "myapp:dev"
+    ]
+  },
+  "builder.up.attached.notty": {
+    "ok": [
+      "wslc.exe",
+      "run",
+      "--name",
+      "app",
+      "-w",
+      "/srv/app",
+      "-v",
+      "node_modules:/srv/app/node_modules",
+      "-v",
+      "<FIXTURE>:/host-src:ro",
+      "-v",
+      "app-src:/srv/app",
+      "myapp:dev"
+    ]
+  },
+  "builder.start.detached": {
+    "ok": [
+      "wslc.exe",
+      "start",
+      "app"
+    ]
+  },
+  "builder.start.attached": {
+    "ok": [
+      "wslc.exe",
+      "start",
+      "app",
+      "-a",
+      "-i"
+    ]
+  },
+  "builder.find": {
+    "ok": [
+      "wslc.exe",
+      "list",
+      "--all",
+      "--filter",
+      "name=app",
+      "--format",
+      "json"
+    ]
+  },
+  "builder.stop": {
+    "ok": [
+      "wslc.exe",
+      "stop",
+      "app"
+    ]
+  },
+  "builder.remove": {
+    "ok": [
+      "wslc.exe",
+      "remove",
+      "-f",
+      "app"
+    ]
+  },
+  "builder.network_create": {
+    "error": "Configured network must not be empty"
+  },
+  "builder.network_list": {
+    "ok": [
+      "wslc.exe",
+      "network",
+      "list",
+      "--format",
+      "json"
+    ]
+  },
+  "builder.exec.tty": {
+    "ok": [
+      "wslc.exe",
+      "exec",
+      "-it",
+      "-w",
+      "/srv/app",
+      "app",
+      "bash",
+      "-lc",
+      "ls"
+    ]
+  },
+  "builder.exec.notty": {
+    "ok": [
+      "wslc.exe",
+      "exec",
+      "-w",
+      "/srv/app",
+      "app",
+      "bash",
+      "-lc",
+      "ls"
+    ]
+  },
+  "builder.exec.noninteractive": {
+    "ok": [
+      "wslc.exe",
+      "exec",
+      "-w",
+      "/srv/app",
+      "app",
+      "bash",
+      "-lc",
+      "ls"
+    ]
+  },
+  "builder.run.tty": {
+    "ok": [
+      "wslc.exe",
+      "run",
+      "--rm",
+      "-it",
+      "-w",
+      "/srv/app",
+      "-v",
+      "node_modules:/srv/app/node_modules",
+      "-v",
+      "<FIXTURE>:/host-src:ro",
+      "-v",
+      "app-src:/srv/app",
+      "myapp:dev",
+      "ls",
+      "-la"
+    ]
+  },
+  "builder.run.notty": {
+    "ok": [
+      "wslc.exe",
+      "run",
+      "--rm",
+      "-w",
+      "/srv/app",
+      "-v",
+      "node_modules:/srv/app/node_modules",
+      "-v",
+      "<FIXTURE>:/host-src:ro",
+      "-v",
+      "app-src:/srv/app",
+      "myapp:dev",
+      "ls",
+      "-la"
+    ]
+  },
+  "builder.build": {
+    "ok": [
+      "wslc.exe",
+      "build",
+      "-t",
+      "myapp:dev",
+      "."
+    ]
+  },
+  "builder.build.extra": {
+    "ok": [
+      "wslc.exe",
+      "build",
+      "-t",
+      "myapp:dev",
+      "--no-cache",
+      "."
+    ]
+  },
+  "builder.sync_run": {
+    "ok": [
+      "wslc.exe",
+      "run",
+      "--rm",
+      "-v",
+      "<FIXTURE>:/host-src:ro",
+      "-v",
+      "app-src:/srv/app",
+      "wip-sync-app:latest",
+      "rsync",
+      "-r",
+      "-l",
+      "-t",
+      "--whole-file",
+      "--delete",
+      "--exclude=.git",
+      "--exclude=tmp/",
+      "/host-src/",
+      "/srv/app/"
+    ]
+  },
+  "builder.sync_exec": {
+    "ok": [
+      "wslc.exe",
+      "exec",
+      "app",
+      "rsync",
+      "-r",
+      "-l",
+      "-t",
+      "--whole-file",
+      "--delete",
+      "--exclude=.git",
+      "--exclude=tmp/",
+      "/host-src/",
+      "/srv/app/"
+    ]
+  },
+  "builder.sync_build": {
+    "ok": [
+      "wslc.exe",
+      "build",
+      "-t",
+      "wip-sync-app:latest",
+      "."
+    ]
+  },
+  "builder.logs.follow": {
+    "ok": [
+      "wslc.exe",
+      "logs",
+      "-f",
+      "web"
+    ]
+  },
+  "builder.logs.nofollow": {
+    "ok": [
+      "wslc.exe",
+      "logs",
+      "web"
+    ]
+  },
+  "builder.dependency_up[app]": {
+    "ok": [
+      "wslc.exe",
+      "run",
+      "--name",
+      "app",
+      "-d",
+      "-w",
+      "/srv/app",
+      "-v",
+      ".:/srv/app",
+      "-v",
+      "node_modules:/srv/app/node_modules",
+      "myapp:dev"
+    ]
+  },
+  "builder.dependency_up.attached[app]": {
+    "ok": [
+      "wslc.exe",
+      "run",
+      "--name",
+      "app",
+      "-w",
+      "/srv/app",
+      "-v",
+      ".:/srv/app",
+      "-v",
+      "node_modules:/srv/app/node_modules",
+      "myapp:dev"
+    ]
+  },
+  "builder.dependency_start[app]": {
+    "ok": [
+      "wslc.exe",
+      "start",
+      "app"
+    ]
+  },
+  "builder.dependency_find[app]": {
+    "ok": [
+      "wslc.exe",
+      "list",
+      "--all",
+      "--filter",
+      "name=app",
+      "--format",
+      "json"
+    ]
+  },
+  "builder.dependency_stop[app]": {
+    "ok": [
+      "wslc.exe",
+      "stop",
+      "app"
+    ]
+  },
+  "builder.dependency_remove[app]": {
+    "ok": [
+      "wslc.exe",
+      "remove",
+      "-f",
+      "app"
+    ]
+  },
+  "builder.custom[console]": {
+    "ok": [
+      "wslc.exe",
+      "exec",
+      "-it",
+      "-w",
+      "/srv/app",
+      "app",
+      "bin/console"
+    ]
+  },
+  "builder.custom.args[console]": {
+    "ok": [
+      "wslc.exe",
+      "exec",
+      "-it",
+      "-w",
+      "/srv/app",
+      "app",
+      "bin/console",
+      "--trace",
+      "extra"
+    ]
+  },
+  "config.command[console]": {
+    "ok": {
+      "workdir": "/srv/app",
+      "user": null,
+      "interactive": true,
+      "remove": true,
+      "env": {},
+      "ports": [],
+      "volumes": [
+        ".:/srv/app",
+        "node_modules:/srv/app/node_modules"
+      ],
+      "restart": "no",
+      "image": "myapp:dev",
+      "type": "exec",
+      "command": "bin/console"
+    }
+  }
+}

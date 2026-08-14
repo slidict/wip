@@ -1,0 +1,655 @@
+{
+  "config.to_h": {
+    "ok": {
+      "version": 1,
+      "wslc": {
+        "command": "auto"
+      },
+      "mode": "container",
+      "container": "app",
+      "network": null,
+      "dependencies": {
+        "app": {
+          "image": "myapp:dev",
+          "workdir": "/app",
+          "env": {
+            "RAILS_ENV": "development",
+            "PORT": "4000"
+          }
+        }
+      },
+      "compose": null,
+      "sync": null,
+      "commands": {
+        "shell-ish": {
+          "workdir": "/app",
+          "user": null,
+          "interactive": false,
+          "remove": true,
+          "env": {
+            "RAILS_ENV": "development",
+            "PORT": "4000"
+          },
+          "ports": [],
+          "volumes": [],
+          "restart": "no",
+          "image": "myapp:dev",
+          "type": "exec",
+          "command": "env"
+        }
+      }
+    }
+  },
+  "config.to_h.unredacted": {
+    "ok": {
+      "version": 1,
+      "wslc": {
+        "command": "auto"
+      },
+      "mode": "container",
+      "container": "app",
+      "network": null,
+      "dependencies": {
+        "app": {
+          "image": "myapp:dev",
+          "workdir": "/app",
+          "env": {
+            "RAILS_ENV": "development",
+            "PORT": "4000"
+          }
+        }
+      },
+      "compose": null,
+      "sync": null,
+      "commands": {
+        "shell-ish": {
+          "workdir": "/app",
+          "user": null,
+          "interactive": false,
+          "remove": true,
+          "env": {
+            "RAILS_ENV": "development",
+            "PORT": "4000"
+          },
+          "ports": [],
+          "volumes": [],
+          "restart": "no",
+          "image": "myapp:dev",
+          "type": "exec",
+          "command": "env"
+        }
+      }
+    }
+  },
+  "config.mode": {
+    "ok": "container"
+  },
+  "config.container": {
+    "ok": "app"
+  },
+  "config.network": {
+    "ok": null
+  },
+  "config.wslc_command": {
+    "ok": "auto"
+  },
+  "config.dependencies.keys": {
+    "ok": [
+      "app"
+    ]
+  },
+  "config.commands.keys": {
+    "ok": [
+      "shell-ish"
+    ]
+  },
+  "config.compose_build_specs": {
+    "ok": {}
+  },
+  "config.sync.to_h": {
+    "ok": null
+  },
+  "dotenv": {
+    "ok": {
+      "DATABASE_URL": "postgres://localhost/app",
+      "EXPORTED_VAR": "exported-value",
+      "QUOTED_DOUBLE": "  spaced value  ",
+      "QUOTED_SINGLE": "  single spaced  ",
+      "TRAILING_COMMENT": "value",
+      "HASH_NO_SPACE": "value#not-a-comment",
+      "EMPTY": "",
+      "PORT": "9999",
+      "INDENTED": "indented-value"
+    }
+  },
+  "builder.up.detached": {
+    "ok": [
+      "wslc.exe",
+      "run",
+      "--name",
+      "app",
+      "-d",
+      "-w",
+      "/app",
+      "-e",
+      "DATABASE_URL=postgres://localhost/app",
+      "-e",
+      "EXPORTED_VAR=exported-value",
+      "-e",
+      "QUOTED_DOUBLE=  spaced value  ",
+      "-e",
+      "QUOTED_SINGLE=  single spaced  ",
+      "-e",
+      "TRAILING_COMMENT=value",
+      "-e",
+      "HASH_NO_SPACE=value#not-a-comment",
+      "-e",
+      "EMPTY=",
+      "-e",
+      "PORT=4000",
+      "-e",
+      "INDENTED=indented-value",
+      "-e",
+      "RAILS_ENV=development",
+      "myapp:dev"
+    ]
+  },
+  "builder.up.attached.tty": {
+    "ok": [
+      "wslc.exe",
+      "run",
+      "--name",
+      "app",
+      "-it",
+      "-w",
+      "/app",
+      "-e",
+      "DATABASE_URL=postgres://localhost/app",
+      "-e",
+      "EXPORTED_VAR=exported-value",
+      "-e",
+      "QUOTED_DOUBLE=  spaced value  ",
+      "-e",
+      "QUOTED_SINGLE=  single spaced  ",
+      "-e",
+      "TRAILING_COMMENT=value",
+      "-e",
+      "HASH_NO_SPACE=value#not-a-comment",
+      "-e",
+      "EMPTY=",
+      "-e",
+      "PORT=4000",
+      "-e",
+      "INDENTED=indented-value",
+      "-e",
+      "RAILS_ENV=development",
+      "myapp:dev"
+    ]
+  },
+  "builder.up.attached.notty": {
+    "ok": [
+      "wslc.exe",
+      "run",
+      "--name",
+      "app",
+      "-w",
+      "/app",
+      "-e",
+      "DATABASE_URL=postgres://localhost/app",
+      "-e",
+      "EXPORTED_VAR=exported-value",
+      "-e",
+      "QUOTED_DOUBLE=  spaced value  ",
+      "-e",
+      "QUOTED_SINGLE=  single spaced  ",
+      "-e",
+      "TRAILING_COMMENT=value",
+      "-e",
+      "HASH_NO_SPACE=value#not-a-comment",
+      "-e",
+      "EMPTY=",
+      "-e",
+      "PORT=4000",
+      "-e",
+      "INDENTED=indented-value",
+      "-e",
+      "RAILS_ENV=development",
+      "myapp:dev"
+    ]
+  },
+  "builder.start.detached": {
+    "ok": [
+      "wslc.exe",
+      "start",
+      "app"
+    ]
+  },
+  "builder.start.attached": {
+    "ok": [
+      "wslc.exe",
+      "start",
+      "app",
+      "-a",
+      "-i"
+    ]
+  },
+  "builder.find": {
+    "ok": [
+      "wslc.exe",
+      "list",
+      "--all",
+      "--filter",
+      "name=app",
+      "--format",
+      "json"
+    ]
+  },
+  "builder.stop": {
+    "ok": [
+      "wslc.exe",
+      "stop",
+      "app"
+    ]
+  },
+  "builder.remove": {
+    "ok": [
+      "wslc.exe",
+      "remove",
+      "-f",
+      "app"
+    ]
+  },
+  "builder.network_create": {
+    "error": "Configured network must not be empty"
+  },
+  "builder.network_list": {
+    "ok": [
+      "wslc.exe",
+      "network",
+      "list",
+      "--format",
+      "json"
+    ]
+  },
+  "builder.exec.tty": {
+    "ok": [
+      "wslc.exe",
+      "exec",
+      "-it",
+      "-w",
+      "/app",
+      "-e",
+      "DATABASE_URL=postgres://localhost/app",
+      "-e",
+      "EXPORTED_VAR=exported-value",
+      "-e",
+      "QUOTED_DOUBLE=  spaced value  ",
+      "-e",
+      "QUOTED_SINGLE=  single spaced  ",
+      "-e",
+      "TRAILING_COMMENT=value",
+      "-e",
+      "HASH_NO_SPACE=value#not-a-comment",
+      "-e",
+      "EMPTY=",
+      "-e",
+      "PORT=4000",
+      "-e",
+      "INDENTED=indented-value",
+      "-e",
+      "RAILS_ENV=development",
+      "app",
+      "bash",
+      "-lc",
+      "ls"
+    ]
+  },
+  "builder.exec.notty": {
+    "ok": [
+      "wslc.exe",
+      "exec",
+      "-w",
+      "/app",
+      "-e",
+      "DATABASE_URL=postgres://localhost/app",
+      "-e",
+      "EXPORTED_VAR=exported-value",
+      "-e",
+      "QUOTED_DOUBLE=  spaced value  ",
+      "-e",
+      "QUOTED_SINGLE=  single spaced  ",
+      "-e",
+      "TRAILING_COMMENT=value",
+      "-e",
+      "HASH_NO_SPACE=value#not-a-comment",
+      "-e",
+      "EMPTY=",
+      "-e",
+      "PORT=4000",
+      "-e",
+      "INDENTED=indented-value",
+      "-e",
+      "RAILS_ENV=development",
+      "app",
+      "bash",
+      "-lc",
+      "ls"
+    ]
+  },
+  "builder.exec.noninteractive": {
+    "ok": [
+      "wslc.exe",
+      "exec",
+      "-w",
+      "/app",
+      "-e",
+      "DATABASE_URL=postgres://localhost/app",
+      "-e",
+      "EXPORTED_VAR=exported-value",
+      "-e",
+      "QUOTED_DOUBLE=  spaced value  ",
+      "-e",
+      "QUOTED_SINGLE=  single spaced  ",
+      "-e",
+      "TRAILING_COMMENT=value",
+      "-e",
+      "HASH_NO_SPACE=value#not-a-comment",
+      "-e",
+      "EMPTY=",
+      "-e",
+      "PORT=4000",
+      "-e",
+      "INDENTED=indented-value",
+      "-e",
+      "RAILS_ENV=development",
+      "app",
+      "bash",
+      "-lc",
+      "ls"
+    ]
+  },
+  "builder.run.tty": {
+    "ok": [
+      "wslc.exe",
+      "run",
+      "--rm",
+      "-it",
+      "-w",
+      "/app",
+      "-e",
+      "DATABASE_URL=postgres://localhost/app",
+      "-e",
+      "EXPORTED_VAR=exported-value",
+      "-e",
+      "QUOTED_DOUBLE=  spaced value  ",
+      "-e",
+      "QUOTED_SINGLE=  single spaced  ",
+      "-e",
+      "TRAILING_COMMENT=value",
+      "-e",
+      "HASH_NO_SPACE=value#not-a-comment",
+      "-e",
+      "EMPTY=",
+      "-e",
+      "PORT=4000",
+      "-e",
+      "INDENTED=indented-value",
+      "-e",
+      "RAILS_ENV=development",
+      "myapp:dev",
+      "ls",
+      "-la"
+    ]
+  },
+  "builder.run.notty": {
+    "ok": [
+      "wslc.exe",
+      "run",
+      "--rm",
+      "-w",
+      "/app",
+      "-e",
+      "DATABASE_URL=postgres://localhost/app",
+      "-e",
+      "EXPORTED_VAR=exported-value",
+      "-e",
+      "QUOTED_DOUBLE=  spaced value  ",
+      "-e",
+      "QUOTED_SINGLE=  single spaced  ",
+      "-e",
+      "TRAILING_COMMENT=value",
+      "-e",
+      "HASH_NO_SPACE=value#not-a-comment",
+      "-e",
+      "EMPTY=",
+      "-e",
+      "PORT=4000",
+      "-e",
+      "INDENTED=indented-value",
+      "-e",
+      "RAILS_ENV=development",
+      "myapp:dev",
+      "ls",
+      "-la"
+    ]
+  },
+  "builder.build": {
+    "ok": [
+      "wslc.exe",
+      "build",
+      "-t",
+      "myapp:dev",
+      "."
+    ]
+  },
+  "builder.build.extra": {
+    "ok": [
+      "wslc.exe",
+      "build",
+      "-t",
+      "myapp:dev",
+      "--no-cache",
+      "."
+    ]
+  },
+  "builder.sync_run": {
+    "error": "No sync: block configured in wip.yml"
+  },
+  "builder.sync_exec": {
+    "error": "No sync: block configured in wip.yml"
+  },
+  "builder.sync_build": {
+    "error": "No sync: block configured in wip.yml"
+  },
+  "builder.logs.follow": {
+    "ok": [
+      "wslc.exe",
+      "logs",
+      "-f",
+      "web"
+    ]
+  },
+  "builder.logs.nofollow": {
+    "ok": [
+      "wslc.exe",
+      "logs",
+      "web"
+    ]
+  },
+  "builder.dependency_up[app]": {
+    "ok": [
+      "wslc.exe",
+      "run",
+      "--name",
+      "app",
+      "-d",
+      "-w",
+      "/app",
+      "-e",
+      "DATABASE_URL=postgres://localhost/app",
+      "-e",
+      "EXPORTED_VAR=exported-value",
+      "-e",
+      "QUOTED_DOUBLE=  spaced value  ",
+      "-e",
+      "QUOTED_SINGLE=  single spaced  ",
+      "-e",
+      "TRAILING_COMMENT=value",
+      "-e",
+      "HASH_NO_SPACE=value#not-a-comment",
+      "-e",
+      "EMPTY=",
+      "-e",
+      "PORT=4000",
+      "-e",
+      "INDENTED=indented-value",
+      "-e",
+      "RAILS_ENV=development",
+      "myapp:dev"
+    ]
+  },
+  "builder.dependency_up.attached[app]": {
+    "ok": [
+      "wslc.exe",
+      "run",
+      "--name",
+      "app",
+      "-w",
+      "/app",
+      "-e",
+      "DATABASE_URL=postgres://localhost/app",
+      "-e",
+      "EXPORTED_VAR=exported-value",
+      "-e",
+      "QUOTED_DOUBLE=  spaced value  ",
+      "-e",
+      "QUOTED_SINGLE=  single spaced  ",
+      "-e",
+      "TRAILING_COMMENT=value",
+      "-e",
+      "HASH_NO_SPACE=value#not-a-comment",
+      "-e",
+      "EMPTY=",
+      "-e",
+      "PORT=4000",
+      "-e",
+      "INDENTED=indented-value",
+      "-e",
+      "RAILS_ENV=development",
+      "myapp:dev"
+    ]
+  },
+  "builder.dependency_start[app]": {
+    "ok": [
+      "wslc.exe",
+      "start",
+      "app"
+    ]
+  },
+  "builder.dependency_find[app]": {
+    "ok": [
+      "wslc.exe",
+      "list",
+      "--all",
+      "--filter",
+      "name=app",
+      "--format",
+      "json"
+    ]
+  },
+  "builder.dependency_stop[app]": {
+    "ok": [
+      "wslc.exe",
+      "stop",
+      "app"
+    ]
+  },
+  "builder.dependency_remove[app]": {
+    "ok": [
+      "wslc.exe",
+      "remove",
+      "-f",
+      "app"
+    ]
+  },
+  "builder.custom[shell-ish]": {
+    "ok": [
+      "wslc.exe",
+      "exec",
+      "-w",
+      "/app",
+      "-e",
+      "DATABASE_URL=postgres://localhost/app",
+      "-e",
+      "EXPORTED_VAR=exported-value",
+      "-e",
+      "QUOTED_DOUBLE=  spaced value  ",
+      "-e",
+      "QUOTED_SINGLE=  single spaced  ",
+      "-e",
+      "TRAILING_COMMENT=value",
+      "-e",
+      "HASH_NO_SPACE=value#not-a-comment",
+      "-e",
+      "EMPTY=",
+      "-e",
+      "PORT=4000",
+      "-e",
+      "INDENTED=indented-value",
+      "-e",
+      "RAILS_ENV=development",
+      "app",
+      "env"
+    ]
+  },
+  "builder.custom.args[shell-ish]": {
+    "ok": [
+      "wslc.exe",
+      "exec",
+      "-w",
+      "/app",
+      "-e",
+      "DATABASE_URL=postgres://localhost/app",
+      "-e",
+      "EXPORTED_VAR=exported-value",
+      "-e",
+      "QUOTED_DOUBLE=  spaced value  ",
+      "-e",
+      "QUOTED_SINGLE=  single spaced  ",
+      "-e",
+      "TRAILING_COMMENT=value",
+      "-e",
+      "HASH_NO_SPACE=value#not-a-comment",
+      "-e",
+      "EMPTY=",
+      "-e",
+      "PORT=4000",
+      "-e",
+      "INDENTED=indented-value",
+      "-e",
+      "RAILS_ENV=development",
+      "app",
+      "env",
+      "--trace",
+      "extra"
+    ]
+  },
+  "config.command[shell-ish]": {
+    "ok": {
+      "workdir": "/app",
+      "user": null,
+      "interactive": false,
+      "remove": true,
+      "env": {
+        "RAILS_ENV": "development",
+        "PORT": "4000"
+      },
+      "ports": [],
+      "volumes": [],
+      "restart": "no",
+      "image": "myapp:dev",
+      "type": "exec",
+      "command": "env"
+    }
+  }
+}

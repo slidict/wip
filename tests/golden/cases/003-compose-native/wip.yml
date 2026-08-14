@@ -1,0 +1,9 @@
+version: 1
+mode: compose-native
+compose:
+  service: web
+  project: shopdemo
+commands:
+  rails:
+    command: bin/rails
+    interactive: true
