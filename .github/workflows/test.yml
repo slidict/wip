@@ -70,20 +70,35 @@ jobs:
       - name: Smoke test
         shell: pwsh
         run: |
-          # wip reports progress on stderr, the way the Ruby build's `warn` did. PowerShell
-          # turns a native command's stderr into error records, so $ErrorActionPreference =
-          # 'Stop' would abort this script on `wip init` printing that it succeeded. Every
-          # native call below checks $LASTEXITCODE explicitly instead, and `throw` terminates
-          # on its own regardless of the preference.
+          # Two PowerShell behaviours have to be disarmed before any of this runs.
+          #
+          # wip reports progress on stderr, the way the Ruby build's `warn` did, and the
+          # runner sets $ErrorActionPreference = 'stop' for pwsh steps -- which turns a
+          # native command's stderr into a terminating error. So `wip init` announcing that
+          # it succeeded would abort the script.
+          #
+          # The runner also appends `exit $LASTEXITCODE`. The last assertion here runs wip
+          # in a directory with no wip.yml and *expects* exit 1, which would then be
+          # reported as the step's own result. Hence the explicit `exit 0` at the end.
+          $ErrorActionPreference = 'Continue'
           $PSNativeCommandUseErrorActionPreference = $false
+
           $wip = Join-Path $env:GITHUB_WORKSPACE "artifacts/win-x64/wip.exe"
 
-          if (-not (& $wip --help | Select-String -Quiet '^Commands:')) {
-            throw "help output is missing its command list"
+          # Merging stderr into the captured output keeps it out of PowerShell's error
+          # stream entirely, rather than relying on the preferences above alone.
+          function Invoke-Wip([string[]]$WipArgs) {
+            $output = & $wip @WipArgs 2>&1 | Out-String
+            return [pscustomobject]@{ Code = $LASTEXITCODE; Output = $output }
           }
 
-          if ((& $wip version | Select-Object -First 1) -notmatch '^wip \d+\.\d+\.\d+$') {
-            throw "version output did not look like a version"
+          $help = Invoke-Wip @('--help')
+          if ($help.Code -ne 0) { throw "wip --help exited $($help.Code)" }
+          if ($help.Output -notmatch '(?m)^Commands:') { throw "help output is missing its command list" }
+
+          $version = Invoke-Wip @('version')
+          if ($version.Output -notmatch '(?m)^wip \d+\.\d+\.\d+\s*$') {
+            throw "version output did not look like a version: $($version.Output)"
           }
 
           # init writes the file config then has to read back, so this covers the YAML
@@ -92,22 +107,32 @@ jobs:
           New-Item -ItemType Directory -Path $smoke -Force | Out-Null
           Push-Location $smoke
           try {
-            & $wip init
-            if ($LASTEXITCODE -ne 0) { throw "wip init failed" }
+            $init = Invoke-Wip @('init')
+            if ($init.Code -ne 0) { throw "wip init failed: $($init.Output)" }
 
-            & $wip config | Out-Null
-            if ($LASTEXITCODE -ne 0) { throw "wip config could not read what wip init wrote" }
-
-            # A missing wip.yml has to be a one-line message and exit 1, not a stack trace.
-            Pop-Location
-            Push-Location $env:RUNNER_TEMP
-            $output = & $wip config 2>&1
-            if ($LASTEXITCODE -ne 1) { throw "expected exit 1 with no wip.yml, got $LASTEXITCODE" }
-            if ($output -match 'at Wip\.') { throw "error surfaced as a stack trace: $output" }
+            $config = Invoke-Wip @('config')
+            if ($config.Code -ne 0) {
+              throw "wip config could not read what wip init wrote: $($config.Output)"
+            }
           }
           finally {
             Pop-Location
           }
+
+          # A missing wip.yml has to be a one-line message and exit 1, not a stack trace.
+          Push-Location $env:RUNNER_TEMP
+          try {
+            $missing = Invoke-Wip @('config')
+            if ($missing.Code -ne 1) { throw "expected exit 1 with no wip.yml, got $($missing.Code)" }
+            if ($missing.Output -match 'at Wip\.') {
+              throw "error surfaced as a stack trace: $($missing.Output)"
+            }
+          }
+          finally {
+            Pop-Location
+          }
+
+          exit 0
 
       - name: Report binary size
         shell: pwsh
