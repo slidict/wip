@@ -28,6 +28,7 @@ key, every command's flags, guides, and troubleshooting — see the **[wip Wiki]
 - [Configuration](#configuration)
 - [Commands](#commands)
 - [Common errors](#common-errors)
+- [Known gaps & TODO](#known-gaps--todo)
 - [Development](#development)
 - [Contributing](#contributing)
 - [License](#license)
@@ -226,6 +227,58 @@ More errors, causes, and fixes are indexed on the wiki's
 **[Troubleshooting & FAQ](https://github.com/slidict/wip/wiki/Troubleshooting-and-FAQ)** page,
 including [Configuration Errors](https://github.com/slidict/wip/wiki/Configuration-Errors) (every
 `ConfigError` and what triggers it).
+
+## Known gaps & TODO
+
+wip was rewritten from Ruby to C# and now ships as a Native AOT `wip.exe`. The port is
+complete and covered by tests, but some questions cannot be settled without a real Windows
+machine with WSL2 and WSLC on it, and a few decisions were deliberately deferred. They are
+listed here rather than left implicit — see
+[docs/csharp-migration-plan.md](docs/csharp-migration-plan.md) for the reasoning behind each.
+
+### Needs verification on real hardware
+
+- [ ] **Which host paths `wslc` accepts** — the one open design question. A project on the WSL
+      filesystem reaches `wip.exe` as a UNC path (`\\wsl.localhost\...`), which changes what
+      `sync.source` and `volumes:` hand to `wslc`. Measure `wslc run -v` against a Linux path,
+      a Windows-local path, and a UNC path. The translation lives in one function,
+      `Platform/WslPath.ForWslc`, which currently assumes Linux paths are accepted; if that is
+      wrong, that function is the only thing that changes. See the plan §3.
+- [ ] **Interactive TTY from a WSL2 shell** — confirm `wslc exec -it`, Ctrl-C, and terminal
+      resizing behave when `wip.exe` is launched from bash rather than PowerShell.
+- [ ] **UNC walk performance** — staging a large build context reads every file over 9p.
+      Measure it against a real project before assuming it is usable.
+- [ ] **Executable bits on staged files** — the build context is copied to a Windows-local
+      cache, and NTFS has no Unix mode. Whether `wslc` restores modes decides if a
+      `RUN ./script` in a Dockerfile still works.
+- [ ] **Telling WSL1 from WSL2** — `wsl.exe --status` exiting zero proves WSL is installed, not
+      that the default version is 2, so `wip doctor` currently reports "WSL2 is available" on a
+      WSL1-only machine. Fixing it means parsing localised, UTF-16 output, which is worth
+      getting right rather than guessing at.
+
+### Before the first WinGet release
+
+- [ ] **Confirm the package identifier** — `Slidict.Wip` is assumed throughout. Changing it
+      after publication creates a new package rather than renaming the existing one.
+- [ ] **Set up `WINGET_TOKEN` and fork `microsoft/winget-pkgs`** — see
+      [packaging/winget/README.md](packaging/winget/README.md). Until the secret exists the
+      WinGet job skips itself and says so; releases are unaffected.
+- [ ] **Validate the manifest locally** — the first submission is human-reviewed, and a
+      rejection costs days.
+- [ ] **Copy the Ruby implementation to its own repository** — it was removed here, so recover
+      it from git history if that has not happened yet.
+
+### Deferred by choice
+
+- [ ] **Code signing** — `wip.exe` ships unsigned today, which is an accepted risk rather than
+      one avoided by ZIP packaging: SmartScreen judges the file and its publisher reputation.
+      If it is adopted, sign before packaging, hashing, and attesting.
+- [ ] **arm64** — win-x64 only for now. The artifact naming and the manifest already have room
+      for an arm64 sibling; it needs one more publish job.
+- [ ] **Error hints for interactive commands** — interactive commands inherit the console, so
+      wip cannot read their output to interpret failures. Recovering that means ConPTY.
+- [ ] **`wip` without the extension in WSL** — bash does not consult PATHEXT, so `wip.exe` has
+      to be typed. Either document the alias or ship a shim that writes `/usr/local/bin/wip`.
 
 ## Development
 
