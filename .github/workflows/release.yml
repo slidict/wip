@@ -109,4 +109,7 @@ jobs:
     uses: ./.github/workflows/winget.yml
     with:
       tag: ${{ github.ref_name }}
-    secrets: inherit
+    # Mapped rather than inherited: `secrets: inherit` would hand the called workflow every
+    # secret this repository has, when it needs exactly one.
+    secrets:
+      WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}

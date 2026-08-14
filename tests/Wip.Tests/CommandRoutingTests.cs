@@ -22,14 +22,26 @@ public class CommandRoutingTests
     // `--config dispatch` and losing the command entirely.
     [InlineData(new[] { "--config", "test", "test" }, "dispatch")]
     [InlineData(new[] { "--env-file", "mycmd", "mycmd" }, "dispatch")]
-    // A malformed option is a usage error and must not be dragged into dispatch.
-    [InlineData(new[] { "--nosuchoption" }, "")]
     public void RoutesToTheRightCommand(string[] args, string expected)
     {
         var parsed = Program.Parse(Program.BuildRoot(), args);
         var command = parsed.CommandResult.Command;
 
         Assert.Equal(expected, command is RootCommand ? "" : command.Name);
+    }
+
+    /// <summary>
+    /// An unrecognised option has to stay a usage error. Routing it into <c>dispatch</c>
+    /// would turn "you typed a bad flag" into "no such command", naming the wrong thing.
+    /// </summary>
+    [Fact]
+    public void UnknownOptionStaysAUsageError()
+    {
+        var parsed = Program.Parse(Program.BuildRoot(), ["--nosuchoption"]);
+
+        Assert.IsType<RootCommand>(parsed.CommandResult.Command);
+        Assert.NotEmpty(parsed.Errors);
+        Assert.Contains("--nosuchoption", parsed.UnmatchedTokens);
     }
 
     [Fact]
@@ -45,5 +57,10 @@ public class CommandRoutingTests
 
         var name = parsed.CommandResult.Command.Arguments.OfType<Argument<string?>>().Single();
         Assert.Equal("test", parsed.GetValue(name));
+
+        // The trailing arguments are what the custom command actually receives, so the
+        // rewrite has to leave them intact and in order.
+        var rest = parsed.CommandResult.Command.Arguments.OfType<Argument<string[]>>().Single();
+        Assert.Equal<string>(["extra"], parsed.GetValue(rest) ?? []);
     }
 }
