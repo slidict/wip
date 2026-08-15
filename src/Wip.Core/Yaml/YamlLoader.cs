@@ -23,6 +23,10 @@ namespace Wip.Yaml;
 /// </remarks>
 public static class YamlLoader
 {
+    // Configuration files do not need arbitrary structural depth. Bounding recursion keeps
+    // a malicious repository from turning `wip` startup into a stack-overflow crash.
+    private const int MaxNestingDepth = 100;
+
     public static object? LoadFile(string path, bool allowAliases)
     {
         using var reader = new StreamReader(path);
@@ -50,7 +54,7 @@ public static class YamlLoader
             }
 
             parser.Consume<DocumentStart>();
-            var value = ReadNode(parser, allowAliases, anchors, pending, path);
+            var value = ReadNode(parser, allowAliases, anchors, pending, path, depth: 0);
             parser.Consume<DocumentEnd>();
             return value;
         }
@@ -65,8 +69,15 @@ public static class YamlLoader
         bool allowAliases,
         Dictionary<string, object?> anchors,
         HashSet<string> pending,
-        string path)
+        string path,
+        int depth)
     {
+        if (depth > MaxNestingDepth)
+        {
+            throw new ConfigException(
+                $"Could not parse {path}: YAML nesting exceeds the limit of {MaxNestingDepth}");
+        }
+
         if (parser.Accept<AnchorAlias>(out var alias))
         {
             parser.MoveNext();
@@ -83,12 +94,12 @@ public static class YamlLoader
 
         if (parser.Accept<SequenceStart>(out var sequenceStart))
         {
-            return ReadSequence(parser, allowAliases, anchors, pending, path, sequenceStart!.Anchor);
+            return ReadSequence(parser, allowAliases, anchors, pending, path, sequenceStart!.Anchor, depth);
         }
 
         if (parser.Accept<MappingStart>(out var mappingStart))
         {
-            return ReadMapping(parser, allowAliases, anchors, pending, path, mappingStart!.Anchor);
+            return ReadMapping(parser, allowAliases, anchors, pending, path, mappingStart!.Anchor, depth);
         }
 
         throw new ConfigException($"Could not parse {path}: unexpected {parser.Current?.GetType().Name}");
@@ -128,7 +139,8 @@ public static class YamlLoader
         Dictionary<string, object?> anchors,
         HashSet<string> pending,
         string path,
-        AnchorName anchor)
+        AnchorName anchor,
+        int depth)
     {
         parser.Consume<SequenceStart>();
         var items = new List<object?>();
@@ -136,7 +148,7 @@ public static class YamlLoader
 
         while (!parser.Accept<SequenceEnd>(out _))
         {
-            items.Add(ReadNode(parser, allowAliases, anchors, pending, path));
+            items.Add(ReadNode(parser, allowAliases, anchors, pending, path, depth + 1));
         }
 
         parser.Consume<SequenceEnd>();
@@ -150,7 +162,8 @@ public static class YamlLoader
         Dictionary<string, object?> anchors,
         HashSet<string> pending,
         string path,
-        AnchorName anchor)
+        AnchorName anchor,
+        int depth)
     {
         parser.Consume<MappingStart>();
         var mapping = new OrderedDictionary<string, object?>(StringComparer.Ordinal);
@@ -158,8 +171,8 @@ public static class YamlLoader
 
         while (!parser.Accept<MappingEnd>(out _))
         {
-            var key = ReadNode(parser, allowAliases, anchors, pending, path);
-            var value = ReadNode(parser, allowAliases, anchors, pending, path);
+            var key = ReadNode(parser, allowAliases, anchors, pending, path, depth + 1);
+            var value = ReadNode(parser, allowAliases, anchors, pending, path, depth + 1);
             var name = RubyValue.ToStringValue(key);
 
             if (name == MergeKey && TryMerge(mapping, value))
