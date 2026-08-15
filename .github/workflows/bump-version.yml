@@ -84,4 +84,4 @@ jobs:
             --base "${GITHUB_REF_NAME}" \
             --head "bump-version-v${NEXT}" \
             --title "chore: bump version to v${NEXT}" \
-            --body "Bump wip version to v${NEXT}. Tag the merge commit as v${NEXT} to publish."
+            --body "Bump wip version to v${NEXT}. Merging this publishes v${NEXT}: the release workflow reads the version from Directory.Build.props, and creates the tag itself."
