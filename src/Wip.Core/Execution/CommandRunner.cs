@@ -24,6 +24,11 @@ namespace Wip.Execution;
 /// </remarks>
 public sealed class CommandRunner
 {
+    // Error hints only need recent diagnostic output. Keeping an unlimited transcript lets
+    // a noisy or malicious child exhaust the parent process even though the same output is
+    // already being streamed to the user's terminal.
+    private const int MaxCapturedCharacters = 1024 * 1024;
+
     private readonly TextWriter output;
     private readonly TextWriter error;
     private readonly ErrorInterpreter interpreter;
@@ -161,6 +166,10 @@ public sealed class CommandRunner
                 lock (captured)
                 {
                     captured.Append(text);
+                    if (captured.Length > MaxCapturedCharacters)
+                    {
+                        captured.Remove(0, captured.Length - MaxCapturedCharacters);
+                    }
                 }
 
                 destination.Write(text);

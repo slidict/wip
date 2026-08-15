@@ -45,8 +45,11 @@ public static class ProcessProbe
             }
 
             // Started before the wait so the pipes keep draining while the child runs.
-            var output = process.StandardOutput.ReadToEndAsync();
-            var error = process.StandardError.ReadToEndAsync();
+            // The probe only cares about the exit status. ReadToEndAsync would retain an
+            // unlimited pair of strings and let a broken or hostile executable exhaust
+            // wip's memory before the timeout can stop it.
+            var output = process.StandardOutput.BaseStream.CopyToAsync(Stream.Null);
+            var error = process.StandardError.BaseStream.CopyToAsync(Stream.Null);
 
             if (!process.WaitForExit(timeout ?? DefaultTimeout))
             {
