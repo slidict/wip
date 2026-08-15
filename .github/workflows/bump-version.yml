@@ -29,8 +29,8 @@ jobs:
           fetch-depth: 0
 
       # Directory.Build.props is the single source of truth for the version: the SDK stamps
-      # it into the assembly, and the release workflow refuses to publish a tag that
-      # disagrees with it.
+      # it into the assembly, and the release workflow releases whatever version it finds
+      # here, creating the tag itself.
       - name: Calculate next version
         id: version
         env:
