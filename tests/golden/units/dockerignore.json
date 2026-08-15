@@ -1,0 +1,110 @@
+{
+  "patterns": "# comment\nnode_modules\n*.log\n!important.log\n/root-only.txt\ntmp/\n**/generated\ndocs/*.md\n!docs/README.md\nbuild/output\n",
+  "cases": [
+    {
+      "path": "app.rb",
+      "ignored": false,
+      "prunable": false
+    },
+    {
+      "path": "node_modules",
+      "ignored": true,
+      "prunable": false
+    },
+    {
+      "path": "node_modules/pkg/index.js",
+      "ignored": true,
+      "prunable": false
+    },
+    {
+      "path": "debug.log",
+      "ignored": true,
+      "prunable": false
+    },
+    {
+      "path": "important.log",
+      "ignored": false,
+      "prunable": false
+    },
+    {
+      "path": "nested/debug.log",
+      "ignored": true,
+      "prunable": false
+    },
+    {
+      "path": "nested/important.log",
+      "ignored": false,
+      "prunable": false
+    },
+    {
+      "path": "root-only.txt",
+      "ignored": true,
+      "prunable": false
+    },
+    {
+      "path": "nested/root-only.txt",
+      "ignored": false,
+      "prunable": false
+    },
+    {
+      "path": "tmp",
+      "ignored": true,
+      "prunable": false
+    },
+    {
+      "path": "tmp/cache/file",
+      "ignored": true,
+      "prunable": false
+    },
+    {
+      "path": "generated",
+      "ignored": true,
+      "prunable": false
+    },
+    {
+      "path": "a/b/generated",
+      "ignored": true,
+      "prunable": false
+    },
+    {
+      "path": "a/b/generated/file.txt",
+      "ignored": true,
+      "prunable": false
+    },
+    {
+      "path": "docs/guide.md",
+      "ignored": true,
+      "prunable": false
+    },
+    {
+      "path": "docs/README.md",
+      "ignored": false,
+      "prunable": false
+    },
+    {
+      "path": "docs/nested/guide.md",
+      "ignored": false,
+      "prunable": false
+    },
+    {
+      "path": "build",
+      "ignored": false,
+      "prunable": false
+    },
+    {
+      "path": "build/output",
+      "ignored": true,
+      "prunable": false
+    },
+    {
+      "path": "build/output/bin",
+      "ignored": true,
+      "prunable": false
+    },
+    {
+      "path": "build/other",
+      "ignored": false,
+      "prunable": false
+    }
+  ]
+}

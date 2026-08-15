@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Wip.Tests</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <!--
+      The test host loads assemblies dynamically, so the AOT analyzers have nothing
+      useful to say here — they run over Wip.Core and Wip.Cli, which is where a
+      reflection dependency would actually matter.
+    -->
+    <IsAotCompatible>false</IsAotCompatible>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Wip.Core/Wip.Core.csproj" />
+    <ProjectReference Include="../../src/Wip.Cli/Wip.Cli.csproj" />
+  </ItemGroup>
+
+</Project>

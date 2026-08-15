@@ -1,0 +1,78 @@
+name: WinGet
+
+# Called by release.yml rather than triggered by `release: published`. A release created
+# with GITHUB_TOKEN does not start another workflow run, so an event-based trigger would
+# leave every automated release silently unsubmitted. Calling it directly makes the handoff
+# part of the release job's own graph.
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: Release tag the assets belong to (e.g. v2.0.0).
+        required: true
+        type: string
+    secrets:
+      WINGET_TOKEN:
+        description: Classic PAT with public_repo scope, on an account that forked winget-pkgs.
+        required: false
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to submit (e.g. v2.0.0).
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  submit:
+    name: Submit to winget-pkgs
+    runs-on: ubuntu-latest
+
+    # Naming an environment lets WINGET_TOKEN live there instead of as a plain repository
+    # secret, so required reviewers can gate every use of it. With no protection rules
+    # configured this changes nothing, so it is safe to leave in place until someone sets
+    # them up. See packaging/winget/README.md.
+    environment: winget
+
+    env:
+      # The secrets context cannot be read from an `if:` condition, so it is lifted into env
+      # here and the steps below branch on that instead.
+      WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+      TAG: ${{ inputs.tag }}
+
+    steps:
+      - name: Resolve version
+        id: resolve
+        run: |
+          set -euo pipefail
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      # Opens a pull request against microsoft/winget-pkgs from a fork on the account that
+      # owns WINGET_TOKEN. GITHUB_TOKEN cannot do this -- it has no rights on another
+      # repository -- so this needs a classic PAT with public_repo scope, and that account
+      # needs a fork of winget-pkgs. Without the secret the step is skipped rather than
+      # failing every release; see packaging/winget/README.md.
+      - name: Create winget-pkgs pull request
+        if: env.WINGET_TOKEN != ''
+        uses: vedantmgoyal9/winget-releaser@4ffc7888bffd451b357355dc214d43bb9f23917e # v2
+        with:
+          identifier: Slidict.Wip
+          version: ${{ steps.resolve.outputs.version }}
+          installers-regex: '^wip-.*-win-x64\.zip$'
+          release-tag: ${{ inputs.tag }}
+          # Where the winget-pkgs fork lives. Set the WINGET_FORK_USER repository variable to
+          # point at a dedicated bot account: the token this action needs is a classic PAT,
+          # whose public_repo scope cannot be narrowed to one repository, so the only way to
+          # bound what it can reach is to give it to an account that owns nothing else.
+          fork-user: ${{ vars.WINGET_FORK_USER || github.repository_owner }}
+          token: ${{ env.WINGET_TOKEN }}
+
+      - name: Explain a skipped submission
+        if: env.WINGET_TOKEN == ''
+        run: |
+          {
+            echo "WINGET_TOKEN is not set, so no winget-pkgs pull request was opened."
+            echo "See packaging/winget/README.md for the one-time setup."
+          } >> "$GITHUB_STEP_SUMMARY"

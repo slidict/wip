@@ -1,0 +1,153 @@
+{
+  "env": {
+    "SET": "value",
+    "EMPTY": "",
+    "NUM": "42"
+  },
+  "cases": [
+    {
+      "input": "plain text",
+      "result": {
+        "ok": "plain text"
+      }
+    },
+    {
+      "input": "${SET}",
+      "result": {
+        "ok": "value"
+      }
+    },
+    {
+      "input": "$SET",
+      "result": {
+        "ok": "value"
+      }
+    },
+    {
+      "input": "${UNSET}",
+      "result": {
+        "ok": ""
+      }
+    },
+    {
+      "input": "$UNSET",
+      "result": {
+        "ok": ""
+      }
+    },
+    {
+      "input": "${EMPTY}",
+      "result": {
+        "ok": ""
+      }
+    },
+    {
+      "input": "${SET:-fallback}",
+      "result": {
+        "ok": "value"
+      }
+    },
+    {
+      "input": "${EMPTY:-fallback}",
+      "result": {
+        "ok": "fallback"
+      }
+    },
+    {
+      "input": "${UNSET:-fallback}",
+      "result": {
+        "ok": "fallback"
+      }
+    },
+    {
+      "input": "${SET-fallback}",
+      "result": {
+        "ok": "value"
+      }
+    },
+    {
+      "input": "${EMPTY-fallback}",
+      "result": {
+        "ok": ""
+      }
+    },
+    {
+      "input": "${UNSET-fallback}",
+      "result": {
+        "ok": "fallback"
+      }
+    },
+    {
+      "input": "${UNSET:-}",
+      "result": {
+        "ok": ""
+      }
+    },
+    {
+      "input": "$$",
+      "result": {
+        "ok": "$"
+      }
+    },
+    {
+      "input": "$$SET",
+      "result": {
+        "ok": "$SET"
+      }
+    },
+    {
+      "input": "$${SET}",
+      "result": {
+        "ok": "${SET}"
+      }
+    },
+    {
+      "input": "prefix ${SET} suffix",
+      "result": {
+        "ok": "prefix value suffix"
+      }
+    },
+    {
+      "input": "${SET}${NUM}",
+      "result": {
+        "ok": "value42"
+      }
+    },
+    {
+      "input": "${UNSET:?required}",
+      "result": {
+        "ok": "${UNSET:?required}"
+      }
+    },
+    {
+      "input": "${SET:+alternate}",
+      "result": {
+        "ok": "${SET:+alternate}"
+      }
+    },
+    {
+      "input": "user: ${NUM}:${NUM}",
+      "result": {
+        "ok": "user: 42:42"
+      }
+    },
+    {
+      "input": "$1 positional",
+      "result": {
+        "ok": "$1 positional"
+      }
+    },
+    {
+      "input": "${lowercase}",
+      "result": {
+        "ok": ""
+      }
+    },
+    {
+      "input": "a$-b",
+      "result": {
+        "ok": "a$-b"
+      }
+    }
+  ]
+}

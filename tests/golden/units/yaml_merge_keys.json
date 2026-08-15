@@ -1,0 +1,111 @@
+[
+  {
+    "name": "merge then explicit",
+    "yaml": "base: &b\n  image: base-image\n  workdir: /base\napp:\n  <<: *b\n  workdir: /override\n",
+    "expected": {
+      "base": {
+        "image": "base-image",
+        "workdir": "/base"
+      },
+      "app": {
+        "image": "base-image",
+        "workdir": "/override"
+      }
+    }
+  },
+  {
+    "name": "explicit then merge",
+    "yaml": "base: &b\n  image: base-image\n  workdir: /base\napp:\n  workdir: /explicit\n  <<: *b\n",
+    "expected": {
+      "base": {
+        "image": "base-image",
+        "workdir": "/base"
+      },
+      "app": {
+        "workdir": "/base",
+        "image": "base-image"
+      }
+    }
+  },
+  {
+    "name": "sequence of merges",
+    "yaml": "a: &a {x: 1, y: 1}\nb: &b {y: 2, z: 2}\napp:\n  <<: [*a, *b]\n",
+    "expected": {
+      "a": {
+        "x": 1,
+        "y": 1
+      },
+      "b": {
+        "y": 2,
+        "z": 2
+      },
+      "app": {
+        "y": 1,
+        "z": 2,
+        "x": 1
+      }
+    }
+  },
+  {
+    "name": "inline mapping, no alias",
+    "yaml": "app:\n  <<: {p: 1}\n  q: 2\n",
+    "expected": {
+      "app": {
+        "p": 1,
+        "q": 2
+      }
+    }
+  },
+  {
+    "name": "nested merge",
+    "yaml": "base: &b {image: i}\nmid: &m\n  <<: *b\n  workdir: /w\napp:\n  <<: *m\n",
+    "expected": {
+      "base": {
+        "image": "i"
+      },
+      "mid": {
+        "image": "i",
+        "workdir": "/w"
+      },
+      "app": {
+        "image": "i",
+        "workdir": "/w"
+      }
+    }
+  },
+  {
+    "name": "merge of a scalar stays a key",
+    "yaml": "app:\n  <<: notamapping\n  q: 2\n",
+    "expected": {
+      "app": {
+        "<<": "notamapping",
+        "q": 2
+      }
+    }
+  },
+  {
+    "name": "compose service shape",
+    "yaml": "x-common: &common\n  image: app:dev\n  working_dir: /app\n  environment:\n    RAILS_ENV: development\nservices:\n  app:\n    <<: *common\n    ports:\n      - \"3000:3000\"\n",
+    "expected": {
+      "x-common": {
+        "image": "app:dev",
+        "working_dir": "/app",
+        "environment": {
+          "RAILS_ENV": "development"
+        }
+      },
+      "services": {
+        "app": {
+          "image": "app:dev",
+          "working_dir": "/app",
+          "environment": {
+            "RAILS_ENV": "development"
+          },
+          "ports": [
+            "3000:3000"
+          ]
+        }
+      }
+    }
+  }
+]

@@ -1,0 +1,57 @@
+[
+  {
+    "command": [
+      "wslc.exe",
+      "run",
+      "--rm",
+      "alpine",
+      "sh"
+    ],
+    "display": "wslc.exe run --rm alpine sh"
+  },
+  {
+    "command": [
+      "wslc.exe",
+      "run",
+      "-e",
+      "TOKEN=super-secret",
+      "alpine"
+    ],
+    "display": "wslc.exe run -e TOKEN\\=\\*\\*\\* alpine"
+  },
+  {
+    "command": [
+      "wslc.exe",
+      "exec",
+      "-e",
+      "A=1",
+      "-e",
+      "B=2",
+      "app",
+      "sh",
+      "-c",
+      "echo hi there"
+    ],
+    "display": "wslc.exe exec -e A\\=\\*\\*\\* -e B\\=\\*\\*\\* app sh -c echo\\ hi\\ there"
+  },
+  {
+    "command": [
+      "wslc.exe",
+      "run",
+      "-e",
+      "NOVALUE",
+      "alpine"
+    ],
+    "display": "wslc.exe run -e NOVALUE\\=\\*\\*\\* alpine"
+  },
+  {
+    "command": [
+      "wslc.exe",
+      "run",
+      "-e",
+      "EMPTY=",
+      "alpine"
+    ],
+    "display": "wslc.exe run -e EMPTY\\=\\*\\*\\* alpine"
+  }
+]

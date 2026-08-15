@@ -1,0 +1,115 @@
+name: Release
+
+# Tag-driven, replacing the workflow_run chain the gem used. Pushing a v-tag is the whole
+# trigger, and the version in Directory.Build.props has to agree with it.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and publish release
+    runs-on: windows-latest
+
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          dotnet-version: "10.0.x"
+
+      # A tag that disagrees with the project version would publish an artifact whose own
+      # `wip version` contradicts the release it came from, so this fails first.
+      # Expression values reach the script through env rather than being interpolated into
+      # its text: a tag name can contain quotes or command syntax, and this job runs with
+      # contents, id-token, and attestations write permissions.
+      - name: Verify version matches tag
+        id: version
+        shell: pwsh
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          $version = ([xml](Get-Content Directory.Build.props)).Project.PropertyGroup.Version |
+            Where-Object { $_ } | Select-Object -First 1
+
+          if ("v$version" -ne $env:TAG) {
+            throw "tag $env:TAG does not match <Version>$version</Version> in Directory.Build.props"
+          }
+
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Run tests
+        run: dotnet test tests/Wip.Tests/Wip.Tests.csproj --configuration Release
+
+      - name: Publish
+        run: >
+          dotnet publish src/Wip.Cli/Wip.Cli.csproj
+          --configuration Release
+          --runtime win-x64
+          --output publish/win-x64
+
+      # The archive holds wip.exe alone. WinGet's zip installer type unpacks it and registers
+      # the nested executable as a portable command, so anything else in here would just be
+      # unpacked onto the user's disk for no reason.
+      - name: Package
+        id: package
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $version = $env:VERSION
+          $name = "wip-$version-win-x64.zip"
+          New-Item -ItemType Directory -Path dist | Out-Null
+
+          Compress-Archive -Path publish/win-x64/wip.exe -DestinationPath "dist/$name"
+
+          $hash = (Get-FileHash "dist/$name" -Algorithm SHA256).Hash
+          "$hash  $name" | Out-File -FilePath dist/SHA256SUMS -Encoding ascii
+
+          "archive=dist/$name" >> $env:GITHUB_OUTPUT
+          "sha256=$hash" >> $env:GITHUB_OUTPUT
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@8beda2b7ed98355c0e97c0a63bec38ae472e66c4 # v4
+        with:
+          subject-path: ${{ steps.package.outputs.archive }}
+
+      - name: Publish release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          generate_release_notes: true
+          files: |
+            dist/*.zip
+            dist/SHA256SUMS
+
+  # Called rather than triggered: a release created with GITHUB_TOKEN does not raise
+  # `release: published` for another workflow, so an event-based handoff would leave every
+  # automated release unsubmitted with nothing to show for it.
+  winget:
+    name: Submit to WinGet
+    needs: build
+    uses: ./.github/workflows/winget.yml
+    with:
+      tag: ${{ github.ref_name }}
+    # Mapped rather than inherited: `secrets: inherit` would hand the called workflow every
+    # secret this repository has, when it needs exactly one.
+    secrets:
+      WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}

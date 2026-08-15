@@ -1,0 +1,299 @@
+{
+  "config.to_h": {
+    "ok": {
+      "version": 1,
+      "wslc": {
+        "command": "auto"
+      },
+      "mode": "container",
+      "container": "solo",
+      "network": null,
+      "dependencies": {
+        "solo": {
+          "image": "busybox:latest"
+        }
+      },
+      "compose": null,
+      "sync": null,
+      "commands": {}
+    }
+  },
+  "config.to_h.unredacted": {
+    "ok": {
+      "version": 1,
+      "wslc": {
+        "command": "auto"
+      },
+      "mode": "container",
+      "container": "solo",
+      "network": null,
+      "dependencies": {
+        "solo": {
+          "image": "busybox:latest"
+        }
+      },
+      "compose": null,
+      "sync": null,
+      "commands": {}
+    }
+  },
+  "config.mode": {
+    "ok": "container"
+  },
+  "config.container": {
+    "ok": "solo"
+  },
+  "config.network": {
+    "ok": null
+  },
+  "config.wslc_command": {
+    "ok": "auto"
+  },
+  "config.dependencies.keys": {
+    "ok": [
+      "solo"
+    ]
+  },
+  "config.commands.keys": {
+    "ok": []
+  },
+  "config.compose_build_specs": {
+    "ok": {}
+  },
+  "config.sync.to_h": {
+    "ok": null
+  },
+  "dotenv": {
+    "ok": {}
+  },
+  "builder.up.detached": {
+    "ok": [
+      "wslc.exe",
+      "run",
+      "--name",
+      "solo",
+      "-d",
+      "busybox:latest"
+    ]
+  },
+  "builder.up.attached.tty": {
+    "ok": [
+      "wslc.exe",
+      "run",
+      "--name",
+      "solo",
+      "-it",
+      "busybox:latest"
+    ]
+  },
+  "builder.up.attached.notty": {
+    "ok": [
+      "wslc.exe",
+      "run",
+      "--name",
+      "solo",
+      "busybox:latest"
+    ]
+  },
+  "builder.start.detached": {
+    "ok": [
+      "wslc.exe",
+      "start",
+      "solo"
+    ]
+  },
+  "builder.start.attached": {
+    "ok": [
+      "wslc.exe",
+      "start",
+      "solo",
+      "-a",
+      "-i"
+    ]
+  },
+  "builder.find": {
+    "ok": [
+      "wslc.exe",
+      "list",
+      "--all",
+      "--filter",
+      "name=solo",
+      "--format",
+      "json"
+    ]
+  },
+  "builder.stop": {
+    "ok": [
+      "wslc.exe",
+      "stop",
+      "solo"
+    ]
+  },
+  "builder.remove": {
+    "ok": [
+      "wslc.exe",
+      "remove",
+      "-f",
+      "solo"
+    ]
+  },
+  "builder.network_create": {
+    "error": "Configured network must not be empty"
+  },
+  "builder.network_list": {
+    "ok": [
+      "wslc.exe",
+      "network",
+      "list",
+      "--format",
+      "json"
+    ]
+  },
+  "builder.exec.tty": {
+    "ok": [
+      "wslc.exe",
+      "exec",
+      "-it",
+      "solo",
+      "bash",
+      "-lc",
+      "ls"
+    ]
+  },
+  "builder.exec.notty": {
+    "ok": [
+      "wslc.exe",
+      "exec",
+      "solo",
+      "bash",
+      "-lc",
+      "ls"
+    ]
+  },
+  "builder.exec.noninteractive": {
+    "ok": [
+      "wslc.exe",
+      "exec",
+      "solo",
+      "bash",
+      "-lc",
+      "ls"
+    ]
+  },
+  "builder.run.tty": {
+    "ok": [
+      "wslc.exe",
+      "run",
+      "--rm",
+      "-it",
+      "busybox:latest",
+      "ls",
+      "-la"
+    ]
+  },
+  "builder.run.notty": {
+    "ok": [
+      "wslc.exe",
+      "run",
+      "--rm",
+      "busybox:latest",
+      "ls",
+      "-la"
+    ]
+  },
+  "builder.build": {
+    "ok": [
+      "wslc.exe",
+      "build",
+      "-t",
+      "busybox:latest",
+      "."
+    ]
+  },
+  "builder.build.extra": {
+    "ok": [
+      "wslc.exe",
+      "build",
+      "-t",
+      "busybox:latest",
+      "--no-cache",
+      "."
+    ]
+  },
+  "builder.sync_run": {
+    "error": "No sync: block configured in wip.yml"
+  },
+  "builder.sync_exec": {
+    "error": "No sync: block configured in wip.yml"
+  },
+  "builder.sync_build": {
+    "error": "No sync: block configured in wip.yml"
+  },
+  "builder.logs.follow": {
+    "ok": [
+      "wslc.exe",
+      "logs",
+      "-f",
+      "web"
+    ]
+  },
+  "builder.logs.nofollow": {
+    "ok": [
+      "wslc.exe",
+      "logs",
+      "web"
+    ]
+  },
+  "builder.dependency_up[solo]": {
+    "ok": [
+      "wslc.exe",
+      "run",
+      "--name",
+      "solo",
+      "-d",
+      "busybox:latest"
+    ]
+  },
+  "builder.dependency_up.attached[solo]": {
+    "ok": [
+      "wslc.exe",
+      "run",
+      "--name",
+      "solo",
+      "busybox:latest"
+    ]
+  },
+  "builder.dependency_start[solo]": {
+    "ok": [
+      "wslc.exe",
+      "start",
+      "solo"
+    ]
+  },
+  "builder.dependency_find[solo]": {
+    "ok": [
+      "wslc.exe",
+      "list",
+      "--all",
+      "--filter",
+      "name=solo",
+      "--format",
+      "json"
+    ]
+  },
+  "builder.dependency_stop[solo]": {
+    "ok": [
+      "wslc.exe",
+      "stop",
+      "solo"
+    ]
+  },
+  "builder.dependency_remove[solo]": {
+    "ok": [
+      "wslc.exe",
+      "remove",
+      "-f",
+      "solo"
+    ]
+  }
+}

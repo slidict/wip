@@ -1,0 +1,17 @@
+version: 1
+mode: compose
+compose:
+  service: web
+  project: bridged
+  command: wslc-compose
+  file: stack.yml
+sync:
+  source: .
+  target: /app
+  volume: web-src
+  image: alpine:3.20
+  mode: run
+commands:
+  rails:
+    command: bin/rails
+    interactive: true

@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Wip.Core/Wip.Core.csproj" />
+    <Project Path="src/Wip.Cli/Wip.Cli.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Wip.Tests/Wip.Tests.csproj" />
+  </Folder>
+</Solution>

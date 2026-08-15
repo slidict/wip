@@ -1,0 +1,13 @@
+version: 1
+mode: container
+container: app
+dependencies:
+  app:
+    image: myapp:dev
+    workdir: /app
+    env:
+      RAILS_ENV: development
+      PORT: "4000"
+commands:
+  shell-ish:
+    command: env
