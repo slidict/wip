@@ -384,7 +384,8 @@ Today the chain is: `Changelog` workflow succeeds → `workflow_run` → `gem-pu
 - `git tag v2.0.0 && git push --tags` triggers `release.yml`
 - The single source of version truth is `<Version>` in `Directory.Build.props`; CI verifies it against the tag and fails on mismatch
 - Rework `bump-version.yml` to edit `Directory.Build.props` instead of `version.rb`
-- Keep release-drafter for release notes
+- Keep release-drafter: it maintains a draft on every merge, so what is unreleased stays
+  visible, and the tag-driven workflow publishes that draft rather than writing its own notes
 - Delete `gem-push.yml`
 
 ### 9.3 Artifact naming

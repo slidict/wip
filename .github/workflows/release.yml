@@ -90,12 +90,29 @@ jobs:
         with:
           subject-path: ${{ steps.package.outputs.archive }}
 
-      - name: Publish release
+      # Publishes the draft that changelog.yml has been accumulating on every merge, rather
+      # than generating notes from scratch here. The draft is what the decision to tag was
+      # made from, so the release should say the same thing it did.
+      #
+      # Its own tag-template guesses the next version; the explicit tag and name override
+      # that with the tag actually being released.
+      - name: Publish release notes
+        uses: release-drafter/release-drafter@d749bd2b1d1e1db5c7a422e645f7e4ec23f604e3 # v7
+        with:
+          config-name: release-drafter.yml
+          publish: true
+          tag: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Attaches the artifacts to the release the step above just published. That ordering
+      # leaves a few seconds where the release exists without its downloads; the WinGet job
+      # needs both and runs after this one completes, so it never observes the gap.
+      - name: Upload release artifacts
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: ${{ github.ref_name }}
-          name: ${{ github.ref_name }}
-          generate_release_notes: true
           files: |
             dist/*.zip
             dist/SHA256SUMS
