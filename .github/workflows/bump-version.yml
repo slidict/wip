@@ -23,9 +23,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # No persisted credential: checkout leaves a token on the runner that every later
-      # step inherits, and this job only needs it for one push. The push authenticates
-      # itself instead, so the token is scoped to the step that actually pushes.
+      # persist-credentials: false keeps checkout from writing a token into .git/config,
+      # so no credential is left lying around for the rest of the job. The one step that
+      # needs to authenticate -- the push below -- carries its own header instead.
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
