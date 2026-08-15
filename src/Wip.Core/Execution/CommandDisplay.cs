@@ -3,8 +3,8 @@ using Wip.Platform;
 namespace Wip.Execution;
 
 /// <summary>
-/// Renders a command array for debug output, masking <c>-e KEY=value</c> environment values
-/// so secrets from wip.yml never reach logs.
+/// Renders a command array for debug output, masking values carried by environment and build
+/// secret options so secrets from configuration never reach logs.
 /// </summary>
 public static class CommandDisplay
 {
@@ -16,22 +16,38 @@ public static class CommandDisplay
             masked[index] = command[index];
         }
 
-        for (var index = 0; index + 1 < command.Count; index++)
+        for (var index = 0; index < command.Count; index++)
         {
-            if (command[index] != "-e")
+            if (command[index] is "-e" or "--env" or "--build-arg" or "--secret")
             {
+                if (index + 1 < command.Count)
+                {
+                    masked[index + 1] = MaskAssignment(command[index + 1]);
+                    index++;
+                }
+
                 continue;
             }
 
-            // A bare `-e NAME` with no '=' is rendered as "NAME=***" too. That reads as an
-            // assignment the real command never had, but this string only ever reaches
-            // --debug output, and diverging here would make debug logs stop matching what
-            // users have seen from wip before.
-            var pair = command[index + 1];
-            var separator = pair.IndexOf('=');
-            masked[index + 1] = $"{(separator < 0 ? pair : pair[..separator])}=***";
+            foreach (var option in SensitiveLongOptions)
+            {
+                var prefix = $"{option}=";
+                if (command[index].StartsWith(prefix, StringComparison.Ordinal))
+                {
+                    masked[index] = $"{prefix}***";
+                    break;
+                }
+            }
         }
 
         return Shellwords.Join(masked);
+    }
+
+    private static readonly string[] SensitiveLongOptions = ["--env", "--build-arg", "--secret"];
+
+    private static string MaskAssignment(string value)
+    {
+        var separator = value.IndexOf('=');
+        return $"{(separator < 0 ? value : value[..separator])}=***";
     }
 }
