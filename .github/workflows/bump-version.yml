@@ -23,14 +23,18 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # persist-credentials: false keeps checkout from writing a token into .git/config,
+      # so no credential is left lying around for the rest of the job. The one step that
+      # needs to authenticate -- the push below -- carries its own header instead.
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       # Directory.Build.props is the single source of truth for the version: the SDK stamps
-      # it into the assembly, and the release workflow refuses to publish a tag that
-      # disagrees with it.
+      # it into the assembly, and the release workflow releases whatever version it finds
+      # here, creating the tag itself.
       - name: Calculate next version
         id: version
         env:
@@ -65,6 +69,7 @@ jobs:
 
       - name: Commit version bump
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NEXT: ${{ steps.version.outputs.next }}
         run: |
           set -euo pipefail
@@ -73,7 +78,14 @@ jobs:
           git checkout -B "bump-version-v${NEXT}"
           git add Directory.Build.props
           git commit -m "chore: bump version to v${NEXT}"
-          git push --force-with-lease origin "bump-version-v${NEXT}"
+
+          # Passed on the command line rather than written to .git/config, so the
+          # credential lives for the length of this one command. Pushing to `origin`
+          # rather than to an authenticated URL keeps the remote-tracking refs that
+          # --force-with-lease compares against.
+          header=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${header}" \
+            push --force-with-lease origin "bump-version-v${NEXT}"
 
       - name: Create pull request
         env:
@@ -84,4 +96,4 @@ jobs:
             --base "${GITHUB_REF_NAME}" \
             --head "bump-version-v${NEXT}" \
             --title "chore: bump version to v${NEXT}" \
-            --body "Bump wip version to v${NEXT}. Tag the merge commit as v${NEXT} to publish."
+            --body "Bump wip version to v${NEXT}. Merging this publishes v${NEXT}: the release workflow reads the version from Directory.Build.props, and creates the tag itself."

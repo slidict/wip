@@ -360,7 +360,7 @@ Cover the layers where input → output is a pure function:
 ### 9.1 Overview
 
 ```text
-git tag v2.0.0
+merge a version bump to main
       │
       ▼
 ┌─ release.yml (windows-latest) ───────────────┐
@@ -381,10 +381,12 @@ Native AOT cannot cross-compile across operating systems, so **a Windows runner 
 
 Today the chain is: `Changelog` workflow succeeds → `workflow_run` → `gem-push`, which is hard to follow. **Simplify to tag-driven:**
 
-- `git tag v2.0.0 && git push --tags` triggers `release.yml`
-- The single source of version truth is `<Version>` in `Directory.Build.props`; CI verifies it against the tag and fails on mismatch
+- Merging a version bump to `main` triggers `release.yml`; nothing is tagged by hand
+- The single source of version truth is `<Version>` in `Directory.Build.props`. Every merge asks whether that version is already published, and only a merge that changes it releases
+- release-drafter creates the tag when it publishes, so a tag and a version cannot disagree
 - Rework `bump-version.yml` to edit `Directory.Build.props` instead of `version.rb`
-- Keep release-drafter for release notes
+- Keep release-drafter: it maintains a draft on every merge, so what is unreleased stays
+  visible, and the tag-driven workflow publishes that draft rather than writing its own notes
 - Delete `gem-push.yml`
 
 ### 9.3 Artifact naming

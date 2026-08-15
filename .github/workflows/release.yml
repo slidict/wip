@@ -1,27 +1,98 @@
 name: Release
 
-# Tag-driven, replacing the workflow_run chain the gem used. Pushing a v-tag is the whole
-# trigger, and the version in Directory.Build.props has to agree with it.
+# Version-driven, the way the gem released: the version in the project file is the trigger,
+# not a tag anyone types. Every merge to main asks "is this version already out?", and only a
+# merge that changes it releases anything. release-drafter creates the tag when it publishes,
+# so there is no tag to push by hand and no way for a tag and a version to disagree.
 on:
   push:
-    tags:
-      - "v*"
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 permissions:
   contents: read
 
 jobs:
+  check:
+    name: Check whether this version is released
+    runs-on: ubuntu-latest
+
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      needed: ${{ steps.released.outputs.needed }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      # Directory.Build.props is the single source of truth: the SDK stamps this into the
+      # binary, so whatever `wip version` reports is what gets released.
+      - name: Read version
+        id: version
+        run: |
+          set -euo pipefail
+          version=$(grep -oPm1 '(?<=<Version>)[^<]+' Directory.Build.props)
+          if [ -z "$version" ]; then
+            echo "Could not find <Version> in Directory.Build.props" >&2
+            exit 1
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+
+      - name: Check for an existing release
+        id: released
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          # changelog.yml keeps a draft release updated on every merge, and `gh release view`
+          # matches drafts too, so a draft does not count as released.
+          is_draft=$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null || echo "")
+
+          # Notes are published before the artifacts are attached, so a failed upload leaves a
+          # release that exists but cannot be installed. "Published" alone would then read as
+          # done and skip the repair, so a release only counts as finished once its downloads
+          # are actually there -- which makes re-running this workflow fix it.
+          has_archive=$(gh release view "$TAG" --json assets \
+            --jq 'any(.assets[]; .name | endswith(".zip"))' 2>/dev/null || echo false)
+          has_checksums=$(gh release view "$TAG" --json assets \
+            --jq 'any(.assets[]; .name == "SHA256SUMS")' 2>/dev/null || echo false)
+
+          if [ "$is_draft" = "false" ] && [ "$has_archive" = "true" ] && [ "$has_checksums" = "true" ]; then
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+            echo "$TAG is already published with its artifacts; nothing to do." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+            if [ "$is_draft" = "false" ]; then
+              echo "$TAG is published but missing artifacts; re-running the release." >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "Releasing $TAG." >> "$GITHUB_STEP_SUMMARY"
+            fi
+          fi
+
   build:
     name: Build and publish release
+    needs: check
+    if: needs.check.outputs.needed == 'true'
     runs-on: windows-latest
 
     permissions:
       contents: write
+      # release-drafter builds the notes by reading merged pull requests.
+      pull-requests: read
       id-token: write
       attestations: write
-
-    outputs:
-      version: ${{ steps.version.outputs.version }}
 
     steps:
       - name: Check out repository
@@ -33,26 +104,6 @@ jobs:
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
           dotnet-version: "10.0.x"
-
-      # A tag that disagrees with the project version would publish an artifact whose own
-      # `wip version` contradicts the release it came from, so this fails first.
-      # Expression values reach the script through env rather than being interpolated into
-      # its text: a tag name can contain quotes or command syntax, and this job runs with
-      # contents, id-token, and attestations write permissions.
-      - name: Verify version matches tag
-        id: version
-        shell: pwsh
-        env:
-          TAG: ${{ github.ref_name }}
-        run: |
-          $version = ([xml](Get-Content Directory.Build.props)).Project.PropertyGroup.Version |
-            Where-Object { $_ } | Select-Object -First 1
-
-          if ("v$version" -ne $env:TAG) {
-            throw "tag $env:TAG does not match <Version>$version</Version> in Directory.Build.props"
-          }
-
-          "version=$version" >> $env:GITHUB_OUTPUT
 
       - name: Run tests
         run: dotnet test tests/Wip.Tests/Wip.Tests.csproj --configuration Release
@@ -71,10 +122,9 @@ jobs:
         id: package
         shell: pwsh
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ needs.check.outputs.version }}
         run: |
-          $version = $env:VERSION
-          $name = "wip-$version-win-x64.zip"
+          $name = "wip-$env:VERSION-win-x64.zip"
           New-Item -ItemType Directory -Path dist | Out-Null
 
           Compress-Archive -Path publish/win-x64/wip.exe -DestinationPath "dist/$name"
@@ -83,19 +133,37 @@ jobs:
           "$hash  $name" | Out-File -FilePath dist/SHA256SUMS -Encoding ascii
 
           "archive=dist/$name" >> $env:GITHUB_OUTPUT
-          "sha256=$hash" >> $env:GITHUB_OUTPUT
 
       - name: Attest build provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
         with:
           subject-path: ${{ steps.package.outputs.archive }}
 
-      - name: Publish release
+      # Publishes the draft that changelog.yml has been accumulating on every merge, and
+      # creates the tag while doing it. The draft is what the decision to release was made
+      # from, so the release says the same thing it did.
+      #
+      # Its own tag-template guesses the next version; the explicit tag and name override that
+      # with the version actually being released.
+      - name: Publish release notes
+        uses: release-drafter/release-drafter@34d80673e067bdc0c24568d3af899c216adcfaa9 # v7
+        with:
+          config-name: release-drafter.yml
+          publish: true
+          tag: ${{ needs.check.outputs.tag }}
+          name: ${{ needs.check.outputs.tag }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Attaches the artifacts to the release the step above just published. Publishing first
+      # means a failure here leaves a release without downloads; the check job treats that as
+      # unfinished rather than done, so re-running this workflow repairs it. Uploading before
+      # publishing instead would put two actions in charge of the same draft, which is a
+      # worse thing to get wrong.
+      - name: Upload release artifacts
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
-          tag_name: ${{ github.ref_name }}
-          name: ${{ github.ref_name }}
-          generate_release_notes: true
+          tag_name: ${{ needs.check.outputs.tag }}
           files: |
             dist/*.zip
             dist/SHA256SUMS
@@ -105,10 +173,10 @@ jobs:
   # automated release unsubmitted with nothing to show for it.
   winget:
     name: Submit to WinGet
-    needs: build
+    needs: [check, build]
     uses: ./.github/workflows/winget.yml
     with:
-      tag: ${{ github.ref_name }}
+      tag: ${{ needs.check.outputs.tag }}
     # Mapped rather than inherited: `secrets: inherit` would hand the called workflow every
     # secret this repository has, when it needs exactly one.
     secrets:
