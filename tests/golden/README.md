@@ -28,6 +28,7 @@ before the source of truth goes away.
 | `units/dockerignore.json` | `.dockerignore` matching and walk pruning |
 | `units/error_interpreter.json` | Raw wslc output to user-facing hint |
 | `units/command_display.json` | Debug rendering, including `-e KEY=value` masking |
+| `units/yaml_merge_keys.json` | `<<` merge keys, and the order-sensitive precedence Psych gave them |
 
 Each operation records either `{"ok": <value>}` or `{"error": "<message>"}`. **Error
 messages are part of the contract**: they are what a user sees when their `wip.yml` is

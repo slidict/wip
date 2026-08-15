@@ -160,12 +160,68 @@ public static class YamlLoader
         {
             var key = ReadNode(parser, allowAliases, anchors, pending, path);
             var value = ReadNode(parser, allowAliases, anchors, pending, path);
-            mapping[RubyValue.ToStringValue(key)] = value;
+            var name = RubyValue.ToStringValue(key);
+
+            if (name == MergeKey && TryMerge(mapping, value))
+            {
+                continue;
+            }
+
+            mapping[name] = value;
         }
 
         parser.Consume<MappingEnd>();
         Release(anchor, mapping, anchors, pending);
         return mapping;
+    }
+
+    /// <summary>YAML's merge key, which folds another mapping's entries into this one.</summary>
+    private const string MergeKey = "<<";
+
+    /// <summary>
+    /// Applies a <c>&lt;&lt;</c> merge, returning false when the value is not something that can
+    /// be merged — in which case it stays an ordinary key, as Psych also left it.
+    /// </summary>
+    /// <remarks>
+    /// The precedence here is Psych's, measured rather than taken from the YAML spec, because
+    /// compose.yml files in the wild were written against it. Psych implements the merge as
+    /// <c>Hash#merge!</c>, so it is order-sensitive in a way the spec is not: keys written
+    /// <em>before</em> the merge key are overwritten by it, while keys written after it win.
+    /// A sequence of mappings is merged back to front, which is what makes earlier entries
+    /// take precedence over later ones.
+    /// </remarks>
+    private static bool TryMerge(OrderedDictionary<string, object?> target, object? value)
+    {
+        if (RubyValue.AsMapping(value) is { } single)
+        {
+            MergeInto(target, single);
+            return true;
+        }
+
+        if (RubyValue.AsSequence(value) is not { } sequence ||
+            sequence.Any(item => RubyValue.AsMapping(item) is null))
+        {
+            return false;
+        }
+
+        for (var index = sequence.Count - 1; index >= 0; index--)
+        {
+            MergeInto(target, RubyValue.AsMapping(sequence[index])!);
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// An existing key keeps its position but takes the new value; a new key is appended.
+    /// Position matters because it becomes the order of the generated command line.
+    /// </summary>
+    private static void MergeInto(OrderedDictionary<string, object?> target, OrderedDictionary<string, object?> source)
+    {
+        foreach (var (key, value) in source)
+        {
+            target[key] = value;
+        }
     }
 
     private static void Track(AnchorName anchor, HashSet<string> pending)
