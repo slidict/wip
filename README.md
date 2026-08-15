@@ -17,6 +17,15 @@ commands into a single `wip.yml`, and forwards them to `wslc.exe` / `wslc` as sa
 
 > **Status:** early release. Expect to track WSLC's own interface as it evolves.
 
+> **v2 switched from Ruby to a C# Native AOT binary.** Through v1, wip was a Ruby gem, which
+> meant a Ruby installation and a gem to keep in step with it. From v2 there is neither: `wip.exe`
+> is a single self-contained executable with no runtime to install, and no interpreter to start
+> before a command runs, so it should be noticeably quicker off the mark.
+>
+> The Ruby implementation has no further updates planned, but it is not gone — it stays available
+> at [v1.1.4](https://github.com/slidict/wip/releases/tag/v1.1.4) and as the
+> [`wslc-wip` gem](https://rubygems.org/gems/wslc-wip) on RubyGems.
+
 This README covers the fastest path to a running `wip.yml`. For everything else — every config
 key, every command's flags, guides, and troubleshooting — see the **[wip Wiki](https://github.com/slidict/wip/wiki)**.
 
