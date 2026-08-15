@@ -81,16 +81,17 @@ jobs:
             fi
           fi
 
+  # Windows only because Native AOT cannot cross-compile between operating systems. Nothing
+  # else in the release needs it, and the publish job below exists because one of those other
+  # things actively breaks here.
   build:
-    name: Build and publish release
+    name: Build release artifacts
     needs: check
     if: needs.check.outputs.needed == 'true'
     runs-on: windows-latest
 
     permissions:
-      contents: write
-      # release-drafter builds the notes by reading merged pull requests.
-      pull-requests: read
+      contents: read
       id-token: write
       attestations: write
 
@@ -134,10 +135,45 @@ jobs:
 
           "archive=dist/$name" >> $env:GITHUB_OUTPUT
 
+      # Attested here rather than after the handoff so the subject is the file as it left the
+      # machine that built it.
       - name: Attest build provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
         with:
           subject-path: ${{ steps.package.outputs.archive }}
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: release-dist
+          path: dist/
+          if-no-files-found: error
+          # Only has to survive the handoff to the next job.
+          retention-days: 1
+
+  # Split off the Windows job because release-drafter is not Windows-compatible: it builds the
+  # config path with node:path's join, so on a Windows runner it asks the GitHub API for
+  # `.github\release-drafter.yml` and gets a 404. There is no input that works around it --
+  # passing `.github/release-drafter.yml` is normalised to backslashes too, and then joined a
+  # second time. Publishing from Linux is the fix.
+  publish:
+    name: Publish release
+    needs: [check, build]
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+      # release-drafter builds the notes by reading merged pull requests.
+      pull-requests: read
+
+    steps:
+      # No checkout: release-drafter reads its config through the API, and the artifacts
+      # come from the build job.
+      - name: Download build artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: release-dist
+          path: dist
 
       # Publishes the draft that changelog.yml has been accumulating on every merge, and
       # creates the tag while doing it. The draft is what the decision to release was made
@@ -173,7 +209,7 @@ jobs:
   # automated release unsubmitted with nothing to show for it.
   winget:
     name: Submit to WinGet
-    needs: [check, build]
+    needs: [check, publish]
     uses: ./.github/workflows/winget.yml
     with:
       tag: ${{ needs.check.outputs.tag }}
