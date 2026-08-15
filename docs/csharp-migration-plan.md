@@ -363,19 +363,27 @@ Cover the layers where input → output is a pure function:
 merge a version bump to main
       │
       ▼
-┌─ release.yml (windows-latest) ───────────────┐
+┌─ check (ubuntu-latest) ──────────────────────┐
+│  read <Version>; is that tag already out?    │
+└──────────────────┬───────────────────────────┘
+                   ▼  only if it is not
+┌─ build (windows-latest) ─────────────────────┐
 │  dotnet publish -r win-x64                   │
 │  → wip.exe → ZIP → SHA256                    │
 │  → actions/attest-build-provenance           │
 └──────────────────┬───────────────────────────┘
-                   ▼
-        GitHub Release (publish the release-drafter draft)
-                   │  on: release published
-                   ▼
+                   ▼  upload-artifact / download-artifact
+┌─ publish (ubuntu-latest) ────────────────────┐
+│  publish the release-drafter draft (= tag)   │
+│  attach the ZIP and SHA256SUMS               │
+└──────────────────┬───────────────────────────┘
+                   ▼  workflow_call
         winget.yml → opens a PR against microsoft/winget-pkgs
 ```
 
-Native AOT cannot cross-compile across operating systems, so **a Windows runner is mandatory**. Being Windows-only, though, **the matrix is a single job** (two, if arm64 ships).
+Native AOT cannot cross-compile across operating systems, so **a Windows runner is mandatory** for the build — and only for the build. Being Windows-only, **the build matrix is a single job** (two, if arm64 ships).
+
+Publishing is a separate Linux job because **release-drafter does not run on Windows**: it builds its config path with `node:path`'s `join`, so a Windows runner asks the API for `.github\release-drafter.yml` and gets a 404. No input works around it — `.github/release-drafter.yml` is normalised to backslashes and then joined a second time — so the Windows job hands its artifacts to Linux and the release is published there.
 
 ### 9.2 Changing the release trigger
 
