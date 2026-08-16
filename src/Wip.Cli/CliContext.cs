@@ -34,7 +34,47 @@ internal sealed partial class CliContext
     /// "dead" state — only <c>exited</c> is a live, restartable exit; <c>deleted</c> means the
     /// container itself is gone and needs <c>wip up</c> to recreate it, not <c>start</c>.
     /// </summary>
+    private const int WslcContainerStateRunning = 2;
+
     private const int WslcContainerStateExited = 3;
+
+    private const int WslcContainerStateDeleted = 4;
+
+    /// <summary>What <c>wip up</c> should do about a container that is already listed.</summary>
+    internal enum ContainerAction
+    {
+        /// <summary>No such container: create it.</summary>
+        Create,
+
+        /// <summary>Listed and startable: start it.</summary>
+        Start,
+
+        /// <summary>Already running: there is nothing to do.</summary>
+        AlreadyRunning,
+    }
+
+    /// <summary>
+    /// Decides from a container's listed state alone, so the rule is testable without a wslc.
+    /// <c>wslc list --all</c> reports containers in every state, so existence is not the same
+    /// question as startability: <c>start</c> on a running or deleted container fails with
+    /// ERROR_INVALID_STATE, which used to surface as a bare "not in an appropriate state"
+    /// from a plain <c>wip up</c>.
+    /// </summary>
+    /// <remarks>
+    /// An unreadable state falls through to <see cref="ContainerAction.Start"/> — the
+    /// behaviour before this existed. A state wslc reports in a shape wip does not understand
+    /// is a reason to keep doing what used to work, not to start deleting and recreating
+    /// containers on a guess.
+    /// </remarks>
+    internal static ContainerAction DecideContainerAction(bool exists, int? state) => (exists, state) switch
+    {
+        (false, _) => ContainerAction.Create,
+        (true, WslcContainerStateRunning) => ContainerAction.AlreadyRunning,
+
+        // Listed but gone. Starting it cannot work; recreating is the only way forward.
+        (true, WslcContainerStateDeleted) => ContainerAction.Create,
+        _ => ContainerAction.Start,
+    };
 
     private readonly CliOptions options;
     private Config? config;
@@ -348,18 +388,6 @@ internal sealed partial class CliContext
         return (code, output.ToString());
     }
 
-    private bool ResourceExists(IReadOnlyList<string> findCommand)
-    {
-        var (code, output) = Probe(findCommand);
-        if (code != 0)
-        {
-            return false;
-        }
-
-        using var document = ParseArray(output);
-        return document is not null && document.RootElement.GetArrayLength() > 0;
-    }
-
     /// <summary>
     /// Parses wslc's <c>--format json</c> output, or returns null when it is not a JSON array.
     /// </summary>
@@ -431,30 +459,46 @@ internal sealed partial class CliContext
 
     private void EnsureDependency(string name)
     {
-        if (ResourceExists(Builder.DependencyFind(name)))
+        var (exists, state) = ContainerEntry(Builder.DependencyFind(name), name);
+        switch (DecideContainerAction(exists, state))
         {
-            Console.Error.WriteLine($"wip: starting existing dependency '{name}'");
-            Execute(Builder.DependencyStart(name));
-        }
-        else
-        {
-            Console.Error.WriteLine($"wip: dependency '{name}' not found, creating it");
-            Execute(Builder.DependencyUp(name));
+            case ContainerAction.AlreadyRunning:
+                Console.Error.WriteLine($"wip: dependency '{name}' is already running");
+                break;
+
+            case ContainerAction.Start:
+                Console.Error.WriteLine($"wip: starting existing dependency '{name}'");
+                Execute(Builder.DependencyStart(name));
+                break;
+
+            default:
+                Console.Error.WriteLine($"wip: dependency '{name}' not found, creating it");
+                Execute(Builder.DependencyUp(name));
+                break;
         }
     }
 
     private void EnsureContainer(bool detach)
     {
         var interactive = Tty(!detach);
-        if (ResourceExists(Builder.Find()))
+        // Builder.Find() rather than the raw name: it goes through the builder's required-value
+        // check, so a config with no container: still fails the same way it always did.
+        var (exists, state) = ContainerEntry(Builder.Find(), Config.Container ?? "");
+        switch (DecideContainerAction(exists, state))
         {
-            Console.Error.WriteLine($"wip: starting existing container '{Config.Container}'");
-            Execute(Builder.Start(detach), interactive);
-        }
-        else
-        {
-            Console.Error.WriteLine($"wip: container '{Config.Container}' not found, creating it");
-            Execute(Builder.Up(detach), interactive);
+            case ContainerAction.AlreadyRunning:
+                Console.Error.WriteLine($"wip: container '{Config.Container}' is already running");
+                break;
+
+            case ContainerAction.Start:
+                Console.Error.WriteLine($"wip: starting existing container '{Config.Container}'");
+                Execute(Builder.Start(detach), interactive);
+                break;
+
+            default:
+                Console.Error.WriteLine($"wip: container '{Config.Container}' not found, creating it");
+                Execute(Builder.Up(detach), interactive);
+                break;
         }
     }
 
@@ -674,18 +718,29 @@ internal sealed partial class CliContext
     /// a one-line change. The raw entry is logged under --debug so that is immediately
     /// visible instead of silently doing nothing forever.
     /// </summary>
-    private int? ContainerStatus(string name)
+    private int? ContainerStatus(string name) => ContainerEntry(Builder.DependencyFind(name), name).State;
+
+    /// <summary>
+    /// One probe answering both questions, because they come from the same listing. Splitting
+    /// them across two calls would run <c>wslc list</c> twice and leave room for the answers
+    /// to disagree, which is exactly the gap this is here to close.
+    /// </summary>
+    /// <returns>
+    /// Whether the container is listed at all, and the state it reports. A null state on a
+    /// listed container means wslc reported it in a shape wip does not understand.
+    /// </returns>
+    private (bool Exists, int? State) ContainerEntry(IReadOnlyList<string> findCommand, string name)
     {
-        var (code, output) = Probe(Builder.DependencyFind(name));
+        var (code, output) = Probe(findCommand);
         if (code != 0)
         {
-            return null;
+            return (false, null);
         }
 
         using var document = ParseArray(output);
         if (document is null)
         {
-            return null;
+            return (false, null);
         }
 
         var first = document.RootElement.EnumerateArray().FirstOrDefault();
@@ -694,13 +749,16 @@ internal sealed partial class CliContext
             Console.Error.WriteLine($"wip: [debug] '{name}': {first}");
         }
 
+        if (first.ValueKind != JsonValueKind.Object)
+        {
+            return (false, null);
+        }
+
         // TryGetInt32 rather than GetInt32: a future wslc could report State as a string, and
         // a watch loop should keep polling instead of taking the whole command down.
-        return first.ValueKind == JsonValueKind.Object &&
-               first.TryGetProperty("State", out var state) &&
-               state.TryGetInt32(out var value)
-            ? value
-            : null;
+        return first.TryGetProperty("State", out var state) && state.TryGetInt32(out var value)
+            ? (true, value)
+            : (true, null);
     }
 
     /// <summary>Runs <paramref name="body"/> every <paramref name="interval"/> seconds until Ctrl-C.</summary>
