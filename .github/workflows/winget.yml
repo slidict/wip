@@ -33,7 +33,7 @@ jobs:
     # Naming an environment lets WINGET_TOKEN live there instead of as a plain repository
     # secret, so required reviewers can gate every use of it. With no protection rules
     # configured this changes nothing, so it is safe to leave in place until someone sets
-    # them up. See packaging/winget/README.md.
+    # them up.
     environment: winget
 
     env:
@@ -53,7 +53,7 @@ jobs:
       # owns WINGET_TOKEN. GITHUB_TOKEN cannot do this -- it has no rights on another
       # repository -- so this needs a classic PAT with public_repo scope, and that account
       # needs a fork of winget-pkgs. Without the secret the step is skipped rather than
-      # failing every release; see packaging/winget/README.md.
+      # failing every release, and the step below prints what to set up.
       - name: Create winget-pkgs pull request
         if: env.WINGET_TOKEN != ''
         uses: vedantmgoyal9/winget-releaser@4ffc7888bffd451b357355dc214d43bb9f23917e # v2
@@ -74,5 +74,19 @@ jobs:
         run: |
           {
             echo "WINGET_TOKEN is not set, so no winget-pkgs pull request was opened."
-            echo "See packaging/winget/README.md for the one-time setup."
+            echo ""
+            echo "To enable it, once:"
+            echo ""
+            echo "1. Fork microsoft/winget-pkgs, preferably on a dedicated account. If that is"
+            echo "   not this repository's owner, set the WINGET_FORK_USER repository variable"
+            echo "   to it."
+            echo "2. Create a **classic** PAT on that account with the \`public_repo\` scope and"
+            echo "   an expiry. Fine-grained tokens are not supported, and GITHUB_TOKEN has no"
+            echo "   rights on another repository."
+            echo "3. Store it as WINGET_TOKEN on the \`winget\` environment, so required"
+            echo "   reviewers can gate each use."
+            echo ""
+            echo "Submissions can also be made by hand with \`wingetcreate submit <manifests>\`,"
+            echo "pointing at a directory holding the three manifest files. That needs no stored"
+            echo "credential: with no --token it authenticates through the browser instead."
           } >> "$GITHUB_STEP_SUMMARY"

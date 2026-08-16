@@ -62,12 +62,18 @@ key, every command's flags, guides, and troubleshooting — see the **[wip Wiki]
 Windows with WSL2 and Microsoft WSLC. There is no runtime to install: `wip.exe` is a
 self-contained Native AOT binary.
 
+Download and extract `wip-<version>-win-x64.zip` from
+[Releases](https://github.com/slidict/wip/releases), then add the directory holding `wip.exe`
+to your PATH.
+
+**WinGet is on the way.** The manifest has been submitted as
+[microsoft/winget-pkgs#418285](https://github.com/microsoft/winget-pkgs/pull/418285) and is
+waiting on review — new packages are reviewed by hand, so it takes a few days. Once it merges,
+this is all it takes:
+
 ```powershell
 winget install Slidict.Wip
 ```
-
-Or download `wip-<version>-win-x64.zip` from
-[Releases](https://github.com/slidict/wip/releases) and put `wip.exe` on your PATH.
 
 From source: `dotnet publish src/Wip.Cli/Wip.Cli.csproj -c Release -r win-x64`.
 
@@ -117,10 +123,10 @@ through WinGet does not move it, because the alias it puts on PATH stays at a fi
 
 This walks through `mode: container` (the default). Already have a `compose.yml`? See
 [Which mode should you use?](#which-mode-should-you-use) first, or read the wiki's
-[Getting Started](https://github.com/slidict/wip/wiki/Getting-Started) guide.
+[Getting Started](https://github.com/slidict/wip/wiki/Getting-Started) guide. Install `wip.exe`
+first — see [Requirements & installation](#requirements--installation).
 
 ```powershell
-winget install Slidict.Wip
 cd my-project
 wip init   # writes a starter wip.yml; edit the TODOs, then:
 wip doctor
@@ -289,26 +295,10 @@ listed here rather than left implicit — see
       WSL1-only machine. Fixing it means parsing localised, UTF-16 output, which is worth
       getting right rather than guessing at.
 
-### Before the first WinGet release
-
-- [ ] **Confirm the package identifier** — `Slidict.Wip` is assumed throughout. Changing it
-      after publication creates a new package rather than renaming the existing one.
-- [ ] **Decide whether to automate the WinGet submission at all** — it means storing a
-      classic PAT in a public repository's secrets, and classic scopes cannot be narrowed to
-      one repository. Fork PRs cannot reach it and the actions are SHA-pinned, but if the
-      remaining exposure is not worth it, leave `WINGET_TOKEN` unset and submit by hand with
-      `wingetcreate`: the job skips itself and releases are unaffected. The trade-off is laid
-      out in [packaging/winget/README.md](packaging/winget/README.md).
-- [ ] **If automating: bot account, environment, expiry** — put the fork on a dedicated
-      account (`WINGET_FORK_USER`), store the token on the `winget` environment with required
-      reviewers, and give it an expiry.
-- [ ] **Validate the manifest locally** — the first submission is human-reviewed, and a
-      rejection costs days.
-- [ ] **Copy the Ruby implementation to its own repository** — it was removed here, so recover
-      it from git history if that has not happened yet.
-
 ### Deferred by choice
 
+- [ ] **Copy the Ruby implementation to its own repository** — it was removed here, so recover
+      it from git history if that has not happened yet.
 - [ ] **Code signing** — `wip.exe` ships unsigned today, which is an accepted risk rather than
       one avoided by ZIP packaging: SmartScreen judges the file and its publisher reputation.
       If it is adopted, sign before packaging, hashing, and attesting.
@@ -316,8 +306,9 @@ listed here rather than left implicit — see
       for an arm64 sibling; it needs one more publish job.
 - [ ] **Error hints for interactive commands** — interactive commands inherit the console, so
       wip cannot read their output to interpret failures. Recovering that means ConPTY.
-- [ ] **`wip` without the extension in WSL** — bash does not consult PATHEXT, so `wip.exe` has
-      to be typed. Either document the alias or ship a shim that writes `/usr/local/bin/wip`.
+- [x] **`wip` without the extension in WSL** — bash does not consult PATHEXT, so `wip.exe` has
+      to be typed. Documented rather than shipped: see
+      [Running it from a WSL2 shell](#running-it-from-a-wsl2-shell) for the shim and the alias.
 
 ## Development
 
