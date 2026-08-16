@@ -62,8 +62,9 @@ key, every command's flags, guides, and troubleshooting — see the **[wip Wiki]
 Windows with WSL2 and Microsoft WSLC. There is no runtime to install: `wip.exe` is a
 self-contained Native AOT binary.
 
-Download `wip-<version>-win-x64.zip` from
-[Releases](https://github.com/slidict/wip/releases) and put `wip.exe` on your PATH.
+Download and extract `wip-<version>-win-x64.zip` from
+[Releases](https://github.com/slidict/wip/releases), then add the directory holding `wip.exe`
+to your PATH.
 
 **WinGet is on the way.** The manifest has been submitted as
 [microsoft/winget-pkgs#418285](https://github.com/microsoft/winget-pkgs/pull/418285) and is
@@ -122,8 +123,8 @@ through WinGet does not move it, because the alias it puts on PATH stays at a fi
 
 This walks through `mode: container` (the default). Already have a `compose.yml`? See
 [Which mode should you use?](#which-mode-should-you-use) first, or read the wiki's
-[Getting Started](https://github.com/slidict/wip/wiki/Getting-Started) guide. Put `wip.exe` on
-your PATH first — see [Requirements & installation](#requirements--installation).
+[Getting Started](https://github.com/slidict/wip/wiki/Getting-Started) guide. Install `wip.exe`
+first — see [Requirements & installation](#requirements--installation).
 
 ```powershell
 cd my-project
