@@ -1,0 +1,20 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.10.0.schema.json
+
+PackageIdentifier: Slidict.Wip
+PackageVersion: 2.0.2
+PackageLocale: en-US
+Publisher: slidict
+PublisherUrl: https://github.com/slidict
+PublisherSupportUrl: https://github.com/slidict/wip/issues
+PackageName: wip
+PackageUrl: https://github.com/slidict/wip
+License: MIT
+LicenseUrl: https://github.com/slidict/wip/blob/main/LICENSE
+ShortDescription: A developer-friendly CLI wrapper for Microsoft WSLC.
+Tags:
+  - wsl
+  - wslc
+  - containers
+  - cli
+ManifestType: defaultLocale
+ManifestVersion: 1.10.0

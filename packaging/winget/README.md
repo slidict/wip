@@ -6,8 +6,8 @@ it, registers `wip.exe` under a links directory, and puts that directory on PATH
 
 `.github/workflows/winget.yml` opens the pull request against
 [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs) automatically when a release
-is published. The manifests below are what that produces; they live here so the shape is
-reviewable in this repository and can be validated by hand before the first submission.
+is published. [`manifests/`](manifests) holds what that produces, so the shape is reviewable
+in this repository and can be validated by hand before the first submission.
 
 ## The token is the risky part — read this first
 
@@ -60,71 +60,44 @@ onward, not the first.
 ## Validating locally before the first submission
 
 The first submission gets a human review, and a rejected one costs days. Check it locally
-first, against a real published release:
+first, against a real published release. Both commands are Windows-only — winget does not
+run under WSL2, so use a PowerShell or cmd prompt on the host:
 
 ```powershell
-winget validate --manifest packaging/winget/manifests
-winget install --manifest packaging/winget/manifests
+cd packaging\winget
+winget validate --manifest .\manifests
+winget install --manifest .\manifests
 ```
+
+`winget install --manifest` really installs, so expect `wip` on PATH afterwards; undo it with
+`winget uninstall Slidict.Wip`.
+
+Both commands need a winget client that knows the schema version the manifests declare —
+`winget --version` should be 1.10 or newer for the 1.10.0 manifests here. An older client
+rejects them at parse time, which looks like a manifest error but is not one.
 
 ## Manifest shape
 
-Three files are required. `<version>` and `<sha256>` are filled in per release; everything
-else is stable.
+Three files are required, and they live in [`manifests/`](manifests):
 
-`ManifestVersion` below shows the shape, not a version to copy: winget-pkgs retires older
-schema versions and can reject a submission that uses one. The automation emits whatever
-schema its tooling targets, so **check the schema version currently accepted by winget-pkgs
-before the first submission** and let `winget validate` confirm it.
+| File | `ManifestType` | What it carries |
+|---|---|---|
+| [`Slidict.Wip.yaml`](manifests/Slidict.Wip.yaml) | `version` | The identifier and which locale is the default |
+| [`Slidict.Wip.installer.yaml`](manifests/Slidict.Wip.installer.yaml) | `installer` | The archive URL, its hash, and the nested-portable wiring |
+| [`Slidict.Wip.locale.en-US.yaml`](manifests/Slidict.Wip.locale.en-US.yaml) | `defaultLocale` | Publisher, license and description metadata |
 
-```yaml
-# Slidict.Wip.installer.yaml
-PackageIdentifier: Slidict.Wip
-PackageVersion: <version>
-Installers:
-  # The installer-shape keys sit on the entry rather than at the root: that is where the
-  # schema always accepts them, and it is the shape an arm64 sibling needs anyway.
-  - Architecture: x64
-    InstallerType: zip
-    NestedInstallerType: portable
-    NestedInstallerFiles:
-      - RelativeFilePath: wip.exe
-        PortableCommandAlias: wip
-    InstallerUrl: https://github.com/slidict/wip/releases/download/v<version>/wip-<version>-win-x64.zip
-    InstallerSha256: <sha256>
-ManifestType: installer
-ManifestVersion: 1.6.0
-```
+`PackageVersion`, `ReleaseDate`, `InstallerUrl` and `InstallerSha256` change per release;
+everything else is stable. The hash is the one the release publishes in `SHA256SUMS`
+alongside the zip, so it can be copied from there rather than recomputed.
 
-```yaml
-# Slidict.Wip.locale.en-US.yaml
-PackageIdentifier: Slidict.Wip
-PackageVersion: <version>
-PackageLocale: en-US
-Publisher: slidict
-PublisherUrl: https://github.com/slidict
-PackageName: wip
-PackageUrl: https://github.com/slidict/wip
-License: MIT
-LicenseUrl: https://github.com/slidict/wip/blob/main/LICENSE
-ShortDescription: A developer-friendly CLI wrapper for Microsoft WSLC.
-Tags:
-  - wsl
-  - wslc
-  - containers
-  - cli
-ManifestType: defaultLocale
-ManifestVersion: 1.6.0
-```
-
-```yaml
-# Slidict.Wip.yaml
-PackageIdentifier: Slidict.Wip
-PackageVersion: <version>
-DefaultLocale: en-US
-ManifestType: version
-ManifestVersion: 1.6.0
-```
+`ManifestVersion` is **not** a set-and-forget field: winget-pkgs retires older schema
+versions and can reject a submission that uses one. These files declare `1.10.0`, the newest
+schema in `microsoft/winget-cli` at the time they were written. Before the first submission,
+confirm that is still current — the schema directory in
+[winget-cli](https://github.com/microsoft/winget-cli/tree/master/schemas/JSON/manifests) is
+the authority — and let `winget validate` have the last word. Past the first submission the
+automation emits whatever schema its own tooling targets, and these files are the
+hand-checked reference rather than the thing submitted.
 
 ## If code signing is adopted
 

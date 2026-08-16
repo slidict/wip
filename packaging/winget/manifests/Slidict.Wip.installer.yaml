@@ -1,0 +1,20 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.10.0.schema.json
+
+PackageIdentifier: Slidict.Wip
+PackageVersion: 2.0.2
+ReleaseDate: 2026-08-15
+Installers:
+  # The installer-shape keys sit on the entry rather than at the root: that is where the
+  # schema always accepts them, and it is the shape an arm64 sibling needs anyway.
+  - Architecture: x64
+    InstallerType: zip
+    NestedInstallerType: portable
+    NestedInstallerFiles:
+      # The archive holds wip.exe at its root -- no version-stamped directory to walk
+      # through -- so this path is just the file name.
+      - RelativeFilePath: wip.exe
+        PortableCommandAlias: wip
+    InstallerUrl: https://github.com/slidict/wip/releases/download/v2.0.2/wip-2.0.2-win-x64.zip
+    InstallerSha256: EE2782F4E8C1EFA2985D802BE67BEA1C7868DD9EB858B2A5190B8AD82C06C238
+ManifestType: installer
+ManifestVersion: 1.10.0
