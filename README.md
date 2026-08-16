@@ -81,7 +81,23 @@ $ cd ~/myproject && wip.exe up -d
 ```
 
 **The `.exe` is required in bash**, which does not consult `PATHEXT` the way PowerShell and
-cmd do. Add `alias wip=wip.exe` to your shell profile if you would rather not type it.
+cmd do — so `wip` alone works in PowerShell but finds nothing in bash. To drop it there, put a
+shim on your PATH inside the distribution:
+
+```bash
+sudo tee /usr/local/bin/wip >/dev/null <<'EOF'
+#!/bin/sh
+exec wip.exe "$@"
+EOF
+sudo chmod +x /usr/local/bin/wip
+```
+
+`alias wip=wip.exe` in your shell profile also works, but only in an interactive shell — not
+from a Makefile, a script, `sudo`, or `ssh host wip …`. The shim works everywhere.
+
+Either way `wip.exe` itself has to resolve, which it does through the Windows PATH that WSL
+appends. If you have turned that off with `appendWindowsPath = false` in `/etc/wsl.conf`, spell
+out the full path inside the shim instead.
 
 > **Note on project location.** A project on the WSL filesystem reaches wip as a UNC path
 > (`\\wsl.localhost\...`), which changes what `sync.source` and `volumes:` hand to wslc. What
