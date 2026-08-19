@@ -60,10 +60,9 @@ jobs:
           # matches drafts too, so a draft does not count as released.
           is_draft=$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null || echo "")
 
-          # Notes are published before the artifacts are attached, so a failed upload leaves a
-          # release that exists but cannot be installed. "Published" alone would then read as
-          # done and skip the repair, so a release only counts as finished once its downloads
-          # are actually there -- which makes re-running this workflow fix it.
+          # A completed release has both artifacts. With immutable releases a published release
+          # cannot be repaired, so detect that state explicitly instead of retrying an upload
+          # that GitHub must reject.
           has_archive=$(gh release view "$TAG" --json assets \
             --jq 'any(.assets[]; .name | endswith(".zip"))' 2>/dev/null || echo false)
           has_checksums=$(gh release view "$TAG" --json assets \
@@ -72,13 +71,12 @@ jobs:
           if [ "$is_draft" = "false" ] && [ "$has_archive" = "true" ] && [ "$has_checksums" = "true" ]; then
             echo "needed=false" >> "$GITHUB_OUTPUT"
             echo "$TAG is already published with its artifacts; nothing to do." >> "$GITHUB_STEP_SUMMARY"
+          elif [ "$is_draft" = "false" ]; then
+            echo "::error::$TAG is published but is missing release artifacts. Immutable releases cannot accept uploads; publish a corrected version instead."
+            exit 1
           else
             echo "needed=true" >> "$GITHUB_OUTPUT"
-            if [ "$is_draft" = "false" ]; then
-              echo "$TAG is published but missing artifacts; re-running the release." >> "$GITHUB_STEP_SUMMARY"
-            else
-              echo "Releasing $TAG." >> "$GITHUB_STEP_SUMMARY"
-            fi
+            echo "Releasing $TAG." >> "$GITHUB_STEP_SUMMARY"
           fi
 
   # Windows only because Native AOT cannot cross-compile between operating systems. Nothing
@@ -175,27 +173,24 @@ jobs:
           name: release-dist
           path: dist
 
-      # Publishes the draft that changelog.yml has been accumulating on every merge, and
-      # creates the tag while doing it. The draft is what the decision to release was made
-      # from, so the release says the same thing it did.
+      # Finalises the draft that changelog.yml has been accumulating on every merge. Keep it
+      # as a draft until its artifacts are attached: immutable releases reject every asset
+      # upload made after publication.
       #
       # Its own tag-template guesses the next version; the explicit tag and name override that
       # with the version actually being released.
-      - name: Publish release notes
+      - name: Finalise draft release notes
         uses: release-drafter/release-drafter@34d80673e067bdc0c24568d3af899c216adcfaa9 # v7
         with:
           config-name: release-drafter.yml
-          publish: true
+          publish: false
           tag: ${{ needs.check.outputs.tag }}
           name: ${{ needs.check.outputs.tag }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # Attaches the artifacts to the release the step above just published. Publishing first
-      # means a failure here leaves a release without downloads; the check job treats that as
-      # unfinished rather than done, so re-running this workflow repairs it. Uploading before
-      # publishing instead would put two actions in charge of the same draft, which is a
-      # worse thing to get wrong.
+      # Attach artifacts while the release is still mutable. If this fails, the release stays
+      # a draft and a re-run can safely overwrite any artifact uploaded before the failure.
       - name: Upload release artifacts
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
@@ -203,6 +198,14 @@ jobs:
           files: |
             dist/*.zip
             dist/SHA256SUMS
+
+      # Publishing is deliberately the final release mutation. It also creates the tag chosen
+      # above, preserving the version-driven flow while satisfying immutable releases.
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.check.outputs.tag }}
+        run: gh release edit "$TAG" --draft=false
 
   # Called rather than triggered: a release created with GITHUB_TOKEN does not raise
   # `release: published` for another workflow, so an event-based handoff would leave every
