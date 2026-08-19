@@ -177,6 +177,8 @@ internal sealed partial class CliContext
 
     internal int Up(bool detach, bool sync, bool noCache, bool watch, double interval)
     {
+        WarnWslProject();
+
         if (Config.IsCompose)
         {
             return UpViaComposeBridge(detach, sync, watch);
@@ -274,6 +276,8 @@ internal sealed partial class CliContext
 
     internal int Run(IReadOnlyList<string> command, bool interactive)
     {
+        WarnWslProject();
+
         if (Config.IsCompose)
         {
             Console.Error.WriteLine(
@@ -610,6 +614,36 @@ internal sealed partial class CliContext
             $"from {context}");
 
         StageAndBuild(context, settings, WithNoCache(extra, noCache));
+    }
+
+    /// <summary>
+    /// A project on the WSL filesystem is a bind mount wslc cannot serve: it resolves a
+    /// <c>-v</c> source as a Windows path and mounts an empty directory rather than failing
+    /// when that path does not exist. <c>sync.source</c> refuses to resolve at all, but
+    /// <c>volumes:</c> entries reach wslc exactly as they were written — <c>.:/app</c>
+    /// resolved against wip's own UNC working directory — so this warning is the only thing
+    /// standing between such a project and a container that comes up empty in silence.
+    /// <c>WIP_WSL_PATH</c> deliberately does not silence it: that variable only changes what
+    /// <c>sync.source</c> resolves to, and rewrites no <c>volumes:</c> entry.
+    /// </summary>
+    private void WarnWslProject()
+    {
+        if (Config.Path is null)
+        {
+            return;
+        }
+
+        var directory = Path.GetDirectoryName(Path.GetFullPath(Config.Path));
+        if (directory is null || !WslPath.IsWslPath(directory))
+        {
+            return;
+        }
+
+        Console.Error.WriteLine(
+            $"wip: warning: this project is on the WSL filesystem ({directory}); wslc " +
+            "resolves bind-mount sources as Windows paths, so volumes: entries can mount " +
+            "empty instead of failing. Move the project onto the Windows filesystem " +
+            "(C:\\src\\myproject, say) if a container starts up without your files.");
     }
 
     private int StageAndBuild(string context, OrderedDictionary<string, object?> settings, IReadOnlyList<string> extra)

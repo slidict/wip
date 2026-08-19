@@ -95,6 +95,7 @@ public sealed class Doctor
         }
 
         CheckWslc(config, results);
+        CheckProjectLocation(config, results);
 
         if (config.IsCompose)
         {
@@ -196,15 +197,56 @@ public sealed class Doctor
         }
     }
 
+    /// <summary>
+    /// A project on the WSL filesystem reaches wip as a UNC path, and wslc resolves a
+    /// bind-mount source as a Windows path — mounting an empty directory rather than
+    /// failing when it does not exist. <c>sync.source</c> says so itself by refusing to
+    /// resolve, but <c>volumes:</c> entries are passed to wslc verbatim, so nothing else
+    /// would report the one thing that explains an empty container.
+    /// </summary>
+    private static void CheckProjectLocation(Config config, List<Result> results)
+    {
+        if (config.Path is null)
+        {
+            return;
+        }
+
+        var directory = Path.GetDirectoryName(Path.GetFullPath(config.Path));
+        if (directory is null || !WslPath.IsWslPath(directory))
+        {
+            return;
+        }
+
+        results.Add(new Result(Level.Fail,
+            $"Project is on the WSL filesystem ({directory}): wslc resolves a bind-mount " +
+            "source as a Windows path and mounts an empty directory rather than failing, so " +
+            "sync.source is refused and volumes: entries can mount empty. Move the project " +
+            "onto the Windows filesystem, e.g. C:\\src\\myproject"));
+    }
+
     private static void CheckSync(Config config, List<Result> results)
     {
         var sync = config.Sync!;
-        var found = Directory.Exists(sync.Source);
+
+        // Resolving the source is what refuses a WSL-side path, and doctor is exactly where
+        // that has to read as a result rather than as wip falling over.
+        string source;
+        try
+        {
+            source = sync.Source;
+        }
+        catch (ConfigException exception)
+        {
+            results.Add(new Result(Level.Fail, exception.Message));
+            return;
+        }
+
+        var found = Directory.Exists(source);
         results.Add(new Result(
             found ? Level.Ok : Level.Fail,
             found
-                ? $"Sync source {sync.Source} mirrors into volume {sync.Volume} at {sync.Target}"
-                : $"Sync source not found: {sync.Source}"));
+                ? $"Sync source {source} mirrors into volume {sync.Volume} at {sync.Target}"
+                : $"Sync source not found: {source}"));
 
         if (!sync.IsExec || (sync.Image is null && sync.Build is null))
         {

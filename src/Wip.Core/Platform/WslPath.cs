@@ -3,23 +3,37 @@ using System.Text.RegularExpressions;
 namespace Wip.Platform;
 
 /// <summary>
-/// Translates host paths between the form Windows hands wip and the form wslc is given.
+/// Decides what wip is allowed to hand wslc as the host side of a bind mount.
 /// </summary>
 /// <remarks>
 /// <para>
-/// This is the single place the migration's open question lands, and it is deliberately one
-/// function so that answering the question is a local change. wip.exe runs on the Windows
-/// side, but is typically invoked from a WSL2 shell, so a project under <c>~/proj</c> gives
-/// the process a UNC working directory (<c>\\wsl.localhost\Ubuntu\home\u\proj</c>). Three
-/// call sites then hand that path to wslc: the <c>sync:</c> source mount, <c>volumes:</c>
-/// bind mounts, and the build context.
+/// wip.exe runs on the Windows side but is typically invoked from a WSL2 shell, so a project
+/// under <c>~/proj</c> gives the process a UNC working directory
+/// (<c>\\wsl.localhost\Ubuntu\home\u\proj</c>). That path reaches wslc through
+/// <c>sync.source</c> and <c>volumes:</c> — see docs/csharp-migration-plan.md §3.
 /// </para>
 /// <para>
-/// What wslc accepts has not been measured yet — see docs/csharp-migration-plan.md §3.2,
-/// Phase 0 Spike 1. This implements branch (a) of that decision tree, translating a UNC
-/// path back to the Linux path it denotes, on the reasoning that wslc runs containers inside
-/// a WSL2 VM and therefore speaks Linux paths. If the spike shows otherwise, this method is
-/// what changes; nothing else needs to know.
+/// This used to implement branch (a) of that section's decision tree, translating the UNC
+/// path back to the Linux path it denotes, on the assumption that wslc — which runs its
+/// containers inside a WSL2 VM — speaks Linux paths. Reading wslc's own source says
+/// otherwise: it resolves a <c>-v</c> source with <c>GetFullPathNameW</c>, i.e. as a Windows
+/// path, so <c>/home/u/proj</c> becomes <c>C:\home\u\proj</c>. Worse, a source that does not
+/// exist is not an error there: wslc mounts an empty directory (<c>/mnt/&lt;GUID&gt;</c>) and
+/// the container starts, so the translation turned "project on the WSL filesystem" into a
+/// silently empty mount — no message, nothing to search for.
+/// </para>
+/// <para>
+/// That rules branch (a) out. It does not establish branch (c): a UNC path does resolve, and
+/// does exist, so whether wslc can mount one into the VM is simply unmeasured. Refusing a
+/// WSL-side path with an explanation is therefore the safe default — it states the constraint
+/// branch (b) says has to be documented, and it fails in the open instead of quietly.
+/// </para>
+/// <para>
+/// The finding is source reading, not a measurement on real hardware, so
+/// <c>WIP_WSL_PATH</c> keeps both other branches reachable without a rebuild:
+/// <c>unc</c> hands wslc the UNC path unchanged (branch (c)) and <c>linux</c> restores the
+/// old translation (branch (a)). Whichever the Phase 0 spike confirms becomes the default,
+/// and this is still the only function that changes.
 /// </para>
 /// <para>
 /// On non-Windows hosts every path passes through untouched, which is what keeps the golden
@@ -28,25 +42,23 @@ namespace Wip.Platform;
 /// </remarks>
 public static partial class WslPath
 {
+    /// <summary>Overrides the refusal, so the open question can be measured in place.</summary>
+    public const string ModeVariable = "WIP_WSL_PATH";
+
     /// <summary>
-    /// Converts a host path into the form handed to wslc on a command line.
+    /// Converts a host path into the form handed to wslc on a command line, or refuses it.
     /// </summary>
-    public static string ForWslc(string path)
-    {
-        if (!OperatingSystem.IsWindows())
-        {
-            return path;
-        }
-
-        var match = UncPattern().Match(path);
-        if (!match.Success)
-        {
-            return path;
-        }
-
-        var remainder = match.Groups[2].Value.Replace('\\', '/');
-        return remainder.Length == 0 ? "/" : $"/{remainder.TrimStart('/')}";
-    }
+    /// <param name="path">An absolute host path, as Windows handed it to wip.</param>
+    /// <param name="label">
+    /// What the path is, so a refusal names the setting to change rather than just a path.
+    /// </param>
+    /// <exception cref="ConfigException">
+    /// The path is inside a WSL distribution's filesystem, which wslc cannot bind-mount.
+    /// </exception>
+    public static string ForWslc(string path, string label = "the host path") =>
+        OperatingSystem.IsWindows()
+            ? ForWslc(path, label, System.Environment.GetEnvironmentVariable(ModeVariable))
+            : path;
 
     /// <summary>Whether <paramref name="path"/> points inside a WSL distribution's filesystem.</summary>
     public static bool IsWslPath(string path) => OperatingSystem.IsWindows() && UncPattern().IsMatch(path);
@@ -57,6 +69,57 @@ public static partial class WslPath
         var match = UncPattern().Match(path);
         return match.Success ? match.Groups[1].Value : null;
     }
+
+    /// <summary>
+    /// The decision itself, with the two host facts — the platform and the override — passed
+    /// in, so it can be exercised from a test run on any of them.
+    /// </summary>
+    internal static string ForWslc(string path, string label, string? mode)
+    {
+        var match = UncPattern().Match(path);
+        if (!match.Success)
+        {
+            return path;
+        }
+
+        if (string.IsNullOrEmpty(mode) || Is(mode, "refuse"))
+        {
+            throw new ConfigException(Refusal(label, path));
+        }
+
+        if (Is(mode, "unc"))
+        {
+            return path;
+        }
+
+        if (Is(mode, "linux"))
+        {
+            return ToLinuxPath(match);
+        }
+
+        throw new ConfigException(
+            $"{ModeVariable} must be one of refuse, unc, or linux — got ‘{mode}’");
+    }
+
+    private static bool Is(string mode, string name) =>
+        string.Equals(mode, name, StringComparison.OrdinalIgnoreCase);
+
+    private static string ToLinuxPath(Match match)
+    {
+        var remainder = match.Groups[2].Value.Replace('\\', '/');
+        return remainder.Length == 0 ? "/" : $"/{remainder.TrimStart('/')}";
+    }
+
+    private static string Refusal(string label, string path) =>
+        $"{label} is on the WSL filesystem ({path}), which wip will not hand to wslc: wslc " +
+        "resolves a -v source as a Windows path, and mounts an empty directory instead of " +
+        "failing when that path does not exist — so wip's old translation of this to " +
+        "/home/... left the container with none of your files in it and nothing to explain " +
+        "why. Whether wslc can mount the UNC path itself has not been measured, so refusing " +
+        "is the safe default. Move the project onto the Windows filesystem " +
+        "(C:\\src\\myproject, say) and run wip from there — or, to measure it: " +
+        $"{ModeVariable}=unc hands wslc the UNC path unchanged and {ModeVariable}=linux " +
+        "restores the old translation (see docs/csharp-migration-plan.md §3).";
 
     // Both spellings are in circulation: \\wsl$\ predates \\wsl.localhost\ and still
     // resolves, so a working directory can arrive as either.

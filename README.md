@@ -113,11 +113,24 @@ appends — that is where WinGet's `wip.exe` alias lives. If you have turned tha
 path, so put the full path in by hand. Re-run the snippet if `wip.exe` ever moves; upgrading
 through WinGet does not move it, because the alias it puts on PATH stays at a fixed location.
 
-> **Note on project location.** A project on the WSL filesystem reaches wip as a UNC path
-> (`\\wsl.localhost\...`), which changes what `sync.source` and `volumes:` hand to wslc. What
-> wslc accepts there is still being measured — see
-> [the migration plan](docs/csharp-migration-plan.md) §3. Projects on the Windows filesystem
-> are unaffected.
+> **Keep the project on the Windows filesystem.** A project under `~/proj` inside a
+> distribution reaches wip as a UNC path (`\\wsl.localhost\Ubuntu\home\u\proj`). wslc
+> resolves a `-v` source as a Windows path, and when the result does not exist it mounts an
+> *empty directory* rather than failing — so wip's earlier translation of that UNC path to
+> `/home/u/proj` booted a container with none of your files in it and no error to explain
+> why. wip therefore refuses `sync.source` on the WSL filesystem by name, and `wip up` and
+> `wip run` warn about `volumes:`, which wslc resolves itself. Put the project on `C:\`
+> (`C:\src\myproject`) and run wip from there.
+>
+> **Whether wslc can mount the UNC path directly is a separate question, and unmeasured** —
+> refusing is the safe default until someone runs it, not a measured verdict. This all comes
+> from reading wslc's source, so both other readings stay one environment variable away:
+> `WIP_WSL_PATH=unc` hands wslc the UNC path unchanged and `WIP_WSL_PATH=linux` restores the
+> old `/home/...` translation. Either way it changes only what `sync.source` resolves to — it
+> rewrites no `volumes:` entry, so the `wip up` / `wip run` warning stands under every value.
+> If you measure what wslc really does, please
+> [say so in an issue](https://github.com/slidict/wip/issues) — see
+> [the migration plan](docs/csharp-migration-plan.md) §3.
 
 ## Quick start
 
@@ -277,12 +290,16 @@ listed here rather than left implicit — see
 
 ### Needs verification on real hardware
 
-- [ ] **Which host paths `wslc` accepts** — the one open design question. A project on the WSL
-      filesystem reaches `wip.exe` as a UNC path (`\\wsl.localhost\...`), which changes what
-      `sync.source` and `volumes:` hand to `wslc`. Measure `wslc run -v` against a Linux path,
-      a Windows-local path, and a UNC path. The translation lives in one function,
-      `Platform/WslPath.ForWslc`, which currently assumes Linux paths are accepted; if that is
-      wrong, that function is the only thing that changes. See the plan §3.
+- [ ] **Which host paths `wslc` accepts** — the one open design question. wslc's source rules
+      one answer out: a `-v` source is resolved with `GetFullPathNameW` — as a Windows path —
+      and a source that does not exist mounts an empty directory instead of failing, so
+      translating a UNC path into `/home/...` broke silently. `Platform/WslPath.ForWslc` now
+      refuses the WSL filesystem with an explanation, which is a safe default rather than a
+      measurement: **whether wslc mounts a UNC path directly is still unknown**, and
+      `WIP_WSL_PATH=unc` / `WIP_WSL_PATH=linux` keep both other readings testable in place.
+      Measure `wslc run -v` against a Linux path, a Windows-local path, and a UNC path;
+      whichever wins becomes the default, and that one function is still all that changes.
+      See the plan §3.
 - [ ] **Interactive TTY from a WSL2 shell** — confirm `wslc exec -it`, Ctrl-C, and terminal
       resizing behave when `wip.exe` is launched from bash rather than PowerShell.
 - [ ] **UNC walk performance** — staging a large build context reads every file over 9p.
