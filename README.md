@@ -118,15 +118,17 @@ through WinGet does not move it, because the alias it puts on PATH stays at a fi
 > resolves a `-v` source as a Windows path, and when the result does not exist it mounts an
 > *empty directory* rather than failing — so wip's earlier translation of that UNC path to
 > `/home/u/proj` booted a container with none of your files in it and no error to explain
-> why. wip therefore refuses `sync.source` on the WSL filesystem by name, and `wip up` warns
-> about `volumes:`, which wslc resolves itself. Put the project on `C:\`
+> why. wip therefore refuses `sync.source` on the WSL filesystem by name, and `wip up` and
+> `wip run` warn about `volumes:`, which wslc resolves itself. Put the project on `C:\`
 > (`C:\src\myproject`) and run wip from there.
 >
 > **Whether wslc can mount the UNC path directly is a separate question, and unmeasured** —
 > refusing is the safe default until someone runs it, not a measured verdict. This all comes
 > from reading wslc's source, so both other readings stay one environment variable away:
 > `WIP_WSL_PATH=unc` hands wslc the UNC path unchanged and `WIP_WSL_PATH=linux` restores the
-> old `/home/...` translation. If you measure what wslc really does, please
+> old `/home/...` translation. Either way it changes only what `sync.source` resolves to — it
+> rewrites no `volumes:` entry, so the `wip up` / `wip run` warning stands under every value.
+> If you measure what wslc really does, please
 > [say so in an issue](https://github.com/slidict/wip/issues) — see
 > [the migration plan](docs/csharp-migration-plan.md) §3.
 

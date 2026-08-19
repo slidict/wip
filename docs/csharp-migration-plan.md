@@ -128,7 +128,7 @@ The expectation above was wrong, and wrong in the worst possible way. Reading ws
 
 Branch (a) therefore did not merely fail — it failed *silently*. A project on the WSL filesystem (where most Rails work lives) got `sync.source` and `volumes:` translated into paths that exist nowhere, and the container came up with none of the project in it and nothing printed to explain it. There is no error message to search for, so there is no way for the person hitting it to get out.
 
-**What this does and does not settle.** It disproves branch (a): a translated Linux path is a Windows path to wslc, and a wrong one. It says nothing about branch (c) — a UNC path *does* resolve through `GetFullPathNameW`, and *does* exist, so whether wslc can mount one into the VM is still unmeasured, and this section is not a finding that it cannot.
+**What this does and does not settle.** It disproves branch (a): a translated Linux path is a Windows path to wslc, and a wrong one. It says nothing about branch (c) — a UNC path resolves through `GetFullPathNameW` like any other Windows path (resolution alone proves nothing about existence, as the empty-mount case above shows), and the one wip is handed names a directory that *does* exist, so it never reaches the empty-mount path. Whether wslc can mount an existing UNC source into the VM is simply unmeasured, and this section is not a finding that it cannot.
 
 **So the implementation is branch (b), as the safe default rather than as a verdict:**
 
