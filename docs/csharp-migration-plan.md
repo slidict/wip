@@ -11,9 +11,10 @@ open is recorded here rather than edited out, because the reasoning is what make
 remaining decisions reviewable.
 
 **Still open:** the path model in §3 — Phase 0 Spikes 1 and 2 need Windows with WSL2 and wslc
-present, so `Platform/WslPath.ForWslc` currently implements branch (a) of §3.2 as a
-provisional answer, isolated to that one function. §11 lists everything else awaiting a
-first-hand check.
+present. Reading wslc's source has since ruled branch (a) out (§3.2a), so
+`Platform/WslPath.ForWslc` now implements branch (b): the WSL filesystem is refused with an
+explanation instead of silently mistranslated, still isolated to that one function. §11 lists
+everything else awaiting a first-hand check.
 
 ---
 
@@ -117,6 +118,23 @@ Worth noting: the existing code already carries a workaround comment about `wslc
 | **(c) wslc handles UNC directly** | No translation needed, but I/O performance over 9p needs separate measurement before calling it usable |
 
 **Current expectation is (a) or (b).** Since wslc runs containers inside a WSL2 VM it presumably has some Linux path representation, which favors (a) — but **no implementation decision gets made without confirming this.**
+
+### 3.2a What wslc's source says (branch (a) is out)
+
+The expectation above was wrong, and wrong in the worst possible way. Reading wslc's own source:
+
+- a `-v` source is resolved with **`GetFullPathNameW`** — i.e. as a **Windows** path. `/home/u/proj` is not a Linux path to wslc, it is a rooted Windows path, and resolves against the current drive as `C:\home\u\proj`
+- a source that **does not exist is not an error**: wslc mounts an **empty directory** (`/mnt/<GUID>`) and the container starts normally
+
+Branch (a) therefore did not merely fail — it failed *silently*. A project on the WSL filesystem (where most Rails work lives) got `sync.source` and `volumes:` translated into paths that exist nowhere, and the container came up with none of the project in it and nothing printed to explain it. There is no error message to search for, so there is no way for the person hitting it to get out.
+
+**So the implementation is branch (b):**
+
+- `WslPath.ForWslc` refuses a WSL-side path with a message that names the setting, the path, and the fix ("move the project onto the Windows filesystem"), rather than translating it
+- `wip doctor` reports the project's location as a `[FAIL]` for the same reason, and `wip up` / `wip run` warn about `volumes:` — which wip passes through verbatim, so wslc resolves those itself and the refusal never sees them
+- the build context is **not** affected and is not run through `ForWslc` at all: §3.3 stages it into a Windows-local cache and hands wslc `"."`, so a WSL-side context works and must keep working
+
+This is source reading, not a measurement, so the other two branches stay reachable through the `WIP_WSL_PATH` environment variable — `unc` passes the UNC path through (branch (c)), `linux` restores the old translation (branch (a)) — and Spike 1 below still has to run. Whichever branch it confirms becomes the default, and `ForWslc` is still the only function that changes.
 
 ### 3.3 Stage the build context locally, always
 
@@ -455,9 +473,9 @@ Three files are required: version, installer, and locale manifests.
 **🔴 Spike 1: path model (highest priority — other decisions depend on it)**
 
 - [ ] Measure the working directory a Windows exe actually receives when launched from WSL2 bash (is it UNC, and in which form?)
-- [ ] Pass (a) Linux paths, (b) Windows-local paths, and (c) UNC paths to `wslc.exe run -v` and **measure which are accepted**
+- [ ] Pass (a) Linux paths, (b) Windows-local paths, and (c) UNC paths to `wslc.exe run -v` and **measure which are accepted** — including whether a non-existent source really does mount empty rather than fail (§3.2a)
 - [ ] Check `wslc.exe build` behavior with a UNC cwd
-- [ ] → Settle the approach via the §3.2 decision tree. **If (b), lock in the "projects live on the Windows filesystem" constraint and document it in the README and wiki**
+- [ ] → Settle the approach via the §3.2 decision tree. **(b) is what ships today on the strength of §3.2a; measuring it confirms the constraint or replaces the default in `WslPath.ForWslc`**
 
 **🔴 Spike 2: interactive terminal**
 
@@ -544,7 +562,7 @@ Close out what golden tests can't reach. Run **from both PowerShell and WSL2 bas
 
 | Risk | Impact | Mitigation |
 |---|---|---|
-| 🔴 **wslc rejects bind mounts of WSL-side paths** | **High** | Settle first in Phase 0 Spike 1. If (b), document "projects live on the Windows filesystem" as a constraint. **This outcome may require rethinking the purpose of `sync:` itself** |
+| 🔴 **wslc rejects bind mounts of WSL-side paths** | **High** | Per §3.2a this is what wslc's source says, and it *accepts* them into an empty mount rather than rejecting them — so wip refuses the WSL filesystem itself and documents "projects live on the Windows filesystem" as a constraint. Phase 0 Spike 1 still confirms it. **This outcome may require rethinking the purpose of `sync:` itself** |
 | **Walking files over UNC is too slow for large trees** | Medium | Take attributes from enumeration (§3.3). Measure in Phase 4; if inadequate, consider pushing the walk itself over to wslc/wsl.exe |
 | **An exe launched from WSL bash has no console fit for interaction** | Medium | Phase 0 Spike 2. Fall back to ConPTY (§4.2 option B) if needed |
 | **Some library doesn't work under AOT** | Medium | Phase 0 Spike 3 exercises every dependency up front. Fallbacks exist: hand-rolled YAML parser, hand-rolled CLI parser |
@@ -554,7 +572,7 @@ Close out what golden tests can't reach. Run **from both PowerShell and WSL2 bas
 
 ### To confirm from primary sources before starting
 
-1. **wslc.exe's path acceptance rules** — §3. Nothing in this repository answers it; it needs hands-on measurement
+1. **wslc.exe's path acceptance rules** — §3. wslc's source answers it (§3.2a: `GetFullPathNameW`, and an empty mount for a source that does not exist); it still needs hands-on measurement to confirm
 2. **.NET version** — net10.0 (LTS) is assumed; confirm support status at kickoff
 3. **System.CommandLine's current version and real AOT status** — particularly whether the unknown-command fallback is expressible cleanly
 4. **YamlDotNet's AOT track record** — zero reflection warnings via the representation model?
@@ -570,5 +588,5 @@ Close out what golden tests can't reach. Run **from both PowerShell and WSL2 bas
 
 - **Going Windows-only cut the port by roughly 20–30%.** The openpty, flock, and UnixFileMode P/Invokes, `/proc` parsing, the `Gem.win_platform?` branches, and the Linux RIDs with their separate distribution path all disappear.
 - **Accepting breaking changes and moving Ruby out avoids the largest liability: maintaining two implementations in parallel.** The one prerequisite is extracting the golden fixtures before it goes (Phase 1).
-- **One genuinely hard problem remains: the path model (§3).** Moving execution to the Windows side changes the meaning of all three places that hand wslc a host absolute path — `sync.source`, `volumes:`, and the build context. The build context is solved by staging locally at all times, but **the two bind-mount sites can't be settled until wslc's real behavior is measured.**
+- **One genuinely hard problem remains: the path model (§3).** Moving execution to the Windows side changes the meaning of all three places that hand wslc a host absolute path — `sync.source`, `volumes:`, and the build context. The build context is solved by staging locally at all times; for the two bind-mount sites, wslc's source (§3.2a) says WSL-side paths cannot work and fail without saying so, **so wip refuses them out loud pending a measurement rather than translating them into silence.**
 - **How to proceed:** settle the path model and get the distribution path working in Phase 0; extract the golden fixtures before Ruby leaves. With those two done, the rest is a mechanical port.

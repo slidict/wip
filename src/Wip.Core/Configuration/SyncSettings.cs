@@ -104,7 +104,7 @@ public sealed class SyncSettings
     public string Source =>
         resolvedSource ??= basePath is null
             ? rawSource
-            : WslPath.ForWslc(Path.GetFullPath(Path.Combine(basePath, rawSource)));
+            : WslPath.ForWslc(Path.GetFullPath(Path.Combine(basePath, rawSource)), "sync.source");
 
     /// <summary>
     /// What <c>-v</c> specs the main container needs: the source read-only, and the named

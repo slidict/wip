@@ -1,4 +1,3 @@
-using Wip.Platform;
 using Wip.Yaml;
 
 namespace Wip.Compose;
@@ -239,10 +238,17 @@ public sealed class ComposeFile
     /// <c>build.context</c> is relative to compose.yml's own directory — Compose's own rule —
     /// not wherever wip happens to be invoked from.
     /// </summary>
+    /// <remarks>
+    /// This stays a host path in the host's own spelling, UNC included: wslc never sees it.
+    /// <c>BuildContext</c> reads the tree itself and stages it into a Windows-local cache,
+    /// and the build then runs from there with <c>context: "."</c> (§3.3 of the migration
+    /// plan). Putting it through <c>WslPath.ForWslc</c> would refuse — or, before that,
+    /// silently mistranslate — a WSL-side context that staging handles perfectly well.
+    /// </remarks>
     private string ResolveContext(string raw)
     {
         var baseDirectory = Path.GetDirectoryName(Path.GetFullPath(path)) ?? ".";
-        return WslPath.ForWslc(Path.GetFullPath(Path.Combine(baseDirectory, raw)));
+        return Path.GetFullPath(Path.Combine(baseDirectory, raw));
     }
 
     /// <summary>
