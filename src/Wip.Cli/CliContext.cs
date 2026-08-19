@@ -623,11 +623,12 @@ internal sealed partial class CliContext
     /// <c>volumes:</c> entries reach wslc exactly as they were written — <c>.:/app</c>
     /// resolved against wip's own UNC working directory — so this warning is the only thing
     /// standing between such a project and a container that comes up empty in silence.
+    /// <c>WIP_WSL_PATH</c> deliberately does not silence it: that variable only changes what
+    /// <c>sync.source</c> resolves to, and rewrites no <c>volumes:</c> entry.
     /// </summary>
     private void WarnWslProject()
     {
-        if (!string.IsNullOrEmpty(System.Environment.GetEnvironmentVariable(WslPath.ModeVariable))
-            || Config.Path is null)
+        if (Config.Path is null)
         {
             return;
         }

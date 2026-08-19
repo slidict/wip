@@ -23,10 +23,10 @@ namespace Wip.Platform;
 /// silently empty mount — no message, nothing to search for.
 /// </para>
 /// <para>
-/// So this implements branch (b) instead: a WSL-side path is refused with an explanation
-/// rather than translated into something that fails quietly. The refusal is what a project
-/// on the WSL filesystem hits today; the constraint it states — bind mounts need the project
-/// on the Windows filesystem — is the one branch (b) says has to be documented.
+/// That rules branch (a) out. It does not establish branch (c): a UNC path does resolve, and
+/// does exist, so whether wslc can mount one into the VM is simply unmeasured. Refusing a
+/// WSL-side path with an explanation is therefore the safe default — it states the constraint
+/// branch (b) says has to be documented, and it fails in the open instead of quietly.
 /// </para>
 /// <para>
 /// The finding is source reading, not a measurement on real hardware, so
@@ -111,14 +111,15 @@ public static partial class WslPath
     }
 
     private static string Refusal(string label, string path) =>
-        $"{label} is on the WSL filesystem ({path}), which wslc cannot bind-mount: it " +
+        $"{label} is on the WSL filesystem ({path}), which wip will not hand to wslc: wslc " +
         "resolves a -v source as a Windows path, and mounts an empty directory instead of " +
-        "failing when that path does not exist — so the container would come up with none " +
-        "of your files in it and no error to explain why. Move the project onto the Windows " +
-        "filesystem (C:\\src\\myproject, say) and run wip from there. If you are measuring " +
-        $"what wslc really accepts: {ModeVariable}=unc hands it the UNC path unchanged and " +
-        $"{ModeVariable}=linux restores wip's old /home/... translation (see " +
-        "docs/csharp-migration-plan.md §3).";
+        "failing when that path does not exist — so wip's old translation of this to " +
+        "/home/... left the container with none of your files in it and nothing to explain " +
+        "why. Whether wslc can mount the UNC path itself has not been measured, so refusing " +
+        "is the safe default. Move the project onto the Windows filesystem " +
+        "(C:\\src\\myproject, say) and run wip from there — or, to measure it: " +
+        $"{ModeVariable}=unc hands wslc the UNC path unchanged and {ModeVariable}=linux " +
+        "restores the old translation (see docs/csharp-migration-plan.md §3).";
 
     // Both spellings are in circulation: \\wsl$\ predates \\wsl.localhost\ and still
     // resolves, so a working directory can arrive as either.

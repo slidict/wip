@@ -218,9 +218,10 @@ public sealed class Doctor
         }
 
         results.Add(new Result(Level.Fail,
-            $"Project is on the WSL filesystem ({directory}): wslc bind mounts " +
-            "(volumes:, sync.source) cannot reach it, and mount empty rather than " +
-            "failing. Move the project onto the Windows filesystem, e.g. C:\\src\\myproject"));
+            $"Project is on the WSL filesystem ({directory}): wslc resolves a bind-mount " +
+            "source as a Windows path and mounts an empty directory rather than failing, so " +
+            "sync.source is refused and volumes: entries can mount empty. Move the project " +
+            "onto the Windows filesystem, e.g. C:\\src\\myproject"));
     }
 
     private static void CheckSync(Config config, List<Result> results)

@@ -128,13 +128,15 @@ The expectation above was wrong, and wrong in the worst possible way. Reading ws
 
 Branch (a) therefore did not merely fail — it failed *silently*. A project on the WSL filesystem (where most Rails work lives) got `sync.source` and `volumes:` translated into paths that exist nowhere, and the container came up with none of the project in it and nothing printed to explain it. There is no error message to search for, so there is no way for the person hitting it to get out.
 
-**So the implementation is branch (b):**
+**What this does and does not settle.** It disproves branch (a): a translated Linux path is a Windows path to wslc, and a wrong one. It says nothing about branch (c) — a UNC path *does* resolve through `GetFullPathNameW`, and *does* exist, so whether wslc can mount one into the VM is still unmeasured, and this section is not a finding that it cannot.
 
-- `WslPath.ForWslc` refuses a WSL-side path with a message that names the setting, the path, and the fix ("move the project onto the Windows filesystem"), rather than translating it
+**So the implementation is branch (b), as the safe default rather than as a verdict:**
+
+- `WslPath.ForWslc` refuses a WSL-side path with a message that names the setting, the path, the fix ("move the project onto the Windows filesystem"), and the fact that the direct-UNC route is unmeasured — rather than translating it into something known to be wrong
 - `wip doctor` reports the project's location as a `[FAIL]` for the same reason, and `wip up` / `wip run` warn about `volumes:` — which wip passes through verbatim, so wslc resolves those itself and the refusal never sees them
 - the build context is **not** affected and is not run through `ForWslc` at all: §3.3 stages it into a Windows-local cache and hands wslc `"."`, so a WSL-side context works and must keep working
 
-This is source reading, not a measurement, so the other two branches stay reachable through the `WIP_WSL_PATH` environment variable — `unc` passes the UNC path through (branch (c)), `linux` restores the old translation (branch (a)) — and Spike 1 below still has to run. Whichever branch it confirms becomes the default, and `ForWslc` is still the only function that changes.
+This is source reading, not a measurement, so the other two branches stay reachable through the `WIP_WSL_PATH` environment variable — `unc` passes the UNC path through (branch (c)), `linux` restores the old translation (branch (a)) — and Spike 1 below still has to run. `WIP_WSL_PATH` changes only what `sync.source` resolves to; it rewrites no `volumes:` entry, so the `wip up` / `wip run` warning stands whatever it is set to. Whichever branch the spike confirms becomes the default, and `ForWslc` is still the only function that changes.
 
 ### 3.3 Stage the build context locally, always
 
@@ -562,7 +564,7 @@ Close out what golden tests can't reach. Run **from both PowerShell and WSL2 bas
 
 | Risk | Impact | Mitigation |
 |---|---|---|
-| 🔴 **wslc rejects bind mounts of WSL-side paths** | **High** | Per §3.2a this is what wslc's source says, and it *accepts* them into an empty mount rather than rejecting them — so wip refuses the WSL filesystem itself and documents "projects live on the Windows filesystem" as a constraint. Phase 0 Spike 1 still confirms it. **This outcome may require rethinking the purpose of `sync:` itself** |
+| 🔴 **wslc cannot usefully bind-mount WSL-side paths** | **High** | wslc does not *reject* a bad source — per §3.2a it mounts an empty directory — so wip refuses the WSL filesystem itself and documents "projects live on the Windows filesystem" as a constraint. Whether the direct-UNC route works is still open, and Phase 0 Spike 1 decides it. **This outcome may require rethinking the purpose of `sync:` itself** |
 | **Walking files over UNC is too slow for large trees** | Medium | Take attributes from enumeration (§3.3). Measure in Phase 4; if inadequate, consider pushing the walk itself over to wslc/wsl.exe |
 | **An exe launched from WSL bash has no console fit for interaction** | Medium | Phase 0 Spike 2. Fall back to ConPTY (§4.2 option B) if needed |
 | **Some library doesn't work under AOT** | Medium | Phase 0 Spike 3 exercises every dependency up front. Fallbacks exist: hand-rolled YAML parser, hand-rolled CLI parser |
@@ -588,5 +590,5 @@ Close out what golden tests can't reach. Run **from both PowerShell and WSL2 bas
 
 - **Going Windows-only cut the port by roughly 20–30%.** The openpty, flock, and UnixFileMode P/Invokes, `/proc` parsing, the `Gem.win_platform?` branches, and the Linux RIDs with their separate distribution path all disappear.
 - **Accepting breaking changes and moving Ruby out avoids the largest liability: maintaining two implementations in parallel.** The one prerequisite is extracting the golden fixtures before it goes (Phase 1).
-- **One genuinely hard problem remains: the path model (§3).** Moving execution to the Windows side changes the meaning of all three places that hand wslc a host absolute path — `sync.source`, `volumes:`, and the build context. The build context is solved by staging locally at all times; for the two bind-mount sites, wslc's source (§3.2a) says WSL-side paths cannot work and fail without saying so, **so wip refuses them out loud pending a measurement rather than translating them into silence.**
+- **One genuinely hard problem remains: the path model (§3).** Moving execution to the Windows side changes the meaning of all three places that hand wslc a host absolute path — `sync.source`, `volumes:`, and the build context. The build context is solved by staging locally at all times; for the two bind-mount sites, wslc's source (§3.2a) shows that a bad source fails without saying so and that translating to Linux paths produces exactly that, **so wip refuses WSL-side paths out loud as a precaution while the direct-UNC route is measured, rather than translating them into silence.**
 - **How to proceed:** settle the path model and get the distribution path working in Phase 0; extract the golden fixtures before Ruby leaves. With those two done, the rest is a mechanical port.
