@@ -93,15 +93,21 @@ jobs:
           TAG: ${{ steps.version.outputs.tag }}
         run: |
           set -euo pipefail
-          tagged_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" --jq .object.sha 2>/dev/null || true)
-          if [ -z "$tagged_sha" ]; then
+
+          # Branch on the exit status, not on whether the output is empty: an error response
+          # still prints its body on stdout and skips --jq, so a tag that does not exist yet
+          # would otherwise read as a tag pointing at `{"message":"Not Found",...}` -- which is
+          # never $GITHUB_SHA, so the first release of every version failed instead of tagging.
+          if tagged_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" --jq .object.sha 2>/dev/null); then
+            if [ "$tagged_sha" != "$GITHUB_SHA" ]; then
+              echo "::error::$TAG already points to $tagged_sha, not $GITHUB_SHA."
+              exit 1
+            fi
+          else
             gh api "repos/$GITHUB_REPOSITORY/git/refs" \
               --method POST \
               -f ref="refs/tags/$TAG" \
               -f sha="$GITHUB_SHA"
-          elif [ "$tagged_sha" != "$GITHUB_SHA" ]; then
-            echo "::error::$TAG already points to $tagged_sha, not $GITHUB_SHA."
-            exit 1
           fi
 
   # Windows only because Native AOT cannot cross-compile between operating systems. Nothing
