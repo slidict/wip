@@ -1,9 +1,8 @@
 name: Release
 
 # Version-driven, the way the gem released: the version in the project file is the trigger,
-# not a tag anyone types. Every merge to main asks "is this version already out?", and only a
-# merge that changes it releases anything. release-drafter creates the tag when it publishes,
-# so there is no tag to push by hand and no way for a tag and a version to disagree.
+# not a tag anyone types. Every merge to main compares that file with the latest published
+# release, and only a merge that changes it creates a tag and releases anything.
 on:
   push:
     branches:
@@ -19,18 +18,22 @@ permissions:
 
 jobs:
   check:
-    name: Check whether this version is released
+    name: Check for a version change
     runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
 
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
-      needed: ${{ steps.released.outputs.needed }}
+      needed: ${{ steps.changed.outputs.needed }}
 
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       # Directory.Build.props is the single source of truth: the SDK stamps this into the
@@ -48,37 +51,57 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=v$version" >> "$GITHUB_OUTPUT"
 
-      - name: Check for an existing release
-        id: released
+      # A version bump is deliberately just a file change. At release time, compare that file
+      # with the commit selected by the latest published release instead of treating the draft
+      # release (or a prematurely-created tag) as the source of truth.
+      - name: Check for a version change
+        id: changed
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          previous=$(gh release list --exclude-drafts --limit 1 --json tagName --jq '.[0].tagName // ""')
+          if [ -n "$previous" ] && git diff --quiet "$previous" HEAD -- Directory.Build.props; then
+            # "Already released" has to mean the downloads are there too. Publishing can make a
+            # release immutable, so one that went out without its artifacts cannot be repaired by
+            # re-running this workflow -- the only way out is a corrected version. Say that here
+            # rather than reporting nothing to do and leaving the release uninstallable.
+            has_archive=$(gh release view "$previous" --json assets \
+              --jq 'any(.assets[]; .name | endswith(".zip"))')
+            has_checksums=$(gh release view "$previous" --json assets \
+              --jq 'any(.assets[]; .name == "SHA256SUMS")')
+
+            if [ "$has_archive" != "true" ] || [ "$has_checksums" != "true" ]; then
+              echo "::error::$previous is published without its downloads, and a published release cannot be repaired. Bump <Version> in Directory.Build.props to release a corrected version."
+              exit 1
+            fi
+
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+            echo "Directory.Build.props has not changed since $previous, which is published with its artifacts; nothing to release." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+            echo "Directory.Build.props changed since ${previous:-the repository began}; releasing the new version." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # Tag only after the version comparison decides to release. Re-runs accept the same tag
+      # at the same commit, but reject a tag that already points somewhere else.
+      - name: Tag release commit
+        if: steps.changed.outputs.needed == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.version.outputs.tag }}
         run: |
           set -euo pipefail
-
-          # changelog.yml keeps a draft release updated on every merge, and `gh release view`
-          # matches drafts too, so a draft does not count as released.
-          is_draft=$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null || echo "")
-
-          # Notes are published before the artifacts are attached, so a failed upload leaves a
-          # release that exists but cannot be installed. "Published" alone would then read as
-          # done and skip the repair, so a release only counts as finished once its downloads
-          # are actually there -- which makes re-running this workflow fix it.
-          has_archive=$(gh release view "$TAG" --json assets \
-            --jq 'any(.assets[]; .name | endswith(".zip"))' 2>/dev/null || echo false)
-          has_checksums=$(gh release view "$TAG" --json assets \
-            --jq 'any(.assets[]; .name == "SHA256SUMS")' 2>/dev/null || echo false)
-
-          if [ "$is_draft" = "false" ] && [ "$has_archive" = "true" ] && [ "$has_checksums" = "true" ]; then
-            echo "needed=false" >> "$GITHUB_OUTPUT"
-            echo "$TAG is already published with its artifacts; nothing to do." >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "needed=true" >> "$GITHUB_OUTPUT"
-            if [ "$is_draft" = "false" ]; then
-              echo "$TAG is published but missing artifacts; re-running the release." >> "$GITHUB_STEP_SUMMARY"
-            else
-              echo "Releasing $TAG." >> "$GITHUB_STEP_SUMMARY"
-            fi
+          tagged_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" --jq .object.sha 2>/dev/null || true)
+          if [ -z "$tagged_sha" ]; then
+            gh api "repos/$GITHUB_REPOSITORY/git/refs" \
+              --method POST \
+              -f ref="refs/tags/$TAG" \
+              -f sha="$GITHUB_SHA"
+          elif [ "$tagged_sha" != "$GITHUB_SHA" ]; then
+            echo "::error::$TAG already points to $tagged_sha, not $GITHUB_SHA."
+            exit 1
           fi
 
   # Windows only because Native AOT cannot cross-compile between operating systems. Nothing
@@ -175,13 +198,37 @@ jobs:
           name: release-dist
           path: dist
 
-      # Publishes the draft that changelog.yml has been accumulating on every merge, and
-      # creates the tag while doing it. The draft is what the decision to release was made
-      # from, so the release says the same thing it did.
-      #
-      # Its own tag-template guesses the next version; the explicit tag and name override that
-      # with the version actually being released.
-      - name: Publish release notes
+      # Attach artifacts to the running changelog draft before publishing it. The draft is the
+      # one release-drafter keeps updated, so it is addressed by the name its name-template gives
+      # it in .github/release-drafter.yml rather than by position in the release list: a manual
+      # or stale draft must not be the thing that receives the artifacts and gets published under
+      # the release tag. Its tag is whatever next-patch guess release-drafter made; the actual
+      # version tag was created by the check job and is supplied when the draft is published.
+      - name: Upload release artifacts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          drafts=$(gh release list --limit 100 --json tagName,name,isDraft \
+            --jq '[.[] | select(.isDraft and .name == "Unreleased") | .tagName]')
+          count=$(echo "$drafts" | jq 'length')
+
+          if [ "$count" -eq 0 ]; then
+            echo "::error::No draft release named \"Unreleased\" holds the accumulated release notes."
+            exit 1
+          fi
+
+          if [ "$count" -gt 1 ]; then
+            echo "::error::$count draft releases are named \"Unreleased\" ($(echo "$drafts" | jq -r 'join(", ")')); cannot tell which one holds the release notes."
+            exit 1
+          fi
+
+          draft_tag=$(echo "$drafts" | jq -r '.[0]')
+          gh release upload "$draft_tag" dist/*.zip dist/SHA256SUMS --clobber
+
+      # Publish only after every artifact is attached. The explicit tag and name replace the
+      # draft's guessed next-patch values with the version read from Directory.Build.props.
+      - name: Publish release
         uses: release-drafter/release-drafter@34d80673e067bdc0c24568d3af899c216adcfaa9 # v7
         with:
           config-name: release-drafter.yml
@@ -190,19 +237,6 @@ jobs:
           name: ${{ needs.check.outputs.tag }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      # Attaches the artifacts to the release the step above just published. Publishing first
-      # means a failure here leaves a release without downloads; the check job treats that as
-      # unfinished rather than done, so re-running this workflow repairs it. Uploading before
-      # publishing instead would put two actions in charge of the same draft, which is a
-      # worse thing to get wrong.
-      - name: Upload release artifacts
-        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
-        with:
-          tag_name: ${{ needs.check.outputs.tag }}
-          files: |
-            dist/*.zip
-            dist/SHA256SUMS
 
   # Called rather than triggered: a release created with GITHUB_TOKEN does not raise
   # `release: published` for another workflow, so an event-based handoff would leave every
