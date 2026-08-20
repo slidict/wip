@@ -236,7 +236,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          drafts=$(gh release list --limit 100 --json tagName,name,isDraft \
+          # This job intentionally has no checkout, so gh cannot infer the repository from
+          # a local .git directory. Address it explicitly for every `gh release` command.
+          drafts=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --json tagName,name,isDraft \
             --jq '[.[] | select(.isDraft and .name == "Unreleased") | .tagName]')
           count=$(echo "$drafts" | jq 'length')
 
@@ -251,7 +253,8 @@ jobs:
           fi
 
           draft_tag=$(echo "$drafts" | jq -r '.[0]')
-          gh release upload "$draft_tag" dist/*.zip dist/SHA256SUMS --clobber
+          gh release upload "$draft_tag" dist/*.zip dist/SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" --clobber
 
       # Publish only after every artifact is attached. The explicit tag and name replace the
       # draft's guessed next-patch values with the version read from Directory.Build.props.
