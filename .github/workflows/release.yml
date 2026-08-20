@@ -93,16 +93,43 @@ jobs:
           TAG: ${{ steps.version.outputs.tag }}
         run: |
           set -euo pipefail
-          tagged_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" --jq .object.sha 2>/dev/null || true)
-          if [ -z "$tagged_sha" ]; then
-            gh api "repos/$GITHUB_REPOSITORY/git/refs" \
-              --method POST \
-              -f ref="refs/tags/$TAG" \
-              -f sha="$GITHUB_SHA"
-          elif [ "$tagged_sha" != "$GITHUB_SHA" ]; then
-            echo "::error::$TAG already points to $tagged_sha, not $GITHUB_SHA."
-            exit 1
-          fi
+
+          # Read the status rather than the exit code. Absence is one specific answer -- 404 --
+          # and the rest are not: a failed lookup must not be answered by creating a tag off the
+          # back of it. Neither can absence be read from empty output, because an error response
+          # prints its body on stdout and skips --jq, which is what made a missing tag look like
+          # a tag pointing at `{"message":"Not Found",...}` and failed the first release of every
+          # version. Keep the response for the message, too: `2>/dev/null` discarded the one line
+          # that said which case this was.
+          set +e
+          response=$(gh api --include "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" 2>&1)
+          set -e
+
+          status=$(printf '%s\n' "$response" \
+            | awk '/^HTTP\// && $2 ~ /^[0-9][0-9][0-9]$/ { status = $2 } END { print status }')
+
+          case "$status" in
+            200)
+              # Re-read the ref on its own rather than picking the body back out of the headers.
+              # This only runs when the tag is already there, which is a re-run of a release.
+              tagged_sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" --jq .object.sha)
+              if [ "$tagged_sha" != "$GITHUB_SHA" ]; then
+                echo "::error::$TAG already points to $tagged_sha, not $GITHUB_SHA."
+                exit 1
+              fi
+              ;;
+            404)
+              gh api "repos/$GITHUB_REPOSITORY/git/refs" \
+                --method POST \
+                -f ref="refs/tags/$TAG" \
+                -f sha="$GITHUB_SHA"
+              ;;
+            *)
+              echo "::error::Could not look up $TAG: the lookup answered ${status:-no HTTP status}."
+              printf '%s\n' "$response" >&2
+              exit 1
+              ;;
+          esac
 
   # Windows only because Native AOT cannot cross-compile between operating systems. Nothing
   # else in the release needs it, and the publish job below exists because one of those other

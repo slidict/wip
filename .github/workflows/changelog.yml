@@ -12,12 +12,54 @@ permissions:
   contents: write
   pull-requests: read
 
+# The same group release.yml uses. Both workflows mutate the one draft release -- this one
+# rewrites and deletes, that one attaches a release's downloads and publishes -- and they are
+# started by the same push, so without a shared group this can delete or rewrite the draft the
+# release is in the middle of using. Queued rather than cancelled: a run that waits still does
+# its work, and the notes are rebuilt from scratch each time anyway.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
   changelog:
     name: Update draft release notes
     runs-on: ubuntu-latest
 
     steps:
+      # release-drafter picks the first draft it finds rather than one identified by name, while
+      # release.yml attaches a release's downloads to the draft named Unreleased. Those two agree
+      # only while one draft exists; a second one can send the downloads to a release that is
+      # never published. Two merges landing together can race this workflow into creating a
+      # second draft, and a draft can also be made by hand, so collapse them here -- before the
+      # notes below are written -- keeping the most recent.
+      #
+      # Deleting costs nothing: the step below rebuilds the notes from the pull requests merged
+      # since the last published release, so whichever draft survives is rewritten in full.
+      # Releases are addressed by id because racing drafts can share a tag name, and deleting by
+      # tag would then be a coin toss between the draft to drop and the one to keep.
+      - name: Remove superseded drafts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          # Every page, not just the first: the API does not promise an order for this list, so
+          # a draft can sit anywhere in it. --paginate emits one array per page and cannot be
+          # combined with --jq, so the pages are slurped into one array here and flattened.
+          superseded=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            | jq -rs '[.[][] | select(.draft)] | sort_by(.created_at) | reverse | .[1:] | .[].id')
+
+          if [ -z "$superseded" ]; then
+            echo "No superseded drafts to remove."
+            exit 0
+          fi
+
+          while IFS= read -r id; do
+            echo "Deleting superseded draft release $id"
+            gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/$id"
+          done <<< "$superseded"
+
       - name: Update draft release notes
         uses: release-drafter/release-drafter@34d80673e067bdc0c24568d3af899c216adcfaa9 # v7
         with:
