@@ -234,6 +234,11 @@ jobs:
       - name: Upload release artifacts
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # `gh release` subcommands resolve which repository they act on from the local git
+          # remote, and this job deliberately has no checkout, so they failed with "not a git
+          # repository" before reaching the API. GH_REPO names the repository directly, which
+          # is what the `gh api` calls elsewhere get from spelling out repos/$GITHUB_REPOSITORY.
+          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           drafts=$(gh release list --limit 100 --json tagName,name,isDraft \
