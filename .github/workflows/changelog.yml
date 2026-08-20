@@ -12,6 +12,15 @@ permissions:
   contents: write
   pull-requests: read
 
+# The same group release.yml uses. Both workflows mutate the one draft release -- this one
+# rewrites and deletes, that one attaches a release's downloads and publishes -- and they are
+# started by the same push, so without a shared group this can delete or rewrite the draft the
+# release is in the middle of using. Queued rather than cancelled: a run that waits still does
+# its work, and the notes are rebuilt from scratch each time anyway.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
   changelog:
     name: Update draft release notes
@@ -35,8 +44,11 @@ jobs:
         run: |
           set -euo pipefail
 
-          superseded=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
-            --jq '[.[] | select(.draft)] | sort_by(.created_at) | reverse | .[1:] | .[].id')
+          # Every page, not just the first: the API does not promise an order for this list, so
+          # a draft can sit anywhere in it. --paginate emits one array per page and cannot be
+          # combined with --jq, so the pages are slurped into one array here and flattened.
+          superseded=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            | jq -rs '[.[][] | select(.draft)] | sort_by(.created_at) | reverse | .[1:] | .[].id')
 
           if [ -z "$superseded" ]; then
             echo "No superseded drafts to remove."
