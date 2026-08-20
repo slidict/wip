@@ -63,8 +63,22 @@ jobs:
 
           previous=$(gh release list --exclude-drafts --limit 1 --json tagName --jq '.[0].tagName // ""')
           if [ -n "$previous" ] && git diff --quiet "$previous" HEAD -- Directory.Build.props; then
+            # "Already released" has to mean the downloads are there too. Publishing can make a
+            # release immutable, so one that went out without its artifacts cannot be repaired by
+            # re-running this workflow -- the only way out is a corrected version. Say that here
+            # rather than reporting nothing to do and leaving the release uninstallable.
+            has_archive=$(gh release view "$previous" --json assets \
+              --jq 'any(.assets[]; .name | endswith(".zip"))')
+            has_checksums=$(gh release view "$previous" --json assets \
+              --jq 'any(.assets[]; .name == "SHA256SUMS")')
+
+            if [ "$has_archive" != "true" ] || [ "$has_checksums" != "true" ]; then
+              echo "::error::$previous is published without its downloads, and a published release cannot be repaired. Bump <Version> in Directory.Build.props to release a corrected version."
+              exit 1
+            fi
+
             echo "needed=false" >> "$GITHUB_OUTPUT"
-            echo "Directory.Build.props has not changed since $previous; nothing to release." >> "$GITHUB_STEP_SUMMARY"
+            echo "Directory.Build.props has not changed since $previous, which is published with its artifacts; nothing to release." >> "$GITHUB_STEP_SUMMARY"
           else
             echo "needed=true" >> "$GITHUB_OUTPUT"
             echo "Directory.Build.props changed since ${previous:-the repository began}; releasing the new version." >> "$GITHUB_STEP_SUMMARY"
@@ -184,21 +198,32 @@ jobs:
           name: release-dist
           path: dist
 
-      # Attach artifacts to the running changelog draft before publishing it. Address the draft
-      # by the tag release-drafter currently proposes; the actual version tag was created by the
-      # check job and is supplied when the draft is published below.
+      # Attach artifacts to the running changelog draft before publishing it. The draft is the
+      # one release-drafter keeps updated, so it is addressed by the name its name-template gives
+      # it in .github/release-drafter.yml rather than by position in the release list: a manual
+      # or stale draft must not be the thing that receives the artifacts and gets published under
+      # the release tag. Its tag is whatever next-patch guess release-drafter made; the actual
+      # version tag was created by the check job and is supplied when the draft is published.
       - name: Upload release artifacts
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          draft_tag=$(gh release list --limit 100 --json tagName,isDraft \
-            --jq '[.[] | select(.isDraft)][0].tagName // ""')
-          if [ -z "$draft_tag" ]; then
-            echo "::error::No draft release exists for the accumulated release notes."
+          drafts=$(gh release list --limit 100 --json tagName,name,isDraft \
+            --jq '[.[] | select(.isDraft and .name == "Unreleased") | .tagName]')
+          count=$(echo "$drafts" | jq 'length')
+
+          if [ "$count" -eq 0 ]; then
+            echo "::error::No draft release named \"Unreleased\" holds the accumulated release notes."
             exit 1
           fi
 
+          if [ "$count" -gt 1 ]; then
+            echo "::error::$count draft releases are named \"Unreleased\" ($(echo "$drafts" | jq -r 'join(", ")')); cannot tell which one holds the release notes."
+            exit 1
+          fi
+
+          draft_tag=$(echo "$drafts" | jq -r '.[0]')
           gh release upload "$draft_tag" dist/*.zip dist/SHA256SUMS --clobber
 
       # Publish only after every artifact is attached. The explicit tag and name replace the
