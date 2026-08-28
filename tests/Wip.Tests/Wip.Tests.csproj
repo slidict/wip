@@ -9,6 +9,13 @@
       reflection dependency would actually matter.
     -->
     <IsAotCompatible>false</IsAotCompatible>
+    <!--
+      xunit.v3 runs on Microsoft.Testing.Platform. Starting with the .NET 10 SDK, `dotnet
+      test` no longer bridges MTP projects through VSTest automatically, so this opts the
+      project in to the native MTP-based `dotnet test` experience instead.
+      https://aka.ms/dotnet-test-mtp-error
+    -->
+    <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
   </PropertyGroup>
 
   <ItemGroup>
