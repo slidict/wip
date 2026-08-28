@@ -34,7 +34,8 @@ jobs:
 
       # Directory.Build.props is the single source of truth for the version: the SDK stamps
       # it into the assembly, and the release workflow releases whatever version it finds
-      # here, creating the tag itself.
+      # here, creating the tag itself. The update step below mirrors that version into the
+      # Scoop manifest so its concrete install URL follows the release.
       - name: Calculate next version
         id: version
         env:
@@ -58,14 +59,29 @@ jobs:
           echo "current=$current" >> "$GITHUB_OUTPUT"
           echo "next=$major.$minor.$patch" >> "$GITHUB_OUTPUT"
 
-      - name: Update version
+      - name: Update versions
         env:
           CURRENT: ${{ steps.version.outputs.current }}
           NEXT: ${{ steps.version.outputs.next }}
         run: |
           set -euo pipefail
+          test "$(jq -r '.version' wip.json)" = "$CURRENT"
+
           sed -i "s|<Version>${CURRENT}</Version>|<Version>${NEXT}</Version>|" Directory.Build.props
           grep -q "<Version>${NEXT}</Version>" Directory.Build.props
+
+          jq --arg version "$NEXT" '
+            .version = $version
+            | .architecture["64bit"].url = "https://github.com/slidict/wip/releases/download/v\($version)/wip-\($version)-win-x64.zip"
+            | .architecture["64bit"].hash = "https://github.com/slidict/wip/releases/download/v\($version)/SHA256SUMS"
+          ' wip.json > wip.json.tmp
+          mv wip.json.tmp wip.json
+
+          test "$(jq -r '.version' wip.json)" = "$NEXT"
+          jq -e --arg version "$NEXT" '
+            .architecture["64bit"].url == "https://github.com/slidict/wip/releases/download/v\($version)/wip-\($version)-win-x64.zip"
+            and .architecture["64bit"].hash == "https://github.com/slidict/wip/releases/download/v\($version)/SHA256SUMS"
+          ' wip.json > /dev/null
 
       - name: Commit version bump
         env:
@@ -76,7 +92,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -B "bump-version-v${NEXT}"
-          git add Directory.Build.props
+          git add Directory.Build.props wip.json
           git commit -m "chore: bump version to v${NEXT}"
 
           # Passed on the command line rather than written to .git/config, so the
@@ -96,4 +112,4 @@ jobs:
             --base "${GITHUB_REF_NAME}" \
             --head "bump-version-v${NEXT}" \
             --title "chore: bump version to v${NEXT}" \
-            --body "Bump wip version to v${NEXT}. Merging this publishes v${NEXT}: the release workflow reads the version from Directory.Build.props, and creates the tag itself."
+            --body "Bump wip and its Scoop manifest to v${NEXT}. Merging this publishes v${NEXT}: the release workflow reads the version from Directory.Build.props, and creates the tag itself."

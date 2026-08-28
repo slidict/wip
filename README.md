@@ -62,7 +62,15 @@ key, every command's flags, guides, and troubleshooting — see the **[wip Wiki]
 Windows with WSL2 and Microsoft WSLC. There is no runtime to install: `wip.exe` is a
 self-contained Native AOT binary.
 
-Download and extract `wip-<version>-win-x64.zip` from
+Install directly from this repository with [Scoop](https://scoop.sh/):
+
+```powershell
+scoop install https://raw.githubusercontent.com/slidict/wip/main/wip.json
+```
+
+Scoop puts `wip.exe` on your PATH and can update it later with `scoop update wip`.
+
+Alternatively, install it manually: download and extract `wip-<version>-win-x64.zip` from
 [Releases](https://github.com/slidict/wip/releases), then add the directory holding `wip.exe`
 to your PATH.
 
