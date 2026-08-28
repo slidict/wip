@@ -17,7 +17,10 @@
     "architecture": {
       "64bit": {
         "url": "https://github.com/slidict/wip/releases/download/v$version/wip-$version-win-x64.zip",
-        "hash": "https://github.com/slidict/wip/releases/download/v$version/SHA256SUMS"
+        "hash": {
+          "url": "https://github.com/slidict/wip/releases/download/v$version/SHA256SUMS",
+          "regex": "$sha256\\s+$basename"
+        }
       }
     }
   }

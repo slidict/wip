@@ -268,6 +268,54 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # A Scoop manifest must contain the archive's digest, not a checksum-file URL. Keep
+      # the previous release installable until the new archive has been uploaded and
+      # published, then read back that release's checksum and update main atomically.
+      - name: Check out repository for Scoop manifest update
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.ref_name }}
+          persist-credentials: false
+
+      - name: Update Scoop manifest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.check.outputs.tag }}
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          set -euo pipefail
+          archive="wip-${VERSION}-win-x64.zip"
+          rm -rf scoop-release
+          mkdir scoop-release
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern SHA256SUMS --dir scoop-release
+
+          digest=$(awk -v archive="$archive" '$2 == archive { print tolower($1) }' scoop-release/SHA256SUMS)
+          if ! [[ "$digest" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::SHA256SUMS has no valid digest for $archive"
+            exit 1
+          fi
+
+          jq --arg version "$VERSION" --arg digest "$digest" '
+            .version = $version
+            | .architecture["64bit"].url = "https://github.com/slidict/wip/releases/download/v\($version)/wip-\($version)-win-x64.zip"
+            | .architecture["64bit"].hash = $digest
+          ' wip.json > wip.json.tmp
+          mv wip.json.tmp wip.json
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add wip.json
+          if git diff --cached --quiet; then
+            echo "Scoop manifest already describes v${VERSION}."
+            exit 0
+          fi
+          git commit -m "chore(scoop): update manifest for v${VERSION}"
+
+          header=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${header}" \
+            push origin "HEAD:${GITHUB_REF_NAME}"
+
   # Called rather than triggered: a release created with GITHUB_TOKEN does not raise
   # `release: published` for another workflow, so an event-based handoff would leave every
   # automated release unsubmitted with nothing to show for it.
