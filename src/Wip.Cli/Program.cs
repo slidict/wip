@@ -139,6 +139,7 @@ internal static class Program
         yield return init;
 
         yield return DoctorCommand(context);
+        yield return HelpCommand(context);
         yield return Simple("config", "Print the effective configuration", context, ctx => ctx.ShowConfig());
 
         yield return BuildCommand(context);
@@ -168,6 +169,60 @@ internal static class Program
         var command = new Command("doctor", "Diagnose the development environment") { url };
         command.SetAction(parsed => context(parsed).Doctor(parsed.GetValue(url)));
         return command;
+    }
+
+    private static Command HelpCommand(Func<ParseResult, CliContext> context)
+    {
+        var ai = new Option<bool>("--ai")
+        {
+            Description = "Ask a local AI server how to use wip instead of printing --help",
+        };
+        var url = AiUrlOption();
+        var question = new Argument<string[]>("question") { Arity = ArgumentArity.ZeroOrMore };
+        var command = new Command("help", "Show usage help (add --ai to ask a local AI server instead)")
+        {
+            ai, url, question,
+        };
+
+        command.SetAction(parsed =>
+        {
+            if (!parsed.GetValue(ai))
+            {
+                if (parsed.GetValue(url) is not null)
+                {
+                    throw new WipException("--url requires --ai");
+                }
+
+                if ((parsed.GetValue(question) ?? []).Length > 0)
+                {
+                    throw new WipException("a question requires --ai");
+                }
+
+                return ShowHelp();
+            }
+
+            return context(parsed).HelpAi(parsed.GetValue(url), parsed.GetValue(question) ?? []);
+        });
+
+        return command;
+    }
+
+    /// <summary>Prints the same text as <c>wip --help</c>, so <c>wip help</c> needs no text of
+    /// its own to keep in sync with the real command tree.</summary>
+    private static int ShowHelp()
+    {
+        var invocation = new InvocationConfiguration { EnableDefaultExceptionHandler = false };
+        return BuildRoot().Parse(["--help"]).Invoke(invocation);
+    }
+
+    /// <summary>The same output as <see cref="ShowHelp"/>, captured as text instead of printed,
+    /// so <c>wip help --ai</c> can hand it to the local AI server as grounding context.</summary>
+    internal static string HelpText()
+    {
+        var writer = new StringWriter();
+        var invocation = new InvocationConfiguration { EnableDefaultExceptionHandler = false, Output = writer };
+        BuildRoot().Parse(["--help"]).Invoke(invocation);
+        return writer.ToString();
     }
 
     private static Command Simple(

@@ -208,6 +208,56 @@ internal sealed partial class CliContext
         return 0;
     }
 
+    internal int HelpAi(string? url, IReadOnlyList<string> question)
+    {
+        var baseUrl = LocalAiProvider.ResolveBaseUrl(url);
+        if (!LocalAiProvider.IsAvailable(baseUrl))
+        {
+            throw new WipException(
+                $"{LocalAiProvider.NotFoundMessage(baseUrl)} Run `wip doctor` to check again.");
+        }
+
+        var model = LocalAiProvider.ResolveModel() ?? LocalAiProvider.DiscoverModel(baseUrl);
+        var asked = question.Count > 0 ? string.Join(' ', question) : ReadQuestion();
+        if (string.IsNullOrWhiteSpace(asked))
+        {
+            throw new WipException("A question is required");
+        }
+
+        Console.Error.WriteLine($"wip: asking {model} at {baseUrl}");
+        var answer = new LocalAiProvider(baseUrl, model).Generate(HelpAiPrompt(asked));
+        Console.WriteLine(answer);
+        return 0;
+    }
+
+    private static string ReadQuestion()
+    {
+        Console.Error.WriteLine(
+            "Ask wip how to do something, then press Enter twice (once after your question, " +
+            "once more on a blank line) to finish:");
+        var lines = new List<string>();
+        string? line;
+        while ((line = Console.ReadLine()) is not null && line.Length > 0)
+        {
+            lines.Add(line);
+        }
+
+        return string.Join(System.Environment.NewLine, lines);
+    }
+
+    private static string HelpAiPrompt(string question) => $$"""
+        You answer questions about how to use the wip CLI, a developer-friendly wrapper around
+        Microsoft WSLC. Answer only from the reference below; say plainly that it is not covered
+        there rather than guessing.
+
+        <wip-help>
+        {{Program.HelpText()}}
+        </wip-help>
+
+        Question:
+        {{question}}
+        """;
+
     internal int Doctor(string? url = null)
     {
         var results = new Doctor(Loader, Environment).Call(url);
