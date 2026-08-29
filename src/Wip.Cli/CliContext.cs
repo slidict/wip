@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Wip.Ai;
 using Wip.Build;
 using Wip.Compose;
 using Wip.Configuration;
@@ -131,9 +132,24 @@ internal sealed partial class CliContext
         }
     }
 
-    internal int Init(bool force, string? template)
+    internal int Init(bool force, string? template, bool ai = false, string? url = null)
     {
         var path = Path.GetFullPath(options.ConfigPath ?? ConfigLoader.Filename);
+        if (ai)
+        {
+            if (template is not null)
+            {
+                throw new WipException("--template cannot be combined with --ai");
+            }
+
+            return InitWithAi(path, url);
+        }
+
+        if (url is not null)
+        {
+            throw new WipException("--url requires --ai");
+        }
+
         if (File.Exists(path) && !force)
         {
             throw new WipException($"{path} already exists (use --force to overwrite)");
@@ -146,9 +162,55 @@ internal sealed partial class CliContext
         return 0;
     }
 
-    internal int Doctor()
+    private static int InitWithAi(string path, string? url)
     {
-        var results = new Doctor(Loader, Environment).Call();
+        var baseUrl = LocalAiProvider.ResolveBaseUrl(url);
+        if (!LocalAiProvider.IsAvailable(baseUrl))
+        {
+            throw new WipException(
+                $"{LocalAiProvider.NotFoundMessage(baseUrl)} Run `wip doctor` to check again.");
+        }
+
+        var model = LocalAiProvider.ResolveModel() ?? LocalAiProvider.DiscoverModel(baseUrl);
+
+        var directory = Path.GetDirectoryName(path) ?? Directory.GetCurrentDirectory();
+        Console.Error.WriteLine(
+            "Describe the development environment wip should run, then press Enter twice " +
+            "(once after your text, once more on a blank line) to finish:");
+        var lines = new List<string>();
+        string? line;
+        while ((line = Console.ReadLine()) is not null && line.Length > 0)
+        {
+            lines.Add(line);
+        }
+
+        var existing = File.Exists(path) ? File.ReadAllText(path) : null;
+        Console.Error.WriteLine($"wip: analyzing {directory}");
+        var project = new ProjectAnalyzer(directory).Analyze();
+        Console.Error.WriteLine($"wip: sending {project.Files.Count} selected project files to {model} at {baseUrl}");
+        var candidate = new WipAiGenerator(new LocalAiProvider(baseUrl, model)).Generate(
+            string.Join(System.Environment.NewLine, lines), project, existing, path);
+
+        Console.WriteLine(candidate);
+        Console.Error.Write(existing is null
+            ? "Save this wip.yml? [y/N] "
+            : "Replace the existing wip.yml with this update? [y/N] ");
+        var answer = Console.ReadLine();
+        if (!string.Equals(answer, "y", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(answer, "yes", StringComparison.OrdinalIgnoreCase))
+        {
+            Console.Error.WriteLine("wip: not saved");
+            return 0;
+        }
+
+        File.WriteAllText(path, candidate);
+        Console.Error.WriteLine($"wip: wrote {path}");
+        return 0;
+    }
+
+    internal int Doctor(string? url = null)
+    {
+        var results = new Doctor(Loader, Environment).Call(url);
         foreach (var result in results)
         {
             Console.WriteLine($"[{result.Level.ToString().ToUpperInvariant()}] {result.Message}");

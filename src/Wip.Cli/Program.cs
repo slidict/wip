@@ -1,4 +1,5 @@
 using System.CommandLine;
+using Wip.Ai;
 using Wip.Configuration;
 
 namespace Wip.Cli;
@@ -121,15 +122,23 @@ internal static class Program
         {
             Description = $"sync.exclude preset: {string.Join(", ", Initializer.TemplateLabels.Keys)} (default: none)",
         };
+        var ai = new Option<bool>("--ai")
+        {
+            Description = "Generate or update wip.yml from a natural-language request using a local AI server",
+        };
+        var url = AiUrlOption();
         var init = new Command("init", "Create a starter wip.yml (detects an existing compose file)")
         {
             force,
             template,
+            ai,
+            url,
         };
-        init.SetAction(parsed => context(parsed).Init(parsed.GetValue(force), parsed.GetValue(template)));
+        init.SetAction(parsed => context(parsed).Init(
+            parsed.GetValue(force), parsed.GetValue(template), parsed.GetValue(ai), parsed.GetValue(url)));
         yield return init;
 
-        yield return Simple("doctor", "Diagnose the development environment", context, ctx => ctx.Doctor());
+        yield return DoctorCommand(context);
         yield return Simple("config", "Print the effective configuration", context, ctx => ctx.ShowConfig());
 
         yield return BuildCommand(context);
@@ -146,6 +155,19 @@ internal static class Program
         yield return Simple("shell", "Open a shell in the configured container", context, ctx => ctx.Shell());
         yield return LogsCommand(context);
         yield return DispatchCommand(context);
+    }
+
+    private static Option<string?> AiUrlOption() => new("--url")
+    {
+        Description = $"Local AI server base URL for --ai (default: {LocalAiProvider.BaseUrlEnvironmentVariable} or {LocalAiProvider.DefaultBaseUrl})",
+    };
+
+    private static Command DoctorCommand(Func<ParseResult, CliContext> context)
+    {
+        var url = AiUrlOption();
+        var command = new Command("doctor", "Diagnose the development environment") { url };
+        command.SetAction(parsed => context(parsed).Doctor(parsed.GetValue(url)));
+        return command;
     }
 
     private static Command Simple(

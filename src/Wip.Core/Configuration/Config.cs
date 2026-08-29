@@ -371,6 +371,12 @@ public sealed partial class Config
 
     private void ValidateDependencies()
     {
+        if (raw.TryGetValue("container", out var containerValue) &&
+            containerValue is not null && containerValue is not string)
+        {
+            throw new ConfigException("container: must be a string");
+        }
+
         if (raw.TryGetValue("dependencies", out var dependencies) &&
             dependencies is not null &&
             RubyValue.AsMapping(dependencies) is null)
@@ -384,6 +390,13 @@ public sealed partial class Config
         if (RawDependencies.Count > 0 && Container is null && !IsComposeMode)
         {
             throw new ConfigException("container: must be set when dependencies: has entries");
+        }
+
+        // Otherwise this only surfaces later, and with a less direct message, when something
+        // that needs the primary container (CommandBuilder.PrimaryValues) first looks it up.
+        if (!IsComposeMode && Container is not null && !RawDependencies.ContainsKey(Container))
+        {
+            throw new ConfigException($"No dependencies.{Container} entry (check container: in wip.yml)");
         }
 
         foreach (var (name, entry) in RawDependencies)

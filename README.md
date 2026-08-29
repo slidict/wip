@@ -32,6 +32,7 @@ key, every command's flags, guides, and troubleshooting — see the **[wip Wiki]
 ## Contents
 
 - [Which mode should you use?](#which-mode-should-you-use)
+- [AI-assisted initialization](#ai-assisted-initialization)
 - [Requirements & installation](#requirements--installation)
 - [Quick start](#quick-start)
 - [Configuration](#configuration)
@@ -56,6 +57,56 @@ key, every command's flags, guides, and troubleshooting — see the **[wip Wiki]
 `docker-compose.yml`, or `docker-compose.yaml` next to it, and `container` otherwise — see
 [Commands](#commands). For the full breakdown and trade-offs, see
 [Choosing a Mode](https://github.com/slidict/wip/wiki/Choosing-a-Mode) on the wiki.
+
+## AI-assisted initialization
+
+`wip init --ai` analyzes a bounded selection of project metadata (for example `README.md`,
+`Gemfile`, `package.json`, `Procfile`, and Compose files), asks for a natural-language description,
+and displays a generated `wip.yml`. If a `wip.yml` already exists it is supplied as the basis for
+an update. The candidate is parsed and validated by wip before the confirmation prompt; AI output
+never writes files directly.
+
+```powershell
+wip init --ai
+```
+
+`wip init --ai` talks to a local AI server through the OpenAI-compatible `/chat/completions`
+endpoint that both [Ollama](https://ollama.com) (`ollama serve`) and
+[LM Studio](https://lmstudio.ai)'s local server already expose, so wip takes no dependency on a
+specific vendor's native protocol or on Windows-only AI APIs — this works the same way on any
+machine, Copilot+ PC or not, once a model is pulled or loaded locally.
+
+Configure it with two environment variables:
+
+- `WIP_AI_BASE_URL` — the server's OpenAI-compatible base URL. Defaults to
+  `http://localhost:11434/v1` (Ollama's default). Point it at LM Studio
+  (typically `http://localhost:1234/v1`) or any other OpenAI-compatible local server instead.
+- `WIP_AI_MODEL` — the model name already pulled or loaded in that server, e.g. `llama3.1`. If
+  unset, wip asks the server's `/models` endpoint instead: with exactly one chat-capable model
+  loaded (embedding models are ignored) it uses that one automatically; with none or more than one
+  it fails up front and, if there's more than one, lists them so you can set `WIP_AI_MODEL`.
+
+Both `wip doctor --url <url>` and `wip init --ai --url <url>` accept a `--url` flag that overrides
+`WIP_AI_BASE_URL` for that one invocation, so you can point at a different server (e.g. LM Studio)
+without changing your environment:
+
+```powershell
+wip doctor --url http://localhost:1234/v1
+wip init --ai --url http://localhost:1234/v1
+```
+
+`wip doctor` reports whether the server is reachable and a model is configured, and
+`wip init --ai` checks the same things up front — before it asks for a description — so a missing
+server or model fails immediately with a fix, not after a prompt that was never going anywhere.
+
+For a full walkthrough with real output, troubleshooting (context-length errors, ambiguous models,
+a missing `/v1` in the URL), and what wip does when the model's YAML doesn't validate, see
+[AI-Assisted Initialization](https://github.com/slidict/wip/wiki/AI-Assisted-Initialization) on the
+wiki.
+
+Collection is allow-listed and capped at 24 files, 64 KiB per file, and 256 KiB total. Files such as
+`.env` and arbitrary source files are not collected. Review the displayed YAML before answering
+`y`; any other answer leaves the existing file untouched.
 
 ## Requirements & installation
 
@@ -83,7 +134,31 @@ this is all it takes:
 winget install Slidict.Wip
 ```
 
-From source: `dotnet publish src/Wip.Cli/Wip.Cli.csproj -c Release -r win-x64`.
+From source: `dotnet publish src/Wip.Cli/Wip.Cli.csproj -c Release -r win-x64`. This links
+with **MSVC** (Native AOT), so the .NET SDK alone stops with `Platform linker not found` —
+install it first:
+
+```powershell
+winget install Microsoft.VisualStudio.2022.BuildTools --override "--quiet --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+```
+
+If you already have Visual Studio 2022, add the **Desktop development with C++** workload
+through the Visual Studio Installer instead. Either way an ordinary shell works afterwards —
+the build locates MSVC itself, so no developer command prompt is needed.
+
+If the workload is already installed and `Platform linker not found` still shows up — often
+with a `'vswhere.exe' is not recognized as an internal or external command` line right above
+it — the linker setup script located the Visual C++ tools fine but then handed off to a step
+that shells out to a bare `vswhere.exe`, which only resolves inside a Developer Command Prompt
+that has already put it on `PATH`. Add its folder once and any ordinary shell works from then
+on:
+
+```powershell
+[Environment]::SetEnvironmentVariable('Path', $env:Path + ';C:\Program Files (x86)\Microsoft Visual Studio\Installer', 'User')
+```
+
+Open a new shell afterwards — the change does not apply to the one that ran the command. See
+[Development](#development) for more on building from source.
 
 ### Running it from a WSL2 shell
 
@@ -251,7 +326,7 @@ and examples — start at the
 |---|---|
 | `wip init [--force] [--template NAME]` | Write a starter `wip.yml`: `mode: compose-native` if a `compose.yml`, `compose.yaml`, `docker-compose.yml`, or `docker-compose.yaml` is found next to it, `mode: container` otherwise |
 | `wip version` | wip's version, plus WSLC's if it can be detected |
-| `wip doctor` | Diagnose WSL2, WSLC, config, architecture, and Git |
+| `wip doctor` | Diagnose WSL2, WSLC, config, architecture, Git, and the `--ai` host |
 | `wip config` | Print the effective configuration (secrets masked) |
 | `wip build [--no-cache] [-- OPTIONS]` | Build the image from the `build` definition |
 | `wip up [-d] [--no-sync] [--no-cache] [--watch] [--interval N]` | Start the configured stack, creating it if necessary |
@@ -350,20 +425,10 @@ execution layers are all swappable — and it runs on Linux and macOS as well as
 only Windows can produce the shipping binary (Native AOT cannot cross-compile between
 operating systems).
 
-The last line needs one more thing. Native AOT compiles to native code and then links it with
-**MSVC**, so the .NET SDK alone gets as far as `wip.dll` and stops with `Platform linker not
-found`:
-
-```powershell
-winget install Microsoft.VisualStudio.2022.BuildTools --override "--quiet --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
-```
-
-If you already have Visual Studio 2022, add the **Desktop development with C++** workload
-through the Visual Studio Installer instead. Either way an ordinary shell works afterwards —
-the build locates MSVC itself, so no developer command prompt is needed.
-
-Only publishing needs it. `dotnet build` and `dotnet test` do not, and neither does running the
-CLI during development:
+The last line needs MSVC — see
+[Requirements & installation](#requirements--installation) for the `winget install` command
+that gets `dotnet publish` past `Platform linker not found`. Only publishing needs it;
+`dotnet build` and `dotnet test` do not, and neither does running the CLI during development:
 
 ```powershell
 dotnet run --project src/Wip.Cli/Wip.Cli.csproj -- --help

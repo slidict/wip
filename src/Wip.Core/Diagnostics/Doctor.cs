@@ -1,3 +1,4 @@
+using Wip.Ai;
 using Wip.Compose;
 using Wip.Configuration;
 using Wip.Execution;
@@ -35,7 +36,7 @@ public sealed class Doctor
                                new CommandResolver([], "compose command", ComposeBridge.InstallHint);
     }
 
-    public IReadOnlyList<Result> Call()
+    public IReadOnlyList<Result> Call(string? aiBaseUrl = null)
     {
         var results = new List<Result>
         {
@@ -51,7 +52,34 @@ public sealed class Doctor
             CommandAvailable("git") ? Level.Ok : Level.Warn,
             CommandAvailable("git") ? "Git is available" : "Git is not available to the WSLC build environment"));
 
+        results.Add(CheckAi(aiBaseUrl));
+
         return results;
+    }
+
+    /// <summary>
+    /// AI is opt-in (<c>wip init --ai</c>), so a missing host is a <see cref="Level.Warn"/>, not
+    /// a <see cref="Level.Fail"/> — every other check here concerns a wip.yml that already
+    /// exists and is meant to run.
+    /// </summary>
+    private static Result CheckAi(string? aiBaseUrl)
+    {
+        var baseUrl = LocalAiProvider.ResolveBaseUrl(aiBaseUrl);
+        if (!LocalAiProvider.IsAvailable(baseUrl))
+        {
+            return new Result(Level.Warn,
+                $"{LocalAiProvider.NotFoundMessage(baseUrl)} `wip init --ai` will not work until then.");
+        }
+
+        try
+        {
+            var model = LocalAiProvider.ResolveModel() ?? LocalAiProvider.DiscoverModel(baseUrl);
+            return new Result(Level.Ok, $"Local AI server at '{baseUrl}' is available (model: {model})");
+        }
+        catch (WipException exception)
+        {
+            return new Result(Level.Warn, $"{exception.Message} `wip init --ai` will not work until then.");
+        }
     }
 
     private Config? LoadConfig(List<Result> results)
