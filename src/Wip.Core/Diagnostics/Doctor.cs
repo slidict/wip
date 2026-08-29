@@ -1,3 +1,4 @@
+using Wip.Ai;
 using Wip.Compose;
 using Wip.Configuration;
 using Wip.Execution;
@@ -51,7 +52,23 @@ public sealed class Doctor
             CommandAvailable("git") ? Level.Ok : Level.Warn,
             CommandAvailable("git") ? "Git is available" : "Git is not available to the WSLC build environment"));
 
+        results.Add(CheckAi());
+
         return results;
+    }
+
+    /// <summary>
+    /// AI is opt-in (<c>wip init --ai</c>), so a missing host is a <see cref="Level.Warn"/>, not
+    /// a <see cref="Level.Fail"/> — every other check here concerns a wip.yml that already
+    /// exists and is meant to run.
+    /// </summary>
+    private static Result CheckAi()
+    {
+        var command = WindowsAiProvider.ResolveCommand();
+        return WindowsAiProvider.IsAvailable(command)
+            ? new Result(Level.Ok, $"Windows AI host '{command}' is available")
+            : new Result(Level.Warn,
+                $"{WindowsAiProvider.NotFoundMessage(command)} `wip init --ai` will not work until then.");
     }
 
     private Config? LoadConfig(List<Result> results)

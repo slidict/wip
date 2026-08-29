@@ -159,6 +159,13 @@ internal sealed partial class CliContext
 
     private static int InitWithAi(string path)
     {
+        var command = WindowsAiProvider.ResolveCommand();
+        if (!WindowsAiProvider.IsAvailable(command))
+        {
+            throw new WipException(
+                $"{WindowsAiProvider.NotFoundMessage(command)} Run `wip doctor` to check again.");
+        }
+
         var directory = Path.GetDirectoryName(path) ?? Directory.GetCurrentDirectory();
         Console.Error.WriteLine("Describe the development environment wip should run (finish with an empty line):");
         var lines = new List<string>();

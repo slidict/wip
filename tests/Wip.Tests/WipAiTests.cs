@@ -45,6 +45,32 @@ public class WipAiTests
     }
 
     [Fact]
+    public void ResolveCommandPrefersExplicitArgumentThenEnvironmentThenDefault()
+    {
+        Assert.Equal("explicit", WindowsAiProvider.ResolveCommand("explicit"));
+
+        Environment.SetEnvironmentVariable(WindowsAiProvider.CommandEnvironmentVariable, "from-env");
+        try
+        {
+            Assert.Equal("from-env", WindowsAiProvider.ResolveCommand());
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(WindowsAiProvider.CommandEnvironmentVariable, null);
+        }
+
+        Assert.Equal(WindowsAiProvider.DefaultCommand, WindowsAiProvider.ResolveCommand());
+    }
+
+    [Fact]
+    public void IsAvailableFindsARealCommandAndRejectsAMadeUpOne()
+    {
+        var realCommand = OperatingSystem.IsWindows() ? "cmd" : "sh";
+        Assert.True(WindowsAiProvider.IsAvailable(realCommand));
+        Assert.False(WindowsAiProvider.IsAvailable("wip-ai-host-that-does-not-exist-anywhere"));
+    }
+
+    [Fact]
     public void GeneratorRejectsInvalidCandidateBeforeItCanBeSaved()
     {
         using var directory = new TemporaryDirectory();

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text;
+using Wip.Execution;
 
 namespace Wip.Ai;
 
@@ -11,12 +12,38 @@ namespace Wip.Ai;
 public sealed class WindowsAiProvider : IWipAiProvider
 {
     public const string CommandEnvironmentVariable = "WIP_WINDOWS_AI_COMMAND";
+    public const string DefaultCommand = "wip-windows-ai";
     private const int MaxResponseCharacters = 1024 * 1024;
     private readonly string command;
 
-    public WindowsAiProvider(string? command = null) => this.command = command
+    public WindowsAiProvider(string? command = null) => this.command = ResolveCommand(command);
+
+    /// <summary>The host executable name or path this provider (or a default instance) would use.</summary>
+    public static string ResolveCommand(string? command = null) => command
         ?? Environment.GetEnvironmentVariable(CommandEnvironmentVariable)
-        ?? "wip-windows-ai";
+        ?? DefaultCommand;
+
+    /// <summary>
+    /// Whether the Windows AI host can be found without starting it, so <c>wip doctor</c> and
+    /// <c>wip init --ai</c> can report a missing host up front instead of only after the user
+    /// has typed a whole request into a prompt that was never going anywhere.
+    /// </summary>
+    public static bool IsAvailable(string? command = null)
+    {
+        try
+        {
+            new CommandResolver([], "Windows AI host").Resolve(ResolveCommand(command));
+            return true;
+        }
+        catch (CommandNotFoundException)
+        {
+            return false;
+        }
+    }
+
+    public static string NotFoundMessage(string command) =>
+        $"Windows AI host '{command}' was not found. Install the wip Windows AI host " +
+        $"or set {CommandEnvironmentVariable} to its path.";
 
     public string Generate(string prompt, CancellationToken cancellationToken = default)
     {
@@ -56,9 +83,7 @@ public sealed class WindowsAiProvider : IWipAiProvider
         }
         catch (System.ComponentModel.Win32Exception exception)
         {
-            throw new WipException(
-                $"Windows AI host '{command}' was not found. Install the wip Windows AI host " +
-                $"or set {CommandEnvironmentVariable} to its path.", exception);
+            throw new WipException(NotFoundMessage(command), exception);
         }
     }
 

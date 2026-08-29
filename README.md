@@ -77,6 +77,10 @@ YAML on standard output. Set `WIP_WINDOWS_AI_COMMAND` to the host executable's p
 on `PATH`. Future Ollama, LM Studio, and OpenAI-compatible providers can implement the same internal
 provider interface without changing collection, validation, confirmation, or saving.
 
+`wip doctor` reports whether the host resolves, and `wip init --ai` checks the same thing up front
+— before it asks for a description — so a missing host fails immediately with a fix, not after a
+prompt that was never going anywhere.
+
 Collection is allow-listed and capped at 24 files, 64 KiB per file, and 256 KiB total. Files such as
 `.env` and arbitrary source files are not collected. Review the displayed YAML before answering
 `y`; any other answer leaves the existing file untouched.
@@ -299,7 +303,7 @@ and examples — start at the
 |---|---|
 | `wip init [--force] [--template NAME]` | Write a starter `wip.yml`: `mode: compose-native` if a `compose.yml`, `compose.yaml`, `docker-compose.yml`, or `docker-compose.yaml` is found next to it, `mode: container` otherwise |
 | `wip version` | wip's version, plus WSLC's if it can be detected |
-| `wip doctor` | Diagnose WSL2, WSLC, config, architecture, and Git |
+| `wip doctor` | Diagnose WSL2, WSLC, config, architecture, Git, and the `--ai` host |
 | `wip config` | Print the effective configuration (secrets masked) |
 | `wip build [--no-cache] [-- OPTIONS]` | Build the image from the `build` definition |
 | `wip up [-d] [--no-sync] [--no-cache] [--watch] [--interval N]` | Start the configured stack, creating it if necessary |
