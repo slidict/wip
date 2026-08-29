@@ -117,7 +117,20 @@ winget install Microsoft.VisualStudio.2022.BuildTools --override "--quiet --wait
 
 If you already have Visual Studio 2022, add the **Desktop development with C++** workload
 through the Visual Studio Installer instead. Either way an ordinary shell works afterwards —
-the build locates MSVC itself, so no developer command prompt is needed. See
+the build locates MSVC itself, so no developer command prompt is needed.
+
+If the workload is already installed and `Platform linker not found` still shows up — often
+with a `'vswhere.exe' is not recognized as an internal or external command` line right above
+it — the linker setup script located the Visual C++ tools fine but then handed off to a step
+that shells out to a bare `vswhere.exe`, which only resolves inside a Developer Command Prompt
+that has already put it on `PATH`. Add its folder once and any ordinary shell works from then
+on:
+
+```powershell
+[Environment]::SetEnvironmentVariable('Path', $env:Path + ';C:\Program Files (x86)\Microsoft Visual Studio\Installer', 'User')
+```
+
+Open a new shell afterwards — the change does not apply to the one that ran the command. See
 [Development](#development) for more on building from source.
 
 ### Running it from a WSL2 shell
