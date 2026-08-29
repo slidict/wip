@@ -34,7 +34,8 @@ jobs:
 
       # Directory.Build.props is the single source of truth for the version: the SDK stamps
       # it into the assembly, and the release workflow releases whatever version it finds
-      # here, creating the tag itself.
+      # here, creating the tag itself. The release workflow updates the Scoop manifest only
+      # after the corresponding archive exists and its digest can be verified.
       - name: Calculate next version
         id: version
         env:
@@ -96,4 +97,4 @@ jobs:
             --base "${GITHUB_REF_NAME}" \
             --head "bump-version-v${NEXT}" \
             --title "chore: bump version to v${NEXT}" \
-            --body "Bump wip version to v${NEXT}. Merging this publishes v${NEXT}: the release workflow reads the version from Directory.Build.props, and creates the tag itself."
+            --body "Bump wip version to v${NEXT}. Merging this publishes v${NEXT}: the release workflow reads the version from Directory.Build.props, creates the tag, and updates the Scoop manifest after uploading the release archive."
