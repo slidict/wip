@@ -213,8 +213,8 @@ jobs:
 
     permissions:
       contents: write
-      # release-drafter builds the notes by reading merged pull requests.
-      pull-requests: read
+      # release-drafter reads merged pull requests, and the Scoop update is proposed as one.
+      pull-requests: write
 
     steps:
       # No checkout: release-drafter reads its config through the API, and the artifacts
@@ -270,7 +270,8 @@ jobs:
 
       # A Scoop manifest must contain the archive's digest, not a checksum-file URL. Keep
       # the previous release installable until the new archive has been uploaded and
-      # published, then read back that release's checksum and update main atomically.
+      # published, then read back that release's checksum and propose the update. Main may
+      # be protected, so the workflow must not try to push the generated commit directly.
       - name: Check out repository for Scoop manifest update
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -303,43 +304,43 @@ jobs:
 
           header=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
           auth_header="AUTHORIZATION: basic ${header}"
+          branch="update-scoop-v${VERSION}"
 
-          # main can advance between the checkout above and the push below (another release,
-          # an unrelated merge). Retry against the latest tip rather than letting a stale push
-          # leave the manifest on the previous version: refetch, discard the rejected commit,
-          # and reapply the (idempotent) jq edit on top of the new tip.
-          pushed=false
-          for attempt in 1 2 3 4 5; do
-            jq --arg version "$VERSION" --arg digest "$digest" '
-              .version = $version
-              | .architecture["64bit"].url = "https://github.com/slidict/wip/releases/download/v\($version)/wip-\($version)-win-x64.zip"
-              | .architecture["64bit"].hash = $digest
-            ' wip.json > wip.json.tmp
-            mv wip.json.tmp wip.json
+          # Base the proposal on the latest main rather than the release commit: unrelated
+          # changes can land while the Windows build is running. Re-runs replace their own
+          # version-specific branch, with a lease so they cannot overwrite an unexpected push.
+          git -c "http.https://github.com/.extraheader=${auth_header}" \
+            fetch origin "${GITHUB_REF_NAME}"
+          git checkout -B "$branch" FETCH_HEAD
 
-            git add wip.json
-            if git diff --cached --quiet; then
-              echo "Scoop manifest already describes v${VERSION}."
-              pushed=true
-              break
-            fi
-            git commit -m "chore(scoop): update manifest for v${VERSION}"
+          jq --arg version "$VERSION" --arg digest "$digest" '
+            .version = $version
+            | .architecture["64bit"].url = "https://github.com/slidict/wip/releases/download/v\($version)/wip-\($version)-win-x64.zip"
+            | .architecture["64bit"].hash = $digest
+          ' wip.json > wip.json.tmp
+          mv wip.json.tmp wip.json
 
-            if git -c "http.https://github.com/.extraheader=${auth_header}" \
-                push origin "HEAD:${GITHUB_REF_NAME}"; then
-              pushed=true
-              break
-            fi
+          git add wip.json
+          if git diff --cached --quiet; then
+            echo "Scoop manifest already describes v${VERSION}."
+            exit 0
+          fi
+          git commit -m "chore(scoop): update manifest for v${VERSION}"
 
-            echo "Push rejected on attempt ${attempt}; refetching ${GITHUB_REF_NAME} and retrying." >&2
-            git -c "http.https://github.com/.extraheader=${auth_header}" \
-              fetch origin "${GITHUB_REF_NAME}"
-            git reset --hard FETCH_HEAD
-          done
+          remote_sha=$(git -c "http.https://github.com/.extraheader=${auth_header}" \
+            ls-remote origin "refs/heads/$branch" | awk '{ print $1 }')
+          git -c "http.https://github.com/.extraheader=${auth_header}" \
+            push --force-with-lease="refs/heads/${branch}:${remote_sha}" origin "HEAD:${branch}"
 
-          if [ "$pushed" != "true" ]; then
-            echo "::error::Could not push the Scoop manifest update after 5 attempts; ${GITHUB_REF_NAME} kept advancing." >&2
-            exit 1
+          if gh pr view "$branch" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Pull request for v${VERSION} already exists."
+          else
+            gh pr create \
+              --repo "$GITHUB_REPOSITORY" \
+              --base "$GITHUB_REF_NAME" \
+              --head "$branch" \
+              --title "chore(scoop): update manifest for v${VERSION}" \
+              --body "Update the Scoop manifest with the verified digest from the published v${VERSION} archive."
           fi
 
   # Called rather than triggered: a release created with GITHUB_TOKEN does not raise
