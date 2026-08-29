@@ -62,8 +62,11 @@ public sealed class LocalAiProvider : IWipAiProvider
             using var client = new TcpClient();
             return client.ConnectAsync(uri.Host, uri.Port).Wait(ProbeTimeout);
         }
-        catch (AggregateException)
+        catch (Exception exception) when (exception is AggregateException or ArgumentException)
         {
+            // ArgumentException covers a URI with no host or no default port for its scheme
+            // (e.g. file:///tmp), which TcpClient rejects synchronously before ConnectAsync
+            // ever returns a Task — too early for the AggregateException catch above to see it.
             return false;
         }
     }
