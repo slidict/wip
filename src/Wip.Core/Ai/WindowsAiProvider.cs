@@ -66,17 +66,24 @@ public sealed class WindowsAiProvider : IWipAiProvider
     {
         var result = new StringBuilder();
         var buffer = new char[4096];
-        while (result.Length <= limit)
+        var exceeded = false;
+        int count;
+        while ((count = reader.Read(buffer, 0, buffer.Length)) != 0)
         {
-            var count = reader.Read(buffer, 0, Math.Min(buffer.Length, limit + 1 - result.Length));
-            if (count == 0)
+            // Keep draining past the limit so the host's pipe never fills and blocks
+            // its exit; only stop accumulating into the result.
+            if (!exceeded)
             {
-                return result.ToString();
+                result.Append(buffer, 0, count);
+                exceeded = result.Length > limit;
             }
-
-            result.Append(buffer, 0, count);
         }
 
-        throw new WipException("Windows AI host response exceeded wip's 1 MiB limit");
+        if (exceeded)
+        {
+            throw new WipException("Windows AI host response exceeded wip's 1 MiB limit");
+        }
+
+        return result.ToString();
     }
 }
