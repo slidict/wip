@@ -3,6 +3,19 @@ using Wip.Configuration;
 
 namespace Wip.Tests;
 
+/// <summary>
+/// Groups every test class that mutates the process-wide WIP_AI_BASE_URL/WIP_AI_MODEL
+/// environment variables (via <c>TemporaryEnvironmentVariable</c>) so xUnit — which otherwise
+/// runs different test classes' collections in parallel — never runs two of them at once and
+/// lets one clobber or observe another's in-flight value.
+/// </summary>
+[CollectionDefinition(Name)]
+public class AiEnvironmentVariableCollection
+{
+    public const string Name = "AI environment variables";
+}
+
+[Collection(AiEnvironmentVariableCollection.Name)]
 public class WipAiTests
 {
     [Fact]

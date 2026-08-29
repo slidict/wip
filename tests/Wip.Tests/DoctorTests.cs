@@ -5,6 +5,7 @@ using Wip.Platform;
 
 namespace Wip.Tests;
 
+[Collection(AiEnvironmentVariableCollection.Name)]
 public class DoctorTests
 {
     [Fact]
