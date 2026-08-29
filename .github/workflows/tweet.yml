@@ -63,7 +63,11 @@ jobs:
       # over the oauth_* parameters only -- the request body is JSON, which OAuth 1.0a
       # does not sign, so posting non-ASCII text needs no special handling here.
       - name: Post tweet
-        if: env.TWITTER_CONSUMER_KEY != ''
+        if: >-
+          env.TWITTER_CONSUMER_KEY != '' &&
+          env.TWITTER_CONSUMER_SECRET != '' &&
+          env.TWITTER_ACCESS_TOKEN != '' &&
+          env.TWITTER_ACCESS_TOKEN_SECRET != ''
         run: |
           set -euo pipefail
 
@@ -127,10 +131,16 @@ jobs:
           echo "Tweeted the ${TAG} release." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Explain a skipped tweet
-        if: env.TWITTER_CONSUMER_KEY == ''
+        if: >-
+          env.TWITTER_CONSUMER_KEY == '' ||
+          env.TWITTER_CONSUMER_SECRET == '' ||
+          env.TWITTER_ACCESS_TOKEN == '' ||
+          env.TWITTER_ACCESS_TOKEN_SECRET == ''
         run: |
           {
-            echo "TWITTER_CONSUMER_KEY is not set, so no tweet was posted."
+            echo "One or more of TWITTER_CONSUMER_KEY, TWITTER_CONSUMER_SECRET,"
+            echo "TWITTER_ACCESS_TOKEN, and TWITTER_ACCESS_TOKEN_SECRET is not set,"
+            echo "so no tweet was posted."
             echo ""
             echo "To enable it, once:"
             echo ""
