@@ -173,7 +173,7 @@ internal sealed partial class CliContext
         var project = new ProjectAnalyzer(directory).Analyze();
         Console.Error.WriteLine($"wip: sending {project.Files.Count} selected project files to Windows local AI");
         var candidate = new WipAiGenerator(new WindowsAiProvider()).Generate(
-            string.Join(Environment.NewLine, lines), project, existing, path);
+            string.Join(System.Environment.NewLine, lines), project, existing, path);
 
         Console.WriteLine(candidate);
         Console.Error.Write(existing is null
