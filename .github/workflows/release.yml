@@ -356,3 +356,19 @@ jobs:
     # secret this repository has, when it needs exactly one.
     secrets:
       WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+
+  # Runs alongside winget rather than after it -- announcing the release doesn't depend
+  # on the WinGet submission, so there's no reason to make one wait on the other.
+  tweet:
+    name: Tweet the release
+    needs: [check, publish]
+    uses: ./.github/workflows/tweet.yml
+    with:
+      tag: ${{ needs.check.outputs.tag }}
+    # Mapped rather than inherited: `secrets: inherit` would hand the called workflow every
+    # secret this repository has, when it needs exactly four.
+    secrets:
+      TWITTER_CONSUMER_KEY: ${{ secrets.TWITTER_CONSUMER_KEY }}
+      TWITTER_CONSUMER_SECRET: ${{ secrets.TWITTER_CONSUMER_SECRET }}
+      TWITTER_ACCESS_TOKEN: ${{ secrets.TWITTER_ACCESS_TOKEN }}
+      TWITTER_ACCESS_TOKEN_SECRET: ${{ secrets.TWITTER_ACCESS_TOKEN_SECRET }}

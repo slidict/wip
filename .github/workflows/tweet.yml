@@ -1,0 +1,155 @@
+name: Tweet
+
+# Called by release.yml after a release is published, the same way winget.yml is: a
+# release created with GITHUB_TOKEN does not raise an event another workflow can trigger
+# on, so the handoff has to be a direct call rather than `release: published`.
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: Release tag being announced (e.g. v2.0.0).
+        required: true
+        type: string
+    secrets:
+      TWITTER_CONSUMER_KEY:
+        description: Consumer API key for the @slidict_oss X app.
+        required: false
+      TWITTER_CONSUMER_SECRET:
+        description: Consumer API secret for the @slidict_oss X app.
+        required: false
+      TWITTER_ACCESS_TOKEN:
+        description: Access token authorizing the app to post as @slidict_oss.
+        required: false
+      TWITTER_ACCESS_TOKEN_SECRET:
+        description: Secret for the access token above.
+        required: false
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to announce (e.g. v2.0.0).
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  tweet:
+    name: Post release tweet
+    runs-on: ubuntu-latest
+
+    # Naming an environment lets the X credentials live there instead of as plain
+    # repository secrets, so required reviewers can gate every use of them -- same
+    # reasoning as the `winget` environment in winget.yml. With no protection rules
+    # configured this changes nothing, so it is safe to leave in place until someone
+    # sets them up.
+    environment: twitter
+
+    env:
+      # The secrets context cannot be read from an `if:` condition, so it is lifted
+      # into env here and the steps below branch on that instead.
+      TWITTER_CONSUMER_KEY: ${{ secrets.TWITTER_CONSUMER_KEY }}
+      TWITTER_CONSUMER_SECRET: ${{ secrets.TWITTER_CONSUMER_SECRET }}
+      TWITTER_ACCESS_TOKEN: ${{ secrets.TWITTER_ACCESS_TOKEN }}
+      TWITTER_ACCESS_TOKEN_SECRET: ${{ secrets.TWITTER_ACCESS_TOKEN_SECRET }}
+      TAG: ${{ inputs.tag }}
+
+    steps:
+      # Signs the request by hand instead of pulling in a Marketplace action: the only
+      # option that looked maintained (ethomson/send-tweet-action) hasn't shipped a
+      # commit since 2021 and runs on the node12 runtime GitHub has since retired, so
+      # pinning it would trade a small, auditable script for a dependency that no longer
+      # runs. This is OAuth 1.0a User Context exactly as X's docs define it: HMAC-SHA1
+      # over the oauth_* parameters only -- the request body is JSON, which OAuth 1.0a
+      # does not sign, so posting non-ASCII text needs no special handling here.
+      - name: Post tweet
+        if: >-
+          env.TWITTER_CONSUMER_KEY != '' &&
+          env.TWITTER_CONSUMER_SECRET != '' &&
+          env.TWITTER_ACCESS_TOKEN != '' &&
+          env.TWITTER_ACCESS_TOKEN_SECRET != ''
+        run: |
+          set -euo pipefail
+
+          url="https://api.twitter.com/2/tweets"
+          text="wip ${TAG} is out: https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}"
+
+          urlencode() {
+            local string="$1" strlen encoded pos c hex
+            strlen=${#string}
+            for (( pos=0; pos<strlen; pos++ )); do
+              c=${string:pos:1}
+              case "$c" in
+                [a-zA-Z0-9.~_-]) encoded+="$c" ;;
+                *) printf -v hex '%02X' "'$c"; encoded+="%$hex" ;;
+              esac
+            done
+            printf '%s' "$encoded"
+          }
+
+          nonce=$(openssl rand -hex 16)
+          timestamp=$(date +%s)
+
+          declare -a params=(
+            "oauth_consumer_key=$(urlencode "$TWITTER_CONSUMER_KEY")"
+            "oauth_nonce=$(urlencode "$nonce")"
+            "oauth_signature_method=$(urlencode "HMAC-SHA1")"
+            "oauth_timestamp=$(urlencode "$timestamp")"
+            "oauth_token=$(urlencode "$TWITTER_ACCESS_TOKEN")"
+            "oauth_version=$(urlencode "1.0")"
+          )
+          param_string=$(printf '%s\n' "${params[@]}" | sort | paste -sd '&' -)
+          base_string="POST&$(urlencode "$url")&$(urlencode "$param_string")"
+          signing_key="$(urlencode "$TWITTER_CONSUMER_SECRET")&$(urlencode "$TWITTER_ACCESS_TOKEN_SECRET")"
+          signature=$(printf '%s' "$base_string" | openssl dgst -sha1 -hmac "$signing_key" -binary | base64 -w0)
+
+          auth="OAuth "
+          auth+="oauth_consumer_key=\"$(urlencode "$TWITTER_CONSUMER_KEY")\", "
+          auth+="oauth_nonce=\"$(urlencode "$nonce")\", "
+          auth+="oauth_signature=\"$(urlencode "$signature")\", "
+          auth+="oauth_signature_method=\"HMAC-SHA1\", "
+          auth+="oauth_timestamp=\"$(urlencode "$timestamp")\", "
+          auth+="oauth_token=\"$(urlencode "$TWITTER_ACCESS_TOKEN")\", "
+          auth+="oauth_version=\"1.0\""
+
+          body=$(jq -n --arg text "$text" '{text: $text}')
+
+          # Response saved to a file rather than piped straight to the log: the body is
+          # only meaningful (and only printed) when the post fails.
+          http_status=$(curl -sS -o /tmp/tweet-response.json -w '%{http_code}' \
+            -X POST "$url" \
+            -H "Authorization: $auth" \
+            -H "Content-Type: application/json" \
+            -d "$body")
+
+          if [ "$http_status" != "201" ]; then
+            echo "::error::Posting the release tweet failed with HTTP $http_status"
+            cat /tmp/tweet-response.json >&2
+            exit 1
+          fi
+
+          echo "Tweeted the ${TAG} release." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Explain a skipped tweet
+        if: >-
+          env.TWITTER_CONSUMER_KEY == '' ||
+          env.TWITTER_CONSUMER_SECRET == '' ||
+          env.TWITTER_ACCESS_TOKEN == '' ||
+          env.TWITTER_ACCESS_TOKEN_SECRET == ''
+        run: |
+          {
+            echo "One or more of TWITTER_CONSUMER_KEY, TWITTER_CONSUMER_SECRET,"
+            echo "TWITTER_ACCESS_TOKEN, and TWITTER_ACCESS_TOKEN_SECRET is not set,"
+            echo "so no tweet was posted."
+            echo ""
+            echo "To enable it, once:"
+            echo ""
+            echo "1. Create (or use an existing) X app for @slidict_oss at"
+            echo "   developer.x.com, with the app permission set to Read and Write."
+            echo "2. Generate an access token and secret for that app, authorized as"
+            echo "   @slidict_oss."
+            echo "3. Store the consumer key/secret and access token/secret as"
+            echo "   TWITTER_CONSUMER_KEY, TWITTER_CONSUMER_SECRET, TWITTER_ACCESS_TOKEN,"
+            echo "   and TWITTER_ACCESS_TOKEN_SECRET on the \`twitter\` environment, so"
+            echo "   required reviewers can gate each use."
+          } >> "$GITHUB_STEP_SUMMARY"
