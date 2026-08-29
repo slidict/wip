@@ -180,6 +180,22 @@ public class WipAiTests
     }
 
     [Fact]
+    public void GeneratorRejectsAContainerThatIsNotAString()
+    {
+        using var directory = new TemporaryDirectory();
+        var generator = new WipAiGenerator(new StubProvider("""
+            version: 1
+            container:
+              app:
+                image: node:20
+            """));
+
+        var exception = Assert.Throws<ConfigException>(() => generator.Generate(
+            "anything", new ProjectSnapshot(directory.Path, []), null, Path.Combine(directory.Path, "wip.yml")));
+        Assert.Equal("container: must be a string", exception.Message);
+    }
+
+    [Fact]
     public void GeneratorRejectsInvalidCandidateBeforeItCanBeSaved()
     {
         using var directory = new TemporaryDirectory();

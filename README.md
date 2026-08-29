@@ -99,6 +99,11 @@ wip init --ai --url http://localhost:1234/v1
 `wip init --ai` checks the same things up front — before it asks for a description — so a missing
 server or model fails immediately with a fix, not after a prompt that was never going anywhere.
 
+For a full walkthrough with real output, troubleshooting (context-length errors, ambiguous models,
+a missing `/v1` in the URL), and what wip does when the model's YAML doesn't validate, see
+[AI-Assisted Initialization](https://github.com/slidict/wip/wiki/AI-Assisted-Initialization) on the
+wiki.
+
 Collection is allow-listed and capped at 24 files, 64 KiB per file, and 256 KiB total. Files such as
 `.env` and arbitrary source files are not collected. Review the displayed YAML before answering
 `y`; any other answer leaves the existing file untouched.

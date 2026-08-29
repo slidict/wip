@@ -371,6 +371,12 @@ public sealed partial class Config
 
     private void ValidateDependencies()
     {
+        if (raw.TryGetValue("container", out var containerValue) &&
+            containerValue is not null && containerValue is not string)
+        {
+            throw new ConfigException("container: must be a string");
+        }
+
         if (raw.TryGetValue("dependencies", out var dependencies) &&
             dependencies is not null &&
             RubyValue.AsMapping(dependencies) is null)

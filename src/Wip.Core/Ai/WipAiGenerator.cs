@@ -32,9 +32,20 @@ public sealed class WipAiGenerator
         You generate configuration for the wip CLI. Return ONLY one complete YAML document: no Markdown fence and no explanation.
         The output is untrusted and will be rejected by wip's parser unless valid.
         Use version: 1. Valid modes are container, compose, and compose-native.
-        In container mode set container to a key in dependencies. Each dependency needs image or build; common keys are workdir, env, ports, volumes, interactive, remove, restart, command.
+        In container mode you MUST include a top-level container: key naming exactly one of your dependencies entries — never omit it, even with a single dependency. Each dependency needs image or build; common keys are workdir, env, ports, volumes, interactive, remove, restart, command (command is a plain string, not a list). Container mode always has exactly these two top-level keys plus version/mode — never nest dependency definitions directly under container:. For example:
+        version: 1
+        mode: container
+        container: app
+        dependencies:
+          app:
+            image: some/image:tag
+          redis:
+            image: redis:7
         In compose-native mode use compose.service (and optionally compose.file/project); do not duplicate compose services under dependencies.
-        Custom commands belong under interaction (or commands, never both), with type exec/run/build and command.
+        Only add interaction (or commands, never both) if the user asked for a custom command. It is a flat mapping of name -> {type, command}, one level deep — never nest a commands: or interaction: key inside itself. For example:
+        interaction:
+          rspec:
+            command: bundle exec rspec
         Source sync belongs under sync and may use source, target, mount, volume, delete, exclude, command, options, interval, mode.
         Prefer facts in the project files. Do not invent credentials. Do not include secrets or host file contents not shown below.
 
