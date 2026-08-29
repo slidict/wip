@@ -107,7 +107,18 @@ this is all it takes:
 winget install Slidict.Wip
 ```
 
-From source: `dotnet publish src/Wip.Cli/Wip.Cli.csproj -c Release -r win-x64`.
+From source: `dotnet publish src/Wip.Cli/Wip.Cli.csproj -c Release -r win-x64`. This links
+with **MSVC** (Native AOT), so the .NET SDK alone stops with `Platform linker not found` —
+install it first:
+
+```powershell
+winget install Microsoft.VisualStudio.2022.BuildTools --override "--quiet --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+```
+
+If you already have Visual Studio 2022, add the **Desktop development with C++** workload
+through the Visual Studio Installer instead. Either way an ordinary shell works afterwards —
+the build locates MSVC itself, so no developer command prompt is needed. See
+[Development](#development) for more on building from source.
 
 ### Running it from a WSL2 shell
 
@@ -374,20 +385,10 @@ execution layers are all swappable — and it runs on Linux and macOS as well as
 only Windows can produce the shipping binary (Native AOT cannot cross-compile between
 operating systems).
 
-The last line needs one more thing. Native AOT compiles to native code and then links it with
-**MSVC**, so the .NET SDK alone gets as far as `wip.dll` and stops with `Platform linker not
-found`:
-
-```powershell
-winget install Microsoft.VisualStudio.2022.BuildTools --override "--quiet --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
-```
-
-If you already have Visual Studio 2022, add the **Desktop development with C++** workload
-through the Visual Studio Installer instead. Either way an ordinary shell works afterwards —
-the build locates MSVC itself, so no developer command prompt is needed.
-
-Only publishing needs it. `dotnet build` and `dotnet test` do not, and neither does running the
-CLI during development:
+The last line needs MSVC — see
+[Requirements & installation](#requirements--installation) for the `winget install` command
+that gets `dotnet publish` past `Platform linker not found`. Only publishing needs it;
+`dotnet build` and `dotnet test` do not, and neither does running the CLI during development:
 
 ```powershell
 dotnet run --project src/Wip.Cli/Wip.Cli.csproj -- --help
