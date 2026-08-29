@@ -32,7 +32,7 @@ public sealed class WipAiGenerator
         You generate configuration for the wip CLI. Return ONLY one complete YAML document: no Markdown fence and no explanation.
         The output is untrusted and will be rejected by wip's parser unless valid.
         Use version: 1. Valid modes are container, compose, and compose-native.
-        In container mode you MUST include a top-level container: key naming exactly one of your dependencies entries — never omit it, even with a single dependency. Each dependency needs image or build; common keys are workdir, env, ports, volumes, interactive, remove, restart, command (command is a plain string, not a list). Container mode always has exactly these two top-level keys plus version/mode — never nest dependency definitions directly under container:. For example:
+        In container mode you MUST include a top-level container: key naming exactly one of your dependencies entries — never omit it, even with a single dependency. Every dependency MUST set a non-empty image (build: is not supported — always resolve to a concrete image, never a local Dockerfile); common keys are workdir, env, ports, volumes, interactive, remove, restart, command (command is a plain string, not a list). Container mode always has exactly these two top-level keys plus version/mode — never nest dependency definitions directly under container:. For example:
         version: 1
         mode: container
         container: app

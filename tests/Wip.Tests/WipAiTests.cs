@@ -49,17 +49,15 @@ public class WipAiTests
     {
         Assert.Equal("http://explicit", LocalAiProvider.ResolveBaseUrl("http://explicit"));
 
-        Environment.SetEnvironmentVariable(LocalAiProvider.BaseUrlEnvironmentVariable, "http://from-env");
-        try
+        using (new TemporaryEnvironmentVariable(LocalAiProvider.BaseUrlEnvironmentVariable, "http://from-env"))
         {
             Assert.Equal("http://from-env", LocalAiProvider.ResolveBaseUrl());
         }
-        finally
-        {
-            Environment.SetEnvironmentVariable(LocalAiProvider.BaseUrlEnvironmentVariable, null);
-        }
 
-        Assert.Equal(LocalAiProvider.DefaultBaseUrl, LocalAiProvider.ResolveBaseUrl());
+        using (new TemporaryEnvironmentVariable(LocalAiProvider.BaseUrlEnvironmentVariable, null))
+        {
+            Assert.Equal(LocalAiProvider.DefaultBaseUrl, LocalAiProvider.ResolveBaseUrl());
+        }
     }
 
     [Fact]
@@ -67,17 +65,15 @@ public class WipAiTests
     {
         Assert.Equal("explicit-model", LocalAiProvider.ResolveModel("explicit-model"));
 
-        Environment.SetEnvironmentVariable(LocalAiProvider.ModelEnvironmentVariable, "from-env-model");
-        try
+        using (new TemporaryEnvironmentVariable(LocalAiProvider.ModelEnvironmentVariable, "from-env-model"))
         {
             Assert.Equal("from-env-model", LocalAiProvider.ResolveModel());
         }
-        finally
-        {
-            Environment.SetEnvironmentVariable(LocalAiProvider.ModelEnvironmentVariable, null);
-        }
 
-        Assert.Null(LocalAiProvider.ResolveModel());
+        using (new TemporaryEnvironmentVariable(LocalAiProvider.ModelEnvironmentVariable, null))
+        {
+            Assert.Null(LocalAiProvider.ResolveModel());
+        }
     }
 
     [Fact]
@@ -162,6 +158,83 @@ public class WipAiTests
         Assert.Contains("qwen2.5-coder", exception.Message);
     }
 
+    [Fact]
+    public void DiscoverModelRejectsANonArrayDataFieldInsteadOfCrashing()
+    {
+        var handler = new StubHandler("""{"data":{}}""");
+
+        var exception = Assert.Throws<WipException>(() => LocalAiProvider.DiscoverModel("http://localhost:11434/v1", handler));
+        Assert.Contains("not shaped as expected", exception.Message);
+    }
+
+    [Fact]
+    public void DiscoverModelSkipsEntriesMissingAnIdInsteadOfCrashing()
+    {
+        var handler = new StubHandler("""{"data":[{}, {"id":"llama3.1"}]}""");
+
+        var model = LocalAiProvider.DiscoverModel("http://localhost:11434/v1", handler);
+
+        Assert.Equal("llama3.1", model);
+    }
+
+    [Fact]
+    public void DiscoverModelWrapsATimeoutInsteadOfLettingItPropagateRaw()
+    {
+        var handler = new ThrowingHandler(new TaskCanceledException("The request timed out."));
+
+        var exception = Assert.Throws<WipException>(() => LocalAiProvider.DiscoverModel("http://localhost:11434/v1", handler));
+        Assert.Contains("did not respond in time", exception.Message);
+    }
+
+    [Fact]
+    public void GenerateRejectsChoicesShapedAsSomethingOtherThanAnArray()
+    {
+        var handler = new StubHandler("""{"choices":"not-an-array"}""");
+        var provider = new LocalAiProvider("http://localhost:11434/v1", "llama3.1", handler);
+
+        var exception = Assert.Throws<WipException>(
+            () => provider.Generate("Run Rails", TestContext.Current.CancellationToken));
+        Assert.Contains("choices[0].message.content", exception.Message);
+    }
+
+    [Fact]
+    public void GenerateRejectsAnEmptyChoicesArray()
+    {
+        var handler = new StubHandler("""{"choices":[]}""");
+        var provider = new LocalAiProvider("http://localhost:11434/v1", "llama3.1", handler);
+
+        Assert.Throws<WipException>(() => provider.Generate("Run Rails", TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public void GenerateWrapsATimeoutInsteadOfLettingItPropagateRaw()
+    {
+        var handler = new ThrowingHandler(new TaskCanceledException("The request timed out."));
+        var provider = new LocalAiProvider("http://localhost:11434/v1", "llama3.1", handler);
+
+        var exception = Assert.Throws<WipException>(
+            () => provider.Generate("Run Rails", TestContext.Current.CancellationToken));
+        Assert.Contains("did not respond in time", exception.Message);
+    }
+
+    [Fact]
+    public void GenerateLetsCallerRequestedCancellationPropagateUnwrapped()
+    {
+        var handler = new ThrowingHandler(new OperationCanceledException("cancelled by caller"));
+        var provider = new LocalAiProvider("http://localhost:11434/v1", "llama3.1", handler);
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        Assert.ThrowsAny<OperationCanceledException>(() => provider.Generate("Run Rails", cts.Token));
+    }
+
+    private sealed class ThrowingHandler(Exception exception) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken) =>
+            Task.FromException<HttpResponseMessage>(exception);
+    }
+
     private sealed class StubHandler(string responseBody) : HttpMessageHandler
     {
         internal Uri? RequestUri { get; private set; }
@@ -196,6 +269,23 @@ public class WipAiTests
     }
 
     [Fact]
+    public void GeneratorRejectsAContainerThatDoesNotMatchADependency()
+    {
+        using var directory = new TemporaryDirectory();
+        var generator = new WipAiGenerator(new StubProvider("""
+            version: 1
+            container: app
+            dependencies:
+              web:
+                image: node:20
+            """));
+
+        var exception = Assert.Throws<ConfigException>(() => generator.Generate(
+            "anything", new ProjectSnapshot(directory.Path, []), null, Path.Combine(directory.Path, "wip.yml")));
+        Assert.Equal("No dependencies.app entry (check container: in wip.yml)", exception.Message);
+    }
+
+    [Fact]
     public void GeneratorRejectsInvalidCandidateBeforeItCanBeSaved()
     {
         using var directory = new TemporaryDirectory();
@@ -226,5 +316,22 @@ public class WipAiTests
         internal TemporaryDirectory() => Path = Directory.CreateTempSubdirectory("wip-ai-test-").FullName;
         internal string Path { get; }
         public void Dispose() => Directory.Delete(Path, recursive: true);
+    }
+
+    /// <summary>Sets an environment variable for the duration of a test and restores whatever
+    /// value (if any) it had before, rather than assuming it started unset.</summary>
+    private sealed class TemporaryEnvironmentVariable : IDisposable
+    {
+        private readonly string name;
+        private readonly string? original;
+
+        internal TemporaryEnvironmentVariable(string name, string? value)
+        {
+            this.name = name;
+            original = Environment.GetEnvironmentVariable(name);
+            Environment.SetEnvironmentVariable(name, value);
+        }
+
+        public void Dispose() => Environment.SetEnvironmentVariable(name, original);
     }
 }

@@ -100,6 +100,12 @@ public sealed class LocalAiProvider : IWipAiProvider
         {
             throw new WipException(NotFoundMessage(baseUrl), exception);
         }
+        catch (OperationCanceledException exception)
+        {
+            // DiscoverModel takes no caller cancellationToken, so any cancellation here can
+            // only be the client.Timeout above firing.
+            throw new WipException($"Local AI server at '{baseUrl}' did not respond in time", exception);
+        }
 
         using (response)
         {
@@ -143,9 +149,25 @@ public sealed class LocalAiProvider : IWipAiProvider
                     $"{BaseUrlEnvironmentVariable}/--url includes the API version path, e.g. '.../v1'.");
             }
 
-            return [.. data.EnumerateArray()
-                .Select(element => element.GetProperty("id").GetString())
-                .Where(id => !string.IsNullOrEmpty(id) && !id.Contains("embed", StringComparison.OrdinalIgnoreCase))!];
+            if (data.ValueKind != JsonValueKind.Array)
+            {
+                throw new WipException("Local AI server's models list was not shaped as expected: data is not an array");
+            }
+
+            var models = new List<string>();
+            foreach (var element in data.EnumerateArray())
+            {
+                if (element.ValueKind == JsonValueKind.Object &&
+                    element.TryGetProperty("id", out var idElement) &&
+                    idElement.ValueKind == JsonValueKind.String &&
+                    idElement.GetString() is { Length: > 0 } id &&
+                    !id.Contains("embed", StringComparison.OrdinalIgnoreCase))
+                {
+                    models.Add(id);
+                }
+            }
+
+            return models;
         }
     }
 
@@ -175,6 +197,12 @@ public sealed class LocalAiProvider : IWipAiProvider
         {
             throw new WipException(NotFoundMessage(baseUrl), exception);
         }
+        catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            // The caller's own token is still live, so this cancellation can only be
+            // client.Timeout firing — a genuine caller cancellation instead propagates as-is.
+            throw new WipException($"Local AI server at '{baseUrl}' did not respond in time", exception);
+        }
 
         using (response)
         {
@@ -190,28 +218,33 @@ public sealed class LocalAiProvider : IWipAiProvider
 
     private static string ExtractContent(string responseBody)
     {
+        JsonDocument document;
         try
         {
-            using var document = JsonDocument.Parse(responseBody);
-            var content = document.RootElement
-                .GetProperty("choices")[0]
-                .GetProperty("message")
-                .GetProperty("content")
-                .GetString();
-
-            return string.IsNullOrWhiteSpace(content)
-                ? throw new WipException("Local AI server returned an empty response")
-                : content;
+            document = JsonDocument.Parse(responseBody);
         }
         catch (JsonException exception)
         {
             throw new WipException("Local AI server returned a response wip could not parse", exception);
         }
-        catch (Exception exception) when (exception is KeyNotFoundException or ArgumentOutOfRangeException)
+
+        using (document)
         {
-            throw new WipException(
-                "Local AI server response did not contain the expected choices[0].message.content field",
-                exception);
+            if (!document.RootElement.TryGetProperty("choices", out var choices) ||
+                choices.ValueKind != JsonValueKind.Array || choices.GetArrayLength() == 0 ||
+                !choices[0].TryGetProperty("message", out var message) ||
+                message.ValueKind != JsonValueKind.Object ||
+                !message.TryGetProperty("content", out var contentElement) ||
+                contentElement.ValueKind != JsonValueKind.String)
+            {
+                throw new WipException(
+                    "Local AI server response did not contain the expected choices[0].message.content field");
+            }
+
+            var content = contentElement.GetString();
+            return string.IsNullOrWhiteSpace(content)
+                ? throw new WipException("Local AI server returned an empty response")
+                : content;
         }
     }
 }

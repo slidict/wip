@@ -10,21 +10,14 @@ public class DoctorTests
     [Fact]
     public void ReportsMissingAiServerAsWarnWithFixHint()
     {
-        Environment.SetEnvironmentVariable(LocalAiProvider.BaseUrlEnvironmentVariable, "http://127.0.0.1:1");
-        try
-        {
-            using var directory = new TemporaryDirectory();
-            var results = new Doctor(new ConfigLoader(directory.Path), new FakeEnvironment()).Call();
+        using var baseUrl = new TemporaryEnvironmentVariable(LocalAiProvider.BaseUrlEnvironmentVariable, "http://127.0.0.1:1");
+        using var directory = new TemporaryDirectory();
+        var results = new Doctor(new ConfigLoader(directory.Path), new FakeEnvironment()).Call();
 
-            var ai = Assert.Single(results, result => result.Message.Contains("local AI server"));
-            Assert.Equal(Doctor.Level.Warn, ai.Level);
-            Assert.Contains("wip init --ai", ai.Message);
-            Assert.Contains(LocalAiProvider.BaseUrlEnvironmentVariable, ai.Message);
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable(LocalAiProvider.BaseUrlEnvironmentVariable, null);
-        }
+        var ai = Assert.Single(results, result => result.Message.Contains("local AI server"));
+        Assert.Equal(Doctor.Level.Warn, ai.Level);
+        Assert.Contains("wip init --ai", ai.Message);
+        Assert.Contains(LocalAiProvider.BaseUrlEnvironmentVariable, ai.Message);
     }
 
     [Fact]
@@ -33,84 +26,61 @@ public class DoctorTests
         using var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
         listener.Start();
         var port = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
-        Environment.SetEnvironmentVariable(LocalAiProvider.BaseUrlEnvironmentVariable, "http://127.0.0.1:1");
-        Environment.SetEnvironmentVariable(LocalAiProvider.ModelEnvironmentVariable, "llama3.1");
-        try
-        {
-            using var directory = new TemporaryDirectory();
-            var results = new Doctor(new ConfigLoader(directory.Path), new FakeEnvironment())
-                .Call($"http://127.0.0.1:{port}");
+        using var baseUrl = new TemporaryEnvironmentVariable(LocalAiProvider.BaseUrlEnvironmentVariable, "http://127.0.0.1:1");
+        using var model = new TemporaryEnvironmentVariable(LocalAiProvider.ModelEnvironmentVariable, "llama3.1");
+        using var directory = new TemporaryDirectory();
 
-            var ai = Assert.Single(results, result => result.Message.Contains("Local AI server"));
-            Assert.Equal(Doctor.Level.Ok, ai.Level);
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable(LocalAiProvider.BaseUrlEnvironmentVariable, null);
-            Environment.SetEnvironmentVariable(LocalAiProvider.ModelEnvironmentVariable, null);
-            listener.Stop();
-        }
+        var results = new Doctor(new ConfigLoader(directory.Path), new FakeEnvironment())
+            .Call($"http://127.0.0.1:{port}");
+
+        var ai = Assert.Single(results, result => result.Message.Contains("Local AI server"));
+        Assert.Equal(Doctor.Level.Ok, ai.Level);
     }
 
     [Fact]
     public void ReportsMissingModelAsWarnWithFixHintWhenServerHasNoneLoaded()
     {
         using var server = new FakeModelsServer("""{"data":[]}""");
-        Environment.SetEnvironmentVariable(LocalAiProvider.BaseUrlEnvironmentVariable, server.BaseUrl);
-        try
-        {
-            using var directory = new TemporaryDirectory();
-            var results = new Doctor(new ConfigLoader(directory.Path), new FakeEnvironment()).Call();
+        using var baseUrl = new TemporaryEnvironmentVariable(LocalAiProvider.BaseUrlEnvironmentVariable, server.BaseUrl);
+        using var model = new TemporaryEnvironmentVariable(LocalAiProvider.ModelEnvironmentVariable, null);
+        using var directory = new TemporaryDirectory();
 
-            var ai = Assert.Single(results, result => result.Message.Contains("No model configured"));
-            Assert.Equal(Doctor.Level.Warn, ai.Level);
-            Assert.Contains(LocalAiProvider.ModelEnvironmentVariable, ai.Message);
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable(LocalAiProvider.BaseUrlEnvironmentVariable, null);
-        }
+        var results = new Doctor(new ConfigLoader(directory.Path), new FakeEnvironment()).Call();
+
+        var ai = Assert.Single(results, result => result.Message.Contains("No model configured"));
+        Assert.Equal(Doctor.Level.Warn, ai.Level);
+        Assert.Contains(LocalAiProvider.ModelEnvironmentVariable, ai.Message);
     }
 
     [Fact]
     public void AutoDiscoversTheOnlyModelTheServerHasLoaded()
     {
         using var server = new FakeModelsServer("""{"data":[{"id":"llama3.1"}]}""");
-        Environment.SetEnvironmentVariable(LocalAiProvider.BaseUrlEnvironmentVariable, server.BaseUrl);
-        try
-        {
-            using var directory = new TemporaryDirectory();
-            var results = new Doctor(new ConfigLoader(directory.Path), new FakeEnvironment()).Call();
+        using var baseUrl = new TemporaryEnvironmentVariable(LocalAiProvider.BaseUrlEnvironmentVariable, server.BaseUrl);
+        using var model = new TemporaryEnvironmentVariable(LocalAiProvider.ModelEnvironmentVariable, null);
+        using var directory = new TemporaryDirectory();
 
-            var ai = Assert.Single(results, result => result.Message.Contains("Local AI server"));
-            Assert.Equal(Doctor.Level.Ok, ai.Level);
-            Assert.Contains("llama3.1", ai.Message);
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable(LocalAiProvider.BaseUrlEnvironmentVariable, null);
-        }
+        var results = new Doctor(new ConfigLoader(directory.Path), new FakeEnvironment()).Call();
+
+        var ai = Assert.Single(results, result => result.Message.Contains("Local AI server"));
+        Assert.Equal(Doctor.Level.Ok, ai.Level);
+        Assert.Contains("llama3.1", ai.Message);
     }
 
     [Fact]
     public void ReportsAmbiguousModelsAsWarnListingTheChoices()
     {
         using var server = new FakeModelsServer("""{"data":[{"id":"llama3.1"},{"id":"qwen2.5-coder"}]}""");
-        Environment.SetEnvironmentVariable(LocalAiProvider.BaseUrlEnvironmentVariable, server.BaseUrl);
-        try
-        {
-            using var directory = new TemporaryDirectory();
-            var results = new Doctor(new ConfigLoader(directory.Path), new FakeEnvironment()).Call();
+        using var baseUrl = new TemporaryEnvironmentVariable(LocalAiProvider.BaseUrlEnvironmentVariable, server.BaseUrl);
+        using var model = new TemporaryEnvironmentVariable(LocalAiProvider.ModelEnvironmentVariable, null);
+        using var directory = new TemporaryDirectory();
 
-            var ai = Assert.Single(results, result => result.Message.Contains("more than one loaded"));
-            Assert.Equal(Doctor.Level.Warn, ai.Level);
-            Assert.Contains("llama3.1", ai.Message);
-            Assert.Contains("qwen2.5-coder", ai.Message);
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable(LocalAiProvider.BaseUrlEnvironmentVariable, null);
-        }
+        var results = new Doctor(new ConfigLoader(directory.Path), new FakeEnvironment()).Call();
+
+        var ai = Assert.Single(results, result => result.Message.Contains("more than one loaded"));
+        Assert.Equal(Doctor.Level.Warn, ai.Level);
+        Assert.Contains("llama3.1", ai.Message);
+        Assert.Contains("qwen2.5-coder", ai.Message);
     }
 
     [Fact]
@@ -119,22 +89,14 @@ public class DoctorTests
         using var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
         listener.Start();
         var port = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
-        Environment.SetEnvironmentVariable(LocalAiProvider.BaseUrlEnvironmentVariable, $"http://127.0.0.1:{port}");
-        Environment.SetEnvironmentVariable(LocalAiProvider.ModelEnvironmentVariable, "llama3.1");
-        try
-        {
-            using var directory = new TemporaryDirectory();
-            var results = new Doctor(new ConfigLoader(directory.Path), new FakeEnvironment()).Call();
+        using var baseUrl = new TemporaryEnvironmentVariable(LocalAiProvider.BaseUrlEnvironmentVariable, $"http://127.0.0.1:{port}");
+        using var model = new TemporaryEnvironmentVariable(LocalAiProvider.ModelEnvironmentVariable, "llama3.1");
+        using var directory = new TemporaryDirectory();
 
-            var ai = Assert.Single(results, result => result.Message.Contains("Local AI server"));
-            Assert.Equal(Doctor.Level.Ok, ai.Level);
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable(LocalAiProvider.BaseUrlEnvironmentVariable, null);
-            Environment.SetEnvironmentVariable(LocalAiProvider.ModelEnvironmentVariable, null);
-            listener.Stop();
-        }
+        var results = new Doctor(new ConfigLoader(directory.Path), new FakeEnvironment()).Call();
+
+        var ai = Assert.Single(results, result => result.Message.Contains("Local AI server"));
+        Assert.Equal(Doctor.Level.Ok, ai.Level);
     }
 
     private sealed class FakeEnvironment : IEnvironment
@@ -149,6 +111,23 @@ public class DoctorTests
         internal TemporaryDirectory() => Path = Directory.CreateTempSubdirectory("wip-doctor-test-").FullName;
         internal string Path { get; }
         public void Dispose() => Directory.Delete(Path, recursive: true);
+    }
+
+    /// <summary>Sets an environment variable for the duration of a test and restores whatever
+    /// value (if any) it had before, rather than assuming it started unset.</summary>
+    private sealed class TemporaryEnvironmentVariable : IDisposable
+    {
+        private readonly string name;
+        private readonly string? original;
+
+        internal TemporaryEnvironmentVariable(string name, string? value)
+        {
+            this.name = name;
+            original = Environment.GetEnvironmentVariable(name);
+            Environment.SetEnvironmentVariable(name, value);
+        }
+
+        public void Dispose() => Environment.SetEnvironmentVariable(name, original);
     }
 
     /// <summary>A minimal real HTTP server for the one endpoint <see cref="LocalAiProvider.DiscoverModel"/>

@@ -392,6 +392,13 @@ public sealed partial class Config
             throw new ConfigException("container: must be set when dependencies: has entries");
         }
 
+        // Otherwise this only surfaces later, and with a less direct message, when something
+        // that needs the primary container (CommandBuilder.PrimaryValues) first looks it up.
+        if (!IsComposeMode && Container is not null && !RawDependencies.ContainsKey(Container))
+        {
+            throw new ConfigException($"No dependencies.{Container} entry (check container: in wip.yml)");
+        }
+
         foreach (var (name, entry) in RawDependencies)
         {
             ValidateDependency(name, entry);
