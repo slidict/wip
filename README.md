@@ -32,6 +32,7 @@ key, every command's flags, guides, and troubleshooting — see the **[wip Wiki]
 ## Contents
 
 - [Which mode should you use?](#which-mode-should-you-use)
+- [AI-assisted initialization](#ai-assisted-initialization)
 - [Requirements & installation](#requirements--installation)
 - [Quick start](#quick-start)
 - [Configuration](#configuration)
@@ -56,6 +57,29 @@ key, every command's flags, guides, and troubleshooting — see the **[wip Wiki]
 `docker-compose.yml`, or `docker-compose.yaml` next to it, and `container` otherwise — see
 [Commands](#commands). For the full breakdown and trade-offs, see
 [Choosing a Mode](https://github.com/slidict/wip/wiki/Choosing-a-Mode) on the wiki.
+
+## AI-assisted initialization
+
+`wip init --ai` analyzes a bounded selection of project metadata (for example `README.md`,
+`Gemfile`, `package.json`, `Procfile`, and Compose files), asks for a natural-language description,
+and displays a generated `wip.yml`. If a `wip.yml` already exists it is supplied as the basis for
+an update. The candidate is parsed and validated by wip before the confirmation prompt; AI output
+never writes files directly.
+
+```powershell
+wip init --ai
+```
+
+The MVP uses the Windows-local provider. To keep the CLI independent of a particular model and of
+changes to the Windows AI SDK, the provider launches a Windows AI host named
+`wip-windows-ai generate`: the complete prompt is sent on standard input and the host returns only
+YAML on standard output. Set `WIP_WINDOWS_AI_COMMAND` to the host executable's path when it is not
+on `PATH`. Future Ollama, LM Studio, and OpenAI-compatible providers can implement the same internal
+provider interface without changing collection, validation, confirmation, or saving.
+
+Collection is allow-listed and capped at 24 files, 64 KiB per file, and 256 KiB total. Files such as
+`.env` and arbitrary source files are not collected. Review the displayed YAML before answering
+`y`; any other answer leaves the existing file untouched.
 
 ## Requirements & installation
 

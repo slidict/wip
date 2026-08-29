@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Wip.Ai;
 using Wip.Build;
 using Wip.Compose;
 using Wip.Configuration;
@@ -131,9 +132,19 @@ internal sealed partial class CliContext
         }
     }
 
-    internal int Init(bool force, string? template)
+    internal int Init(bool force, string? template, bool ai = false)
     {
         var path = Path.GetFullPath(options.ConfigPath ?? ConfigLoader.Filename);
+        if (ai)
+        {
+            if (template is not null)
+            {
+                throw new WipException("--template cannot be combined with --ai");
+            }
+
+            return InitWithAi(path);
+        }
+
         if (File.Exists(path) && !force)
         {
             throw new WipException($"{path} already exists (use --force to overwrite)");
@@ -143,6 +154,41 @@ internal sealed partial class CliContext
         File.WriteAllText(path, initializer.Call());
         Console.Error.WriteLine(
             $"wip: wrote {path} (mode: {(initializer.IsCompose ? "compose-native" : "container")})");
+        return 0;
+    }
+
+    private static int InitWithAi(string path)
+    {
+        var directory = Path.GetDirectoryName(path) ?? Directory.GetCurrentDirectory();
+        Console.Error.WriteLine("Describe the development environment wip should run (finish with an empty line):");
+        var lines = new List<string>();
+        string? line;
+        while ((line = Console.ReadLine()) is not null && line.Length > 0)
+        {
+            lines.Add(line);
+        }
+
+        var existing = File.Exists(path) ? File.ReadAllText(path) : null;
+        Console.Error.WriteLine($"wip: analyzing {directory}");
+        var project = new ProjectAnalyzer(directory).Analyze();
+        Console.Error.WriteLine($"wip: sending {project.Files.Count} selected project files to Windows local AI");
+        var candidate = new WipAiGenerator(new WindowsAiProvider()).Generate(
+            string.Join(Environment.NewLine, lines), project, existing, path);
+
+        Console.WriteLine(candidate);
+        Console.Error.Write(existing is null
+            ? "Save this wip.yml? [y/N] "
+            : "Replace the existing wip.yml with this update? [y/N] ");
+        var answer = Console.ReadLine();
+        if (!string.Equals(answer, "y", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(answer, "yes", StringComparison.OrdinalIgnoreCase))
+        {
+            Console.Error.WriteLine("wip: not saved");
+            return 0;
+        }
+
+        File.WriteAllText(path, candidate);
+        Console.Error.WriteLine($"wip: wrote {path}");
         return 0;
     }
 

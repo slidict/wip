@@ -1,0 +1,82 @@
+using System.Diagnostics;
+using System.Text;
+
+namespace Wip.Ai;
+
+/// <summary>
+/// Windows-local AI provider. It speaks a deliberately tiny stdin/stdout protocol to the
+/// Windows AI host so wip does not take a compile-time dependency on a model name or a
+/// particular revision of the evolving Windows AI SDK.
+/// </summary>
+public sealed class WindowsAiProvider : IWipAiProvider
+{
+    public const string CommandEnvironmentVariable = "WIP_WINDOWS_AI_COMMAND";
+    private const int MaxResponseCharacters = 1024 * 1024;
+    private readonly string command;
+
+    public WindowsAiProvider(string? command = null) => this.command = command
+        ?? Environment.GetEnvironmentVariable(CommandEnvironmentVariable)
+        ?? "wip-windows-ai";
+
+    public string Generate(string prompt, CancellationToken cancellationToken = default)
+    {
+        var start = new ProcessStartInfo(command)
+        {
+            UseShellExecute = false,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+        };
+        start.ArgumentList.Add("generate");
+
+        try
+        {
+            using var process = Process.Start(start)
+                ?? throw new WipException($"Could not start Windows AI host '{command}'");
+            var outputTask = Task.Run(() => ReadBounded(process.StandardOutput, MaxResponseCharacters));
+            var errorTask = Task.Run(() => ReadBounded(process.StandardError, 16 * 1024));
+            process.StandardInput.Write(prompt);
+            process.StandardInput.Close();
+
+            process.WaitForExitAsync(cancellationToken).GetAwaiter().GetResult();
+            var output = outputTask.GetAwaiter().GetResult();
+            var error = errorTask.GetAwaiter().GetResult();
+            if (process.ExitCode != 0)
+            {
+                throw new WipException($"Windows AI host failed ({process.ExitCode}): {error.Trim()}");
+            }
+
+            if (string.IsNullOrWhiteSpace(output))
+            {
+                throw new WipException("Windows AI host returned an empty response");
+            }
+
+            return output;
+        }
+        catch (System.ComponentModel.Win32Exception exception)
+        {
+            throw new WipException(
+                $"Windows AI host '{command}' was not found. Install the wip Windows AI host " +
+                $"or set {CommandEnvironmentVariable} to its path.", exception);
+        }
+    }
+
+    private static string ReadBounded(TextReader reader, int limit)
+    {
+        var result = new StringBuilder();
+        var buffer = new char[4096];
+        while (result.Length <= limit)
+        {
+            var count = reader.Read(buffer, 0, Math.Min(buffer.Length, limit + 1 - result.Length));
+            if (count == 0)
+            {
+                return result.ToString();
+            }
+
+            result.Append(buffer, 0, count);
+        }
+
+        throw new WipException("Windows AI host response exceeded wip's 1 MiB limit");
+    }
+}

@@ -121,12 +121,18 @@ internal static class Program
         {
             Description = $"sync.exclude preset: {string.Join(", ", Initializer.TemplateLabels.Keys)} (default: none)",
         };
+        var ai = new Option<bool>("--ai")
+        {
+            Description = "Generate or update wip.yml from a natural-language request using Windows local AI",
+        };
         var init = new Command("init", "Create a starter wip.yml (detects an existing compose file)")
         {
             force,
             template,
+            ai,
         };
-        init.SetAction(parsed => context(parsed).Init(parsed.GetValue(force), parsed.GetValue(template)));
+        init.SetAction(parsed => context(parsed).Init(
+            parsed.GetValue(force), parsed.GetValue(template), parsed.GetValue(ai)));
         yield return init;
 
         yield return Simple("doctor", "Diagnose the development environment", context, ctx => ctx.Doctor());
