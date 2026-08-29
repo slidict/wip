@@ -107,6 +107,19 @@ public class WipAiTests
         Assert.False(LocalAiProvider.IsAvailable("http://127.0.0.1:1"));
     }
 
+    /// <summary>
+    /// A URI whose scheme has no default port and no explicit one either (file:///tmp parses to
+    /// an empty host and Port -1) makes TcpClient.ConnectAsync throw ArgumentException
+    /// synchronously, before it ever returns a Task — too early for a catch around
+    /// AggregateException alone to see it, so it used to escape IsAvailable and crash the CLI
+    /// instead of being reported as "no server found".
+    /// </summary>
+    [Fact]
+    public void IsAvailableRejectsAUriWithNoHostOrPortInsteadOfThrowing()
+    {
+        Assert.False(LocalAiProvider.IsAvailable("file:///tmp"));
+    }
+
     [Fact]
     public void GenerateSendsOpenAiCompatibleChatCompletionsRequest()
     {
