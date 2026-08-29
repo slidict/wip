@@ -61,7 +61,7 @@ public sealed class WipAiGenerator
         var closing = value.LastIndexOf("```", StringComparison.Ordinal);
         if (firstNewline < 0 || closing <= firstNewline)
         {
-            throw new ConfigException("Windows AI returned an incomplete Markdown block");
+            throw new ConfigException("Local AI server returned an incomplete Markdown block");
         }
 
         return value[(firstNewline + 1)..closing].Trim();

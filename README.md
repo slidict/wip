@@ -70,16 +70,34 @@ never writes files directly.
 wip init --ai
 ```
 
-The MVP uses the Windows-local provider. To keep the CLI independent of a particular model and of
-changes to the Windows AI SDK, the provider launches a Windows AI host named
-`wip-windows-ai generate`: the complete prompt is sent on standard input and the host returns only
-YAML on standard output. Set `WIP_WINDOWS_AI_COMMAND` to the host executable's path when it is not
-on `PATH`. Future Ollama, LM Studio, and OpenAI-compatible providers can implement the same internal
-provider interface without changing collection, validation, confirmation, or saving.
+`wip init --ai` talks to a local AI server through the OpenAI-compatible `/chat/completions`
+endpoint that both [Ollama](https://ollama.com) (`ollama serve`) and
+[LM Studio](https://lmstudio.ai)'s local server already expose, so wip takes no dependency on a
+specific vendor's native protocol or on Windows-only AI APIs — this works the same way on any
+machine, Copilot+ PC or not, once a model is pulled or loaded locally.
 
-`wip doctor` reports whether the host resolves, and `wip init --ai` checks the same thing up front
-— before it asks for a description — so a missing host fails immediately with a fix, not after a
-prompt that was never going anywhere.
+Configure it with two environment variables:
+
+- `WIP_AI_BASE_URL` — the server's OpenAI-compatible base URL. Defaults to
+  `http://localhost:11434/v1` (Ollama's default). Point it at LM Studio
+  (typically `http://localhost:1234/v1`) or any other OpenAI-compatible local server instead.
+- `WIP_AI_MODEL` — the model name already pulled or loaded in that server, e.g. `llama3.1`. If
+  unset, wip asks the server's `/models` endpoint instead: with exactly one chat-capable model
+  loaded (embedding models are ignored) it uses that one automatically; with none or more than one
+  it fails up front and, if there's more than one, lists them so you can set `WIP_AI_MODEL`.
+
+Both `wip doctor --url <url>` and `wip init --ai --url <url>` accept a `--url` flag that overrides
+`WIP_AI_BASE_URL` for that one invocation, so you can point at a different server (e.g. LM Studio)
+without changing your environment:
+
+```powershell
+wip doctor --url http://localhost:1234/v1
+wip init --ai --url http://localhost:1234/v1
+```
+
+`wip doctor` reports whether the server is reachable and a model is configured, and
+`wip init --ai` checks the same things up front — before it asks for a description — so a missing
+server or model fails immediately with a fix, not after a prompt that was never going anywhere.
 
 Collection is allow-listed and capped at 24 files, 64 KiB per file, and 256 KiB total. Files such as
 `.env` and arbitrary source files are not collected. Review the displayed YAML before answering

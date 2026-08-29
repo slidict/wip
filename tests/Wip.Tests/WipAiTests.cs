@@ -45,29 +45,138 @@ public class WipAiTests
     }
 
     [Fact]
-    public void ResolveCommandPrefersExplicitArgumentThenEnvironmentThenDefault()
+    public void ResolveBaseUrlPrefersExplicitArgumentThenEnvironmentThenDefault()
     {
-        Assert.Equal("explicit", WindowsAiProvider.ResolveCommand("explicit"));
+        Assert.Equal("http://explicit", LocalAiProvider.ResolveBaseUrl("http://explicit"));
 
-        Environment.SetEnvironmentVariable(WindowsAiProvider.CommandEnvironmentVariable, "from-env");
+        Environment.SetEnvironmentVariable(LocalAiProvider.BaseUrlEnvironmentVariable, "http://from-env");
         try
         {
-            Assert.Equal("from-env", WindowsAiProvider.ResolveCommand());
+            Assert.Equal("http://from-env", LocalAiProvider.ResolveBaseUrl());
         }
         finally
         {
-            Environment.SetEnvironmentVariable(WindowsAiProvider.CommandEnvironmentVariable, null);
+            Environment.SetEnvironmentVariable(LocalAiProvider.BaseUrlEnvironmentVariable, null);
         }
 
-        Assert.Equal(WindowsAiProvider.DefaultCommand, WindowsAiProvider.ResolveCommand());
+        Assert.Equal(LocalAiProvider.DefaultBaseUrl, LocalAiProvider.ResolveBaseUrl());
     }
 
     [Fact]
-    public void IsAvailableFindsARealCommandAndRejectsAMadeUpOne()
+    public void ResolveModelPrefersExplicitArgumentThenEnvironmentThenNull()
     {
-        var realCommand = OperatingSystem.IsWindows() ? "cmd" : "sh";
-        Assert.True(WindowsAiProvider.IsAvailable(realCommand));
-        Assert.False(WindowsAiProvider.IsAvailable("wip-ai-host-that-does-not-exist-anywhere"));
+        Assert.Equal("explicit-model", LocalAiProvider.ResolveModel("explicit-model"));
+
+        Environment.SetEnvironmentVariable(LocalAiProvider.ModelEnvironmentVariable, "from-env-model");
+        try
+        {
+            Assert.Equal("from-env-model", LocalAiProvider.ResolveModel());
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(LocalAiProvider.ModelEnvironmentVariable, null);
+        }
+
+        Assert.Null(LocalAiProvider.ResolveModel());
+    }
+
+    [Fact]
+    public void IsAvailableFindsAListeningServerAndRejectsAClosedPort()
+    {
+        using var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
+        try
+        {
+            Assert.True(LocalAiProvider.IsAvailable($"http://127.0.0.1:{port}"));
+        }
+        finally
+        {
+            listener.Stop();
+        }
+
+        Assert.False(LocalAiProvider.IsAvailable("http://127.0.0.1:1"));
+    }
+
+    [Fact]
+    public void GenerateSendsOpenAiCompatibleChatCompletionsRequest()
+    {
+        var handler = new StubHandler("""{"choices":[{"message":{"content":"version: 1"}}]}""");
+        var provider = new LocalAiProvider("http://localhost:11434/v1", "llama3.1", handler);
+
+        var result = provider.Generate("Run Rails", TestContext.Current.CancellationToken);
+
+        Assert.Equal("version: 1", result);
+        Assert.Equal("http://localhost:11434/v1/chat/completions", handler.RequestUri?.ToString());
+        Assert.Contains("\"model\":\"llama3.1\"", handler.RequestBody);
+        Assert.Contains("Run Rails", handler.RequestBody);
+    }
+
+    [Fact]
+    public void GenerateRejectsAMalformedResponse()
+    {
+        var handler = new StubHandler("""{"unexpected":true}""");
+        var provider = new LocalAiProvider("http://localhost:11434/v1", "llama3.1", handler);
+
+        Assert.Throws<WipException>(() => provider.Generate("Run Rails", TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public void DiscoverModelReturnsTheOnlyChatCapableModel()
+    {
+        var handler = new StubHandler(
+            """{"data":[{"id":"text-embedding-nomic-embed-text-v1.5"},{"id":"llama3.1"}]}""");
+
+        var model = LocalAiProvider.DiscoverModel("http://localhost:11434/v1", handler);
+
+        Assert.Equal("llama3.1", model);
+        Assert.Equal("http://localhost:11434/v1/models", handler.RequestUri?.ToString());
+    }
+
+    [Fact]
+    public void DiscoverModelThrowsWhenTheServerHasNoModelsLoaded()
+    {
+        var handler = new StubHandler("""{"data":[]}""");
+
+        var exception = Assert.Throws<WipException>(() => LocalAiProvider.DiscoverModel("http://localhost:11434/v1", handler));
+        Assert.Contains("No model configured", exception.Message);
+    }
+
+    [Fact]
+    public void DiscoverModelExplainsALikelyMissingApiVersionPath()
+    {
+        var handler = new StubHandler("""{"error":"Unexpected endpoint or method. (GET /models)"}""");
+
+        var exception = Assert.Throws<WipException>(() => LocalAiProvider.DiscoverModel("http://127.0.0.1:1234", handler));
+        Assert.Contains("Unexpected endpoint or method", exception.Message);
+        Assert.Contains("/v1", exception.Message);
+    }
+
+    [Fact]
+    public void DiscoverModelThrowsListingChoicesWhenAmbiguous()
+    {
+        var handler = new StubHandler("""{"data":[{"id":"llama3.1"},{"id":"qwen2.5-coder"}]}""");
+
+        var exception = Assert.Throws<WipException>(() => LocalAiProvider.DiscoverModel("http://localhost:11434/v1", handler));
+        Assert.Contains("llama3.1", exception.Message);
+        Assert.Contains("qwen2.5-coder", exception.Message);
+    }
+
+    private sealed class StubHandler(string responseBody) : HttpMessageHandler
+    {
+        internal Uri? RequestUri { get; private set; }
+        internal string? RequestBody { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            RequestUri = request.RequestUri;
+            RequestBody = request.Content?.ReadAsStringAsync(cancellationToken).GetAwaiter().GetResult();
+            return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new StringContent(responseBody),
+            });
+        }
     }
 
     [Fact]
