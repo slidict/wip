@@ -296,25 +296,49 @@ jobs:
             exit 1
           fi
 
-          jq --arg version "$VERSION" --arg digest "$digest" '
-            .version = $version
-            | .architecture["64bit"].url = "https://github.com/slidict/wip/releases/download/v\($version)/wip-\($version)-win-x64.zip"
-            | .architecture["64bit"].hash = $digest
-          ' wip.json > wip.json.tmp
-          mv wip.json.tmp wip.json
-
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add wip.json
-          if git diff --cached --quiet; then
-            echo "Scoop manifest already describes v${VERSION}."
-            exit 0
-          fi
-          git commit -m "chore(scoop): update manifest for v${VERSION}"
 
           header=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
-          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${header}" \
-            push origin "HEAD:${GITHUB_REF_NAME}"
+          auth_header="AUTHORIZATION: basic ${header}"
+
+          # main can advance between the checkout above and the push below (another release,
+          # an unrelated merge). Retry against the latest tip rather than letting a stale push
+          # leave the manifest on the previous version: refetch, discard the rejected commit,
+          # and reapply the (idempotent) jq edit on top of the new tip.
+          pushed=false
+          for attempt in 1 2 3 4 5; do
+            jq --arg version "$VERSION" --arg digest "$digest" '
+              .version = $version
+              | .architecture["64bit"].url = "https://github.com/slidict/wip/releases/download/v\($version)/wip-\($version)-win-x64.zip"
+              | .architecture["64bit"].hash = $digest
+            ' wip.json > wip.json.tmp
+            mv wip.json.tmp wip.json
+
+            git add wip.json
+            if git diff --cached --quiet; then
+              echo "Scoop manifest already describes v${VERSION}."
+              pushed=true
+              break
+            fi
+            git commit -m "chore(scoop): update manifest for v${VERSION}"
+
+            if git -c "http.https://github.com/.extraheader=${auth_header}" \
+                push origin "HEAD:${GITHUB_REF_NAME}"; then
+              pushed=true
+              break
+            fi
+
+            echo "Push rejected on attempt ${attempt}; refetching ${GITHUB_REF_NAME} and retrying." >&2
+            git -c "http.https://github.com/.extraheader=${auth_header}" \
+              fetch origin "${GITHUB_REF_NAME}"
+            git reset --hard FETCH_HEAD
+          done
+
+          if [ "$pushed" != "true" ]; then
+            echo "::error::Could not push the Scoop manifest update after 5 attempts; ${GITHUB_REF_NAME} kept advancing." >&2
+            exit 1
+          fi
 
   # Called rather than triggered: a release created with GITHUB_TOKEN does not raise
   # `release: published` for another workflow, so an event-based handoff would leave every

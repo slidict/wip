@@ -6,7 +6,7 @@
   "architecture": {
     "64bit": {
       "url": "https://github.com/slidict/wip/releases/download/v2.0.6/wip-2.0.6-win-x64.zip",
-      "hash": "https://github.com/slidict/wip/releases/download/v2.0.6/SHA256SUMS"
+      "hash": "97e7320e4a28264ed2034ea6f0db3f814f3a89ee3d2ac0e89f50c2c0a07e7f5c"
     }
   },
   "bin": "wip.exe",
