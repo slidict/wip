@@ -10,7 +10,7 @@
   </PropertyGroup>
 
   <PropertyGroup>
-    <Version>2.0.9</Version>
+    <Version>2.1.0</Version>
     <Authors>wip contributors</Authors>
     <Product>wip</Product>
     <Description>A developer-friendly CLI wrapper for Microsoft WSLC.</Description>
