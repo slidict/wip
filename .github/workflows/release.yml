@@ -290,7 +290,9 @@ jobs:
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
             --pattern SHA256SUMS --dir scoop-release
 
-          digest=$(awk -v archive="$archive" '$2 == archive { print tolower($1) }' scoop-release/SHA256SUMS)
+          # SHA256SUMS is written by PowerShell on a Windows runner, so its filename field can
+          # retain a carriage return when awk reads the CRLF-terminated line on Linux.
+          digest=$(awk -v archive="$archive" '{ sub(/\r$/, "", $2); if ($2 == archive) print tolower($1) }' scoop-release/SHA256SUMS)
           if ! [[ "$digest" =~ ^[0-9a-f]{64}$ ]]; then
             echo "::error::SHA256SUMS has no valid digest for $archive"
             exit 1
