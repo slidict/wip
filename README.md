@@ -36,6 +36,7 @@ key, every command's flags, guides, and troubleshooting — see the **[wip Wiki]
 - [AI-assisted initialization](#ai-assisted-initialization)
 - [Requirements & installation](#requirements--installation)
 - [Quick start](#quick-start)
+- [Examples](#examples)
 - [Configuration](#configuration)
 - [Commands](#commands)
 - [Common errors](#common-errors)
@@ -316,6 +317,17 @@ wip build
 wip up -d
 wip rails console
 ```
+
+## Examples
+
+The quick start above is intentionally minimal. For fuller `wip.yml`/`compose.yml` pairs modeled
+on real stacks — with the sidecars, healthchecks, and day-to-day commands a project actually
+ends up with — see [`examples/`](examples):
+
+- [`examples/rails`](examples/rails) — Rails + Postgres + Redis, `mode: container`
+- [`examples/node`](examples/node) — Node.js + MySQL + Redis, `mode: compose-native`
+
+Each has its own README with copy-and-adapt setup instructions.
 
 ## Configuration
 

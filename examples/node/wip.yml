@@ -1,0 +1,21 @@
+version: 1
+mode: compose-native # parses compose.yml itself; no third-party compose-for-wslc tool needed
+compose:
+  service: web # dependencies:, container:, and network: are all synthesized from compose.yml
+  project: node-app
+commands:
+  npm:
+    command: npm
+  test:
+    command: npm test
+  mysql:
+    command: mysql -uroot -ppassword myapp_development
+    container: db # redirects this one command to the db service instead of web
+    interactive: true
+  redis-cli:
+    command: redis-cli -h cache
+    container: cache
+    interactive: true
+  shell:
+    command: sh
+    interactive: true
