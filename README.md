@@ -482,6 +482,10 @@ listed here rather than left implicit — see
 
 ### Needs verification on real hardware
 
+The end-to-end job in [`tests/e2e`](tests/e2e/README.md) now exercises the lifecycle against
+real containers, which settles nothing on this list by itself — each item below still needs
+someone to measure it — but it is where a case for each one belongs once it can be written.
+
 - [ ] **Which host paths `wslc` accepts** — the one open design question. wslc's source rules
       one answer out: a `-v` source is resolved with `GetFullPathNameW` — as a Windows path —
       and a source that does not exist mounts an empty directory instead of failing, so
@@ -533,6 +537,19 @@ Requires the .NET 10 SDK. The test suite doesn't need WSLC — the resolution, b
 execution layers are all swappable — and it runs on Linux and macOS as well as Windows, though
 only Windows can produce the shipping binary (Native AOT cannot cross-compile between
 operating systems).
+
+That independence is deliberate, and it leaves a gap: those tests prove what wip *would* send
+to `wslc`, never that `wslc` accepts it. [`tests/e2e`](tests/e2e/README.md) covers the rest —
+it drives the published `wip.exe` through `build`, `up -d`, `exec`, `run`, and `down` against
+real containers on a machine with WSL2 and WSLC:
+
+```powershell
+dotnet publish src/Wip.Cli/Wip.Cli.csproj -c Release -r win-x64 -o artifacts/win-x64
+pwsh tests/e2e/run-e2e.ps1 -Wip artifacts/win-x64/wip.exe
+```
+
+CI runs it on `windows-latest` on demand, weekly, and on a pull request labelled `e2e` — not
+on every push, so the ordinary test run stays fast and stays WSLC-free.
 
 The last line needs MSVC — see
 [Requirements & installation](#requirements--installation) for the `winget install` command

@@ -1,0 +1,107 @@
+# End-to-end tests against a real WSLC installation.
+#
+# Deliberately not part of the Test workflow. Those jobs must keep running on every push and
+# on Linux, which means they must keep working with no WSLC at all -- see
+# tests/e2e/README.md. This one needs a Windows host with WSL2 and WSLC and takes minutes
+# rather than seconds, so it runs on demand, weekly, and on a pull request that opts in with
+# the `e2e` label.
+name: E2E (real WSLC)
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_image:
+        description: "Base image the fixture builds on"
+        required: false
+        default: "alpine:3.20"
+  schedule:
+    # Weekly, so a change in WSLC's own interface surfaces here rather than in someone's
+    # terminal, even in a week nobody touched the repository.
+    - cron: "17 4 * * 1"
+  pull_request:
+    types: [opened, reopened, labeled, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    name: Lifecycle against real WSLC
+    # A labeled/synchronize pull request only qualifies while the `e2e` label is on it;
+    # scheduled and manual runs always do.
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'e2e')
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    env:
+      BASE_IMAGE: ${{ inputs.base_image || 'alpine:3.20' }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          dotnet-version: "10.0.x"
+
+      # The published binary, not `dotnet run`: this is the artifact users install, and AOT
+      # compilation is the one step the managed test host cannot speak for.
+      - name: Publish wip.exe
+        run: >
+          dotnet publish src/Wip.Cli/Wip.Cli.csproj
+          --configuration Release
+          --runtime win-x64
+          --output artifacts/win-x64
+
+      # WSLC ships in the pre-release WSL channel today. --shutdown makes the update take
+      # effect without a reboot the runner cannot give us.
+      - name: Update WSL
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $PSNativeCommandUseErrorActionPreference = $false
+          wsl --update --pre-release
+          $code = $LASTEXITCODE
+          wsl --shutdown
+          wsl --version
+          if ($code -ne 0) { throw "wsl --update --pre-release exited $code" }
+
+      # Kept separate from the test itself so a runner image without WSLC reports that in one
+      # line, instead of as a wip command failing for reasons that have nothing to do with wip.
+      - name: Verify wslc is available
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $PSNativeCommandUseErrorActionPreference = $false
+          $wslc = Get-Command wslc -ErrorAction SilentlyContinue
+          if (-not $wslc) {
+            wsl --status
+            throw "wslc is not on PATH after 'wsl --update --pre-release'. WSLC may not be available on this runner image yet."
+          }
+          Write-Host "wslc: $($wslc.Source)"
+          wslc version
+          if ($LASTEXITCODE -ne 0) { throw "wslc version exited $LASTEXITCODE" }
+
+      - name: Run the lifecycle end-to-end
+        shell: pwsh
+        run: >
+          pwsh tests/e2e/run-e2e.ps1
+          -Wip artifacts/win-x64/wip.exe
+          -BaseImage $env:BASE_IMAGE
+
+      # The script prints its own diagnostics when an assertion fails; this covers the cases
+      # it never reached -- a cancelled step, a crash, a hung container.
+      - name: Diagnostics
+        if: failure()
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $PSNativeCommandUseErrorActionPreference = $false
+          wsl --version
+          wsl --status
+          wslc version
+          wslc list --all
+          exit 0

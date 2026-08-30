@@ -1,0 +1,34 @@
+# Fixture project for the real-WSLC end-to-end test. See README.md next to this file.
+#
+# Everything here is deliberately small and self-contained: one image built from the
+# Dockerfile beside it, one long-lived container, and no bind mounts. Volumes are left out
+# on purpose -- how wslc resolves a `-v` source is its own open question (see the README's
+# "Known gaps & TODO"), and mixing it in here would make a mount failure look like a
+# lifecycle failure.
+version: 1
+mode: container
+wslc:
+  command: auto
+container: wip-e2e-app
+network: wip-e2e-net
+dependencies:
+  wip-e2e-app:
+    image: wip-e2e:latest
+    workdir: /srv
+    interactive: false
+    # Only `wip run` reads this (it becomes `wslc run --rm`); `wip up` names the container
+    # and leaves it in place, which is what `wip down` then has to remove.
+    remove: true
+    # A bounded sleep rather than `sleep infinity`: if cleanup is ever skipped -- a killed
+    # job, a local run interrupted with Ctrl-C -- the container stops by itself instead of
+    # holding the machine.
+    command: sleep 600
+interaction:
+  build:
+    type: build
+    context: .
+    tag: wip-e2e:latest
+  marker:
+    type: exec
+    command: cat /srv/marker.txt
+    interactive: false
