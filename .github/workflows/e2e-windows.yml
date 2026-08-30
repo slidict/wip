@@ -58,23 +58,33 @@ jobs:
           $ErrorActionPreference = 'Continue'
           $PSNativeCommandUseErrorActionPreference = $false
 
-          # wsl.exe writes UTF-16LE. Setting [Console]::OutputEncoding alone is not enough
-          # here: a native command whose output PowerShell does not capture inherits the
-          # step's stdout handle and writes its bytes straight to the log, with nothing
-          # decoding them -- which is why the first attempt at this fix worked inside
-          # run-e2e.ps1 (which pipes) and not in these steps (which did not). So the output
-          # has to go through the pipeline *and* be decoded as UTF-16.
+          # wsl.exe writes UTF-16LE, and every attempt to fix that through
+          # [Console]::OutputEncoding came back garbled in these steps -- the runner starts
+          # pwsh with no console of its own, so the property has nothing to govern. Reading
+          # the pipe directly does not depend on any of that: StandardOutputEncoding states
+          # the encoding for this one child, whatever the host's console is. Returns the
+          # child's exit code, since the caller can no longer read $LASTEXITCODE for it.
           function Show-Wsl([string[]] $WslArgs) {
-              $previous = [Console]::OutputEncoding
-              [Console]::OutputEncoding = [System.Text.Encoding]::Unicode
-              try { & wsl.exe @WslArgs 2>&1 | Out-String | Write-Host }
-              finally { [Console]::OutputEncoding = $previous }
+              $psi = [System.Diagnostics.ProcessStartInfo]::new('wsl.exe')
+              foreach ($argument in $WslArgs) { $psi.ArgumentList.Add($argument) }
+              $psi.UseShellExecute = $false
+              $psi.RedirectStandardOutput = $true
+              $psi.RedirectStandardError = $true
+              $psi.StandardOutputEncoding = [System.Text.Encoding]::Unicode
+              $psi.StandardErrorEncoding = [System.Text.Encoding]::Unicode
+
+              $process = [System.Diagnostics.Process]::Start($psi)
+              $out = $process.StandardOutput.ReadToEnd()
+              $err = $process.StandardError.ReadToEnd()
+              $process.WaitForExit()
+
+              foreach ($text in @($out, $err)) { if ($text.Trim()) { Write-Host $text.TrimEnd() } }
+              return $process.ExitCode
           }
 
-          Show-Wsl @('--update', '--pre-release')
-          $code = $LASTEXITCODE
-          Show-Wsl @('--shutdown')
-          Show-Wsl @('--version')
+          $code = Show-Wsl @('--update', '--pre-release')
+          Show-Wsl @('--shutdown') | Out-Null
+          Show-Wsl @('--version') | Out-Null
           if ($code -ne 0) { throw "wsl --update --pre-release exited $code" }
 
       # Kept separate from the test itself so a runner image without WSLC reports that in one
@@ -115,10 +125,14 @@ jobs:
 
           if (-not $wslc) {
             Write-Host "--- wsl --status"
-            $previous = [Console]::OutputEncoding
-            [Console]::OutputEncoding = [System.Text.Encoding]::Unicode
-            try { & wsl.exe --status 2>&1 | Out-String | Write-Host }
-            finally { [Console]::OutputEncoding = $previous }
+            $status = [System.Diagnostics.ProcessStartInfo]::new('wsl.exe')
+            $status.ArgumentList.Add('--status')
+            $status.UseShellExecute = $false
+            $status.RedirectStandardOutput = $true
+            $status.StandardOutputEncoding = [System.Text.Encoding]::Unicode
+            $reader = [System.Diagnostics.Process]::Start($status)
+            Write-Host $reader.StandardOutput.ReadToEnd().TrimEnd()
+            $reader.WaitForExit()
             Write-Host "--- $($env:ProgramFiles)\WSL"
             Get-ChildItem -LiteralPath (Join-Path $env:ProgramFiles 'WSL') -ErrorAction SilentlyContinue |
               Select-Object Name, Length | Format-Table | Out-String | Write-Host
@@ -152,21 +166,32 @@ jobs:
           $ErrorActionPreference = 'Continue'
           $PSNativeCommandUseErrorActionPreference = $false
 
-          # wsl.exe writes UTF-16LE. Setting [Console]::OutputEncoding alone is not enough
-          # here: a native command whose output PowerShell does not capture inherits the
-          # step's stdout handle and writes its bytes straight to the log, with nothing
-          # decoding them -- which is why the first attempt at this fix worked inside
-          # run-e2e.ps1 (which pipes) and not in these steps (which did not). So the output
-          # has to go through the pipeline *and* be decoded as UTF-16.
+          # wsl.exe writes UTF-16LE, and every attempt to fix that through
+          # [Console]::OutputEncoding came back garbled in these steps -- the runner starts
+          # pwsh with no console of its own, so the property has nothing to govern. Reading
+          # the pipe directly does not depend on any of that: StandardOutputEncoding states
+          # the encoding for this one child, whatever the host's console is. Returns the
+          # child's exit code, since the caller can no longer read $LASTEXITCODE for it.
           function Show-Wsl([string[]] $WslArgs) {
-              $previous = [Console]::OutputEncoding
-              [Console]::OutputEncoding = [System.Text.Encoding]::Unicode
-              try { & wsl.exe @WslArgs 2>&1 | Out-String | Write-Host }
-              finally { [Console]::OutputEncoding = $previous }
+              $psi = [System.Diagnostics.ProcessStartInfo]::new('wsl.exe')
+              foreach ($argument in $WslArgs) { $psi.ArgumentList.Add($argument) }
+              $psi.UseShellExecute = $false
+              $psi.RedirectStandardOutput = $true
+              $psi.RedirectStandardError = $true
+              $psi.StandardOutputEncoding = [System.Text.Encoding]::Unicode
+              $psi.StandardErrorEncoding = [System.Text.Encoding]::Unicode
+
+              $process = [System.Diagnostics.Process]::Start($psi)
+              $out = $process.StandardOutput.ReadToEnd()
+              $err = $process.StandardError.ReadToEnd()
+              $process.WaitForExit()
+
+              foreach ($text in @($out, $err)) { if ($text.Trim()) { Write-Host $text.TrimEnd() } }
+              return $process.ExitCode
           }
 
-          Show-Wsl @('--version')
-          Show-Wsl @('--status')
+          Show-Wsl @('--version') | Out-Null
+          Show-Wsl @('--status') | Out-Null
 
           # wslc.exe writes UTF-8, so it is left to print for itself under the step's default.
           wslc version

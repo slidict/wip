@@ -143,17 +143,22 @@ function Write-Diagnostics {
     }
     catch { Write-Host "  (wslc logs $script:Container failed: $_)" }
 
-    # wsl.exe writes UTF-16LE to a redirected pipe while wslc.exe writes UTF-8, and PowerShell
-    # decodes native output with [Console]::OutputEncoding -- so reading wsl.exe under the
-    # UTF-8 default turns every line into "W`0S`0L`0 ...". Switch the decoder for this one
-    # call and put it back, rather than leaving it set and garbling the wslc output above.
-    $utf8 = [Console]::OutputEncoding
+    # wsl.exe writes UTF-16LE while wslc.exe writes UTF-8, so reading wsl.exe the ordinary way
+    # prints "W`0S`0L`0 ...". Stating the encoding for this one child covers it without
+    # touching [Console]::OutputEncoding, which governs how *every* other command here is read
+    # and, under a host started without a console, may govern nothing at all.
     try {
-        [Console]::OutputEncoding = [System.Text.Encoding]::Unicode
-        & wsl.exe --status 2>&1 | Out-String | Write-Host
+        $status = [System.Diagnostics.ProcessStartInfo]::new('wsl.exe')
+        $status.ArgumentList.Add('--status')
+        $status.UseShellExecute = $false
+        $status.RedirectStandardOutput = $true
+        $status.StandardOutputEncoding = [System.Text.Encoding]::Unicode
+
+        $reader = [System.Diagnostics.Process]::Start($status)
+        Write-Host $reader.StandardOutput.ReadToEnd().TrimEnd()
+        $reader.WaitForExit()
     }
     catch { Write-Host "  (wsl --status failed: $_)" }
-    finally { [Console]::OutputEncoding = $utf8 }
 }
 
 function Remove-Leftovers {
