@@ -146,10 +146,16 @@ internal static class Program
         yield return UpCommand(context);
         yield return SyncCommand(context);
 
+        yield return Simple("ps", "Show the current state of the configured container or stack",
+            context, ctx => ctx.Ps());
+        yield return Simple("status", "Alias for `wip ps`", context, ctx => ctx.Ps());
+
         yield return Simple("stop", "Stop the configured container and its dependencies without removing them",
             context, ctx => ctx.Stop());
         yield return Simple("down", "Stop and remove the configured container and its dependencies",
             context, ctx => ctx.Down());
+        yield return Simple("restart", "Restart the configured container or stack (stop, then start — no rebuild)",
+            context, ctx => ctx.Restart());
 
         yield return ExecCommand(context);
         yield return RunCommand(context);
@@ -337,7 +343,7 @@ internal static class Program
         var noFollow = new Option<bool>("--no-follow") { Description = "Print current logs and exit" };
         var services = new Argument<string[]>("services") { Arity = ArgumentArity.ZeroOrMore };
 
-        var command = new Command("logs", "Follow logs from compose services (compose mode only)")
+        var command = new Command("logs", "Follow logs from the configured container or compose services")
         {
             follow, noFollow, services,
         };

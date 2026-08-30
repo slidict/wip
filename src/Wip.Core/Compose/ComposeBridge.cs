@@ -84,6 +84,13 @@ public sealed class ComposeBridge
         return command;
     }
 
+    public IReadOnlyList<string> Ps()
+    {
+        var command = Base();
+        command.Add("ps");
+        return command;
+    }
+
     public IReadOnlyList<string> Exec(string service, IEnumerable<string> arguments, bool interactive = true)
     {
         var command = Base();

@@ -35,6 +35,8 @@ internal sealed partial class CliContext
     /// "dead" state — only <c>exited</c> is a live, restartable exit; <c>deleted</c> means the
     /// container itself is gone and needs <c>wip up</c> to recreate it, not <c>start</c>.
     /// </summary>
+    private const int WslcContainerStateCreated = 1;
+
     private const int WslcContainerStateRunning = 2;
 
     private const int WslcContainerStateExited = 3;
@@ -383,6 +385,68 @@ internal sealed partial class CliContext
         return 0;
     }
 
+    /// <summary>
+    /// Restarts without a rebuild: stop, then let the same create-vs-start decision
+    /// <see cref="EnsureContainer"/> already makes for <c>wip up</c> bring it back — a freshly
+    /// stopped container is listed as <c>created</c>, not <c>deleted</c>, so it starts rather
+    /// than gets recreated. Always detached: this is a lifecycle operation, not a new
+    /// foreground attach.
+    /// </summary>
+    internal int Restart()
+    {
+        if (Config.IsCompose)
+        {
+            var stopCode = Execute(Bridge.Stop(), exitOnFailure: false);
+            if (stopCode != 0)
+            {
+                return stopCode;
+            }
+
+            return Execute(Bridge.Up(detach: true), interactive: false);
+        }
+
+        // A failed stop is not swallowed like the sidecar stops below are: if the primary
+        // container is still running afterwards, EnsureContainer sees AlreadyRunning and does
+        // nothing, so returning 0 unconditionally here would report success without the
+        // container having actually restarted.
+        var primaryStopCode = Execute(Builder.Stop(), exitOnFailure: false);
+        if (primaryStopCode != 0)
+        {
+            return primaryStopCode;
+        }
+
+        foreach (var name in SidecarNames())
+        {
+            Execute(Builder.DependencyStop(name), exitOnFailure: false);
+        }
+
+        foreach (var name in SidecarNames())
+        {
+            EnsureDependency(name);
+        }
+
+        EnsureContainer(detach: true);
+        return 0;
+    }
+
+    internal int Ps()
+    {
+        if (Config.IsCompose)
+        {
+            return Execute(Bridge.Ps(), interactive: true);
+        }
+
+        PrintStatusLine(
+            Config.Container ?? throw new ConfigException("container: must be set in wip.yml"),
+            Builder.Find());
+        foreach (var name in SidecarNames())
+        {
+            PrintStatusLine(name, Builder.DependencyFind(name));
+        }
+
+        return 0;
+    }
+
     internal int Exec(IReadOnlyList<string> command, bool interactive) =>
         Execute(ExecTarget(command, interactive), interactive: Tty(interactive));
 
@@ -414,28 +478,26 @@ internal sealed partial class CliContext
 
     internal int Logs(IReadOnlyList<string> services, bool follow)
     {
-        if (!Config.IsComposeMode)
-        {
-            throw new ConfigException("`wip logs` is only available in compose mode");
-        }
-
         if (Config.IsCompose)
         {
             return Execute(Bridge.Logs(services, follow), interactive: true);
         }
 
         // wslc has no compose-style multi-service log aggregation, so exactly one SERVICE is
-        // allowed, defaulting to compose.service when none is given.
+        // allowed, defaulting to the configured container (compose.service, under
+        // mode: compose-native) when none is given.
         if (services.Count > 1)
         {
             throw new ConfigException(
-                "`wip logs` under mode: compose-native takes at most one SERVICE " +
-                "(wslc logs, unlike a real compose tool, only follows one container at a time)");
+                "`wip logs` outside mode: compose takes at most one SERVICE " +
+                "(wslc, unlike a real compose tool, only follows one container at a time)");
         }
 
-        return Execute(
-            Builder.Logs(services.Count == 0 ? Config.ComposeService! : services[0], follow),
-            interactive: true);
+        var name = services.Count == 0
+            ? Config.Container ?? throw new ConfigException("container: must be set in wip.yml")
+            : services[0];
+
+        return Execute(Builder.Logs(name, follow), interactive: true);
     }
 
     internal int Dispatch(string name, IReadOnlyList<string> arguments)
@@ -865,6 +927,33 @@ internal sealed partial class CliContext
     /// visible instead of silently doing nothing forever.
     /// </summary>
     private int? ContainerStatus(string name) => ContainerEntry(Builder.DependencyFind(name), name).State;
+
+    /// <summary>
+    /// Prints one <c>wip ps</c>/<c>wip status</c> line. Image and ports come from the
+    /// configured <c>wip.yml</c> values rather than the wslc listing: only <c>Name</c> and
+    /// <c>State</c> are confirmed fields of that JSON anywhere else in this codebase.
+    /// </summary>
+    private void PrintStatusLine(string name, IReadOnlyList<string> findCommand)
+    {
+        var (exists, state) = ContainerEntry(findCommand, name);
+        var dependency = Config.Dependency(name);
+        var image = RubyValue.Presence(dependency?.GetValueOrDefault("image")) ?? "-";
+        var ports = RubyValue.AsArray(dependency?.GetValueOrDefault("ports"))
+            .Select(RubyValue.ToStringValue).ToList();
+
+        Console.WriteLine(string.Join('\t',
+            name, StatusLabel(exists, state), image, ports.Count > 0 ? string.Join(", ", ports) : "-"));
+    }
+
+    internal static string StatusLabel(bool exists, int? state) => (exists, state) switch
+    {
+        (false, _) => "not found",
+        (true, WslcContainerStateCreated) => "created",
+        (true, WslcContainerStateRunning) => "running",
+        (true, WslcContainerStateExited) => "exited",
+        (true, WslcContainerStateDeleted) => "deleted",
+        _ => "unknown",
+    };
 
     /// <summary>
     /// One probe answering both questions, because they come from the same listing. Splitting
