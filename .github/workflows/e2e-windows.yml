@@ -65,18 +65,57 @@ jobs:
 
       # Kept separate from the test itself so a runner image without WSLC reports that in one
       # line, instead of as a wip command failing for reasons that have nothing to do with wip.
+      #
+      # `wsl --update` installs wslc.exe next to wsl.exe, but the PATH this job inherited was
+      # captured before that update ran, so a bare `wslc` can be missing even when the file is
+      # there. So: look on PATH first, then in the places WSL installs itself, then across the
+      # machine PATH as the registry has it now. Whatever is found is appended to GITHUB_PATH,
+      # which is what lets both this script and wip's own `wslc: auto` resolution see it in the
+      # steps that follow.
       - name: Verify wslc is available
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Continue'
           $PSNativeCommandUseErrorActionPreference = $false
-          $wslc = Get-Command wslc -ErrorAction SilentlyContinue
-          if (-not $wslc) {
-            wsl --status
-            throw "wslc is not on PATH after 'wsl --update --pre-release'. WSLC may not be available on this runner image yet."
+
+          $candidates = @()
+          if ($found = Get-Command wslc -ErrorAction SilentlyContinue) { $candidates += $found.Source }
+          $candidates += Join-Path $env:ProgramFiles 'WSL\wslc.exe'
+          $candidates += Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps\wslc.exe'
+          $candidates += Join-Path $env:SystemRoot 'System32\wslc.exe'
+
+          # The MSIX build lives under WindowsApps, where the install location is only
+          # discoverable through the package itself.
+          $package = Get-AppxPackage -Name '*WindowsSubsystemForLinux*' -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+          if ($package) { $candidates += Join-Path $package.InstallLocation 'wslc.exe' }
+
+          # The machine PATH as it stands *now*, which is not the PATH this process started
+          # with if the WSL update just appended to it.
+          foreach ($dir in ([Environment]::GetEnvironmentVariable('Path', 'Machine') -split ';')) {
+            if ($dir) { $candidates += Join-Path $dir 'wslc.exe' }
           }
-          Write-Host "wslc: $($wslc.Source)"
-          wslc version
+
+          $wslc = $candidates | Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Leaf) } |
+            Select-Object -First 1
+
+          if (-not $wslc) {
+            Write-Host "--- wsl --status"
+            wsl --status
+            Write-Host "--- $($env:ProgramFiles)\WSL"
+            Get-ChildItem -LiteralPath (Join-Path $env:ProgramFiles 'WSL') -ErrorAction SilentlyContinue |
+              Select-Object Name, Length | Format-Table | Out-String | Write-Host
+            Write-Host "--- WSL appx package"
+            $package | Format-List Name, Version, InstallLocation | Out-String | Write-Host
+            Write-Host "--- candidates checked"
+            $candidates | Sort-Object -Unique | Write-Host
+            throw "wslc.exe was not found after 'wsl --update --pre-release'. WSLC may not ship on this runner image yet."
+          }
+
+          Write-Host "wslc: $wslc"
+          Add-Content -Path $env:GITHUB_PATH -Value (Split-Path -Parent $wslc)
+          Add-Content -Path $env:GITHUB_ENV -Value "WSLC_EXE=$wslc"
+          & $wslc version
           if ($LASTEXITCODE -ne 0) { throw "wslc version exited $LASTEXITCODE" }
 
       - name: Run the lifecycle end-to-end
@@ -84,6 +123,7 @@ jobs:
         run: >
           pwsh tests/e2e/run-e2e.ps1
           -Wip artifacts/win-x64/wip.exe
+          -Wslc $env:WSLC_EXE
           -BaseImage $env:BASE_IMAGE
 
       # The script prints its own diagnostics when an assertion fails; this covers the cases
