@@ -197,15 +197,25 @@ try {
     $up = Invoke-Wip @('up', '-d')
     Assert-Exit $up 0 "wip up -d"
 
+    # The state column, not just the name: `wip ps` exits 0 and prints the row whatever the
+    # container's state is, so matching the name alone would pass on a row reading
+    # "wip-e2e-app  not found" -- which is exactly what wip printed here against a container
+    # wslc reported as running.
     $ps = Invoke-Wip @('ps')
     Assert-Exit $ps 0 "wip ps"
-    Assert-Match $ps 'wip-e2e-app' "wip ps"
+    Assert-Match $ps '(?m)^wip-e2e-app\s+running\b' "wip ps after wip up -d"
 
     # Straight from wslc as well, because `wip ps` reads the same `list --format json` that
     # `wip up` used to decide whether to create the container: if that parse is wrong, both
     # are wrong together and only wslc's own output shows it.
     $listed = Invoke-Wslc @('list', '--all')
     Assert-Match $listed 'wip-e2e-app' "wslc list --all after wip up"
+
+    # The exact probe wip's own status and create-vs-start decisions are built on, printed
+    # raw. Not asserted -- it is here so the log carries the JSON shape those decisions have
+    # to parse, which is what a fix for the state column needs to be written against.
+    Write-Step "Diagnostic: the JSON probe wip reads (not asserted)"
+    Invoke-Wslc @('list', '--all', '--filter', 'name=wip-e2e-app', '--format', 'json') | Out-Null
 
     # ------------------------------------------------------------------ exec
     Write-Step "wip exec"
