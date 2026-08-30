@@ -330,12 +330,14 @@ and examples — start at the
 | `wip config` | Print the effective configuration (secrets masked) |
 | `wip build [--no-cache] [-- OPTIONS]` | Build the image from the `build` definition |
 | `wip up [-d] [--no-sync] [--no-cache] [--watch] [--interval N]` | Start the configured stack, creating it if necessary |
+| `wip ps` / `wip status` | Show the current state of the configured container or stack |
 | `wip stop` | Stop the configured stack without removing it |
 | `wip down` | Stop and remove the configured stack |
+| `wip restart` | Stop, then start the configured container or stack again — no rebuild, no `down`/`up` |
 | `wip exec [--no-interactive] COMMAND...` | Run a command in the existing container |
 | `wip run [--no-interactive] COMMAND...` | Run a command in a new `--rm` container (`mode: compose` has no ephemeral run — falls back to `exec` in the running service, with a warning) |
 | `wip shell` | Open the configured shell, falling back to `bash` then `sh` |
-| `wip logs [-f] [SERVICE...]` | Follow compose service logs (compose modes only; under `mode: compose-native`, at most one `SERVICE`) |
+| `wip logs [-f] [SERVICE...]` | Follow logs from the configured container (`mode: container` / `compose-native`, at most one `SERVICE`) or compose services (`mode: compose`) |
 | `wip sync [-w\|--watch] [--interval N]` | Mirror the source into the sync volume once, or keep re-syncing with `--watch` (needs `sync:`) |
 | `wip NAME ARGS...` | Run `interaction.NAME`, appending any extra arguments |
 

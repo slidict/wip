@@ -14,6 +14,9 @@ public class CommandRoutingTests
     [InlineData(new[] { "up", "-d" }, "up")]
     [InlineData(new[] { "--config", "x.yml", "up" }, "up")]
     [InlineData(new[] { "--debug", "doctor" }, "doctor")]
+    [InlineData(new[] { "ps" }, "ps")]
+    [InlineData(new[] { "status" }, "status")]
+    [InlineData(new[] { "restart" }, "restart")]
     // An unknown name is routed.
     [InlineData(new[] { "mycmd" }, "dispatch")]
     [InlineData(new[] { "--config", "x.yml", "mycmd" }, "dispatch")]
