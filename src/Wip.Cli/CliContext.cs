@@ -701,9 +701,14 @@ internal sealed partial class CliContext
             return (false, null);
         }
 
-        // TryGetInt32 rather than GetInt32: a future wslc could report State as a string, and
-        // a watch loop should keep polling instead of taking the whole command down.
-        return match.TryGetProperty("State", out var state) && state.TryGetInt32(out var reported)
+        // The kind is checked before the read: TryGetInt32 only reports "no" for a number it
+        // cannot fit, and throws for a String or a Bool. So a wslc that ever reported State
+        // as "running" would take the command down here -- which is the opposite of what a
+        // watch loop needs, and what the old comment on this line wrongly assumed was
+        // already handled. An unreadable state leaves the container listed, state unknown.
+        return match.TryGetProperty("State", out var state) &&
+               state.ValueKind == JsonValueKind.Number &&
+               state.TryGetInt32(out var reported)
             ? (true, reported)
             : (true, null);
     }
