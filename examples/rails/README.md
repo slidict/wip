@@ -11,6 +11,10 @@ this mode fits.
 - [`Dockerfile`](Dockerfile) — a minimal placeholder image so `wip build` has something to run;
   replace it with your app's real Dockerfile
 
+> **The `postgres` / `password` credential here is for local development only.** `db` publishes
+> `127.0.0.1:5432` so it stays on the loopback interface rather than every host interface. Swap in
+> a real secret before running this anywhere shared or reachable.
+
 ## Setup
 
 1. Copy `wip.yml` (and `Dockerfile`, if you don't have one yet) into the root of your Rails app.

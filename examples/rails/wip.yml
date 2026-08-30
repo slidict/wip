@@ -6,10 +6,10 @@ dependencies:
   app:
     image: myapp/rails:development # built by the `build` command below
     workdir: /app
-    command: server -b 0.0.0.0 # appended to the image's CMD when `wip up` creates the container
+    command: bin/rails server -b 0.0.0.0 # replaces the image's CMD when `wip up` creates the container
     env:
       RAILS_ENV: development
-      DATABASE_URL: postgres://postgres:password@db:5432/myapp_development
+      DATABASE_URL: postgres://postgres:password@db:5432/myapp_development # matches POSTGRES_PASSWORD below
       REDIS_URL: redis://redis:6379/0
     ports:
       - "3000:3000"
@@ -20,10 +20,10 @@ dependencies:
     image: postgres:16
     restart: unless-stopped
     env:
-      POSTGRES_PASSWORD: password
+      POSTGRES_PASSWORD: password # local development only — pick a real secret before this leaves your machine
       POSTGRES_DB: myapp_development
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432" # loopback only, so the sample credential isn't reachable from the network
     healthcheck: # `wip up` waits for this before starting `app`
       test: ["CMD", "pg_isready", "-U", "postgres"]
       interval: 2
