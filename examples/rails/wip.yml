@@ -1,0 +1,61 @@
+version: 1
+mode: container # no compose.yml here — wip drives wslc directly
+container: app # the primary container; `wip up`/`exec`/`run`/`build` target this one
+network: app-tier
+dependencies:
+  app:
+    image: myapp/rails:development # built by the `build` command below
+    workdir: /app
+    command: bin/rails server -b 0.0.0.0 # replaces the image's CMD when `wip up` creates the container
+    env:
+      RAILS_ENV: development
+      DATABASE_URL: postgres://postgres:password@db:5432/myapp_development # matches POSTGRES_PASSWORD below
+      REDIS_URL: redis://redis:6379/0
+    ports:
+      - "3000:3000"
+    volumes:
+      - ".:/app"
+      - "bundle:/usr/local/bundle" # named volume so `bundle install` output survives `wip down`
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    env:
+      POSTGRES_PASSWORD: password # local development only — pick a real secret before this leaves your machine
+      POSTGRES_DB: myapp_development
+    ports:
+      - "127.0.0.1:5432:5432" # loopback only, so the sample credential isn't reachable from the network
+    healthcheck: # `wip up` waits for this before starting `app`
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 2
+      retries: 10
+  redis:
+    image: redis:7
+    restart: unless-stopped
+commands:
+  console:
+    type: exec
+    command: bin/rails console
+    interactive: true
+  rails:
+    command: bin/rails
+    interactive: true
+  bundle:
+    command: bundle
+  rspec:
+    command: bundle exec rspec
+  psql:
+    command: psql -U postgres -d myapp_development
+    container: db # redirects this one command from `app` to the `db` dependency
+    interactive: true
+  migrate:
+    type: run # ephemeral --rm container instead of exec'ing into the running one
+    command: bundle exec rails db:migrate
+    image: myapp/rails:development
+    remove: true
+  shell:
+    command: bash
+    interactive: true
+  build:
+    type: build
+    context: .
+    tag: myapp/rails:development

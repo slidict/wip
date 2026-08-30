@@ -1,0 +1,40 @@
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    working_dir: /app
+    command: ["npm", "run", "dev"]
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: mysql://root:password@db:3306/myapp_development # matches MYSQL_ROOT_PASSWORD below
+      REDIS_URL: redis://cache:6379
+    ports:
+      - "3000:3000"
+    volumes:
+      - .:/app
+    depends_on:
+      db:
+        condition: service_healthy
+      cache:
+        condition: service_started
+    restart: unless-stopped
+
+  db:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: password # local development only — pick a real secret before this leaves your machine
+      MYSQL_DATABASE: myapp_development
+    ports:
+      - "127.0.0.1:3306:3306" # loopback only, so the sample credential isn't reachable from the network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  cache:
+    image: redis:7
+    restart: unless-stopped

@@ -1,0 +1,17 @@
+# Minimal development image for the `web` service in this example's compose.yml.
+# Replace with your app's real Dockerfile — this only exists so `wip build` has something to run.
+FROM node:20-slim
+
+# The image already ships a `node` user at UID/GID 1000; run as it so `npm install` and the
+# dev command don't leave root-owned files in the bind-mounted /app tree.
+WORKDIR /app
+RUN chown node:node /app
+USER node
+
+COPY --chown=node:node package.json package-lock.json ./
+RUN npm install
+
+COPY --chown=node:node . .
+
+EXPOSE 3000
+CMD ["npm", "run", "dev"]
