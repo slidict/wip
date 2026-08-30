@@ -25,10 +25,10 @@ public sealed class ComposeFile
     /// <summary>
     /// Real Compose keys that read as meaningful here but have nothing to map onto: TTY and
     /// stdin allocation is decided per invocation, not per service; every service already
-    /// shares one project network; and <c>wslc run</c>/<c>exec</c> has no capability flag to
-    /// forward <c>cap_add:</c> to.
+    /// shares one project network; <c>wslc run</c>/<c>exec</c> has no capability flag to
+    /// forward <c>cap_add:</c> to; and it has no flag to set per-container DNS servers either.
     /// </summary>
-    private static readonly string[] IgnoredServiceKeys = ["tty", "stdin_open", "networks", "cap_add"];
+    private static readonly string[] IgnoredServiceKeys = ["tty", "stdin_open", "networks", "cap_add", "dns"];
 
     // shadow_context is deliberately absent: the build context is now always staged to a
     // local cache, so the key has no effect and falls through to the unsupported-key error.
