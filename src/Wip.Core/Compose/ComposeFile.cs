@@ -1,3 +1,4 @@
+using Wip.Configuration;
 using Wip.Platform;
 using Wip.Yaml;
 
@@ -18,7 +19,7 @@ public sealed class ComposeFile
     private static readonly string[] ServiceKeys =
     [
         "image", "build", "command", "environment", "ports", "volumes", "working_dir", "user", "restart",
-        "depends_on", "profiles",
+        "depends_on", "profiles", "healthcheck",
     ];
 
     /// <summary>
@@ -32,7 +33,7 @@ public sealed class ComposeFile
     // shadow_context is deliberately absent: the build context is now always staged to a
     // local cache, so the key has no effect and falls through to the unsupported-key error.
     private static readonly string[] BuildKeys = ["context", "dockerfile", "args"];
-    private static readonly string[] SupportedConditions = ["service_started"];
+    private static readonly string[] SupportedConditions = ["service_started", "service_healthy"];
     private const string ListHint = "only supports short syntax (\"host:container\"), not long-syntax mappings";
 
     private readonly string path;
@@ -126,6 +127,7 @@ public sealed class ComposeFile
             entry["workdir"] = service.Workdir;
             entry["user"] = service.User;
             entry["restart"] = service.Restart;
+            entry["healthcheck"] = service.HealthCheck;
             result[name] = entry;
         }
 
@@ -175,7 +177,8 @@ public sealed class ComposeFile
             RubyValue.Presence(mapping.GetValueOrDefault("working_dir")),
             RubyValue.Presence(mapping.GetValueOrDefault("user")),
             NormalizeRestart(mapping.GetValueOrDefault("restart")),
-            NormalizeDependsOn(name, mapping.GetValueOrDefault("depends_on")));
+            NormalizeDependsOn(name, mapping.GetValueOrDefault("depends_on")),
+            HealthCheck.Normalize($"{path}: services.{name}.healthcheck", mapping.GetValueOrDefault("healthcheck")));
     }
 
     /// <summary>
@@ -323,7 +326,7 @@ public sealed class ComposeFile
         return sequence.Select(RubyValue.ToStringValue).ToList();
     }
 
-    private List<string> NormalizeDependsOn(string name, object? value)
+    private List<DependsOnEntry> NormalizeDependsOn(string name, object? value)
     {
         if (value is null)
         {
@@ -332,7 +335,8 @@ public sealed class ComposeFile
 
         if (RubyValue.AsSequence(value) is { } sequence)
         {
-            return sequence.Select(RubyValue.ToStringValue).ToList();
+            return sequence.Select(item => new DependsOnEntry(RubyValue.ToStringValue(item), "service_started"))
+                .ToList();
         }
 
         if (RubyValue.AsMapping(value) is not { } mapping)
@@ -340,18 +344,21 @@ public sealed class ComposeFile
             throw new ConfigException($"{path}: services.{name}.depends_on must be an array or a mapping");
         }
 
+        var result = new List<DependsOnEntry>();
         foreach (var (dependency, options) in mapping)
         {
-            var condition = RubyValue.Presence(RubyValue.Dig(options, "condition"));
-            if (condition is not null && !SupportedConditions.Contains(condition))
+            var condition = RubyValue.Presence(RubyValue.Dig(options, "condition")) ?? "service_started";
+            if (!SupportedConditions.Contains(condition))
             {
                 throw new ConfigException(
                     $"{path}: services.{name}.depends_on.{dependency}: condition '{condition}' is not " +
-                    $"supported (only {string.Join(", ", SupportedConditions)} — no health checks)");
+                    $"supported (only {string.Join(", ", SupportedConditions)})");
             }
+
+            result.Add(new DependsOnEntry(dependency, condition));
         }
 
-        return mapping.Keys.ToList();
+        return result;
     }
 
     /// <summary>
@@ -365,19 +372,29 @@ public sealed class ComposeFile
         {
             foreach (var dependency in service.DependsOn)
             {
-                if (!services.ContainsKey(dependency))
+                if (!services.ContainsKey(dependency.Name))
                 {
-                    throw new ConfigException($"{path}: services.{name} depends_on unknown service '{dependency}'");
+                    throw new ConfigException(
+                        $"{path}: services.{name} depends_on unknown service '{dependency.Name}'");
                 }
 
-                if (service.Profiles.Count > 0 || !IsProfiled(dependency))
+                // Mirrors real Compose: a condition it cannot satisfy is a config error at
+                // load time, not a hang or a silent no-op the first time `wip up` runs.
+                if (dependency.Condition == "service_healthy" && services[dependency.Name].HealthCheck is null)
+                {
+                    throw new ConfigException(
+                        $"{path}: services.{name} depends_on '{dependency.Name}' with condition: " +
+                        "service_healthy, but that service has no healthcheck: configured");
+                }
+
+                if (service.Profiles.Count > 0 || !IsProfiled(dependency.Name))
                 {
                     continue;
                 }
 
                 throw new ConfigException(
-                    $"{path}: services.{name} depends_on '{dependency}', gated behind profiles: " +
-                    $"({string.Join(", ", services[dependency].Profiles)}) wip never activates " +
+                    $"{path}: services.{name} depends_on '{dependency.Name}', gated behind profiles: " +
+                    $"({string.Join(", ", services[dependency.Name].Profiles)}) wip never activates " +
                     "(no --profile flag)");
             }
         }
@@ -410,7 +427,7 @@ public sealed class ComposeFile
 
         foreach (var dependency in services[name].DependsOn)
         {
-            Visit(dependency, visited, visiting, result);
+            Visit(dependency.Name, visited, visiting, result);
         }
 
         visiting.Remove(name);
@@ -467,5 +484,8 @@ public sealed class ComposeFile
         string? Workdir,
         string? User,
         string Restart,
-        List<string> DependsOn);
+        List<DependsOnEntry> DependsOn,
+        OrderedDictionary<string, object?>? HealthCheck);
+
+    private sealed record DependsOnEntry(string Name, string Condition);
 }

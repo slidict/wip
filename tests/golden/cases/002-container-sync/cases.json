@@ -533,6 +533,7 @@
         "node_modules:/srv/app/node_modules"
       ],
       "restart": "no",
+      "healthcheck": null,
       "image": "myapp:dev",
       "type": "exec",
       "command": "bin/console"

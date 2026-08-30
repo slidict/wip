@@ -32,6 +32,7 @@
           "ports": [],
           "volumes": [],
           "restart": "no",
+          "healthcheck": null,
           "image": "legacy:dev",
           "type": "exec",
           "command": "bash"
@@ -47,6 +48,7 @@
           "ports": [],
           "volumes": [],
           "restart": "no",
+          "healthcheck": null,
           "image": "legacy:dev",
           "type": "run",
           "command": "bin/rails db:migrate"
@@ -87,6 +89,7 @@
           "ports": [],
           "volumes": [],
           "restart": "no",
+          "healthcheck": null,
           "image": "legacy:dev",
           "type": "exec",
           "command": "bash"
@@ -102,6 +105,7 @@
           "ports": [],
           "volumes": [],
           "restart": "no",
+          "healthcheck": null,
           "image": "legacy:dev",
           "type": "run",
           "command": "bin/rails db:migrate"
@@ -464,6 +468,7 @@
       "ports": [],
       "volumes": [],
       "restart": "no",
+      "healthcheck": null,
       "image": "legacy:dev",
       "type": "exec",
       "command": "bash"
@@ -509,6 +514,7 @@
       "ports": [],
       "volumes": [],
       "restart": "no",
+      "healthcheck": null,
       "image": "legacy:dev",
       "type": "run",
       "command": "bin/rails db:migrate"

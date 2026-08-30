@@ -337,6 +337,12 @@ dependencies:
     env:
       MYSQL_ROOT_PASSWORD: password
       MYSQL_DATABASE: development
+    healthcheck: # optional; `wip up` waits for this before starting whatever needs it
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 2 # seconds between checks (default 1)
+      timeout: 5 # seconds a single check may take before it counts as a failure (default 1)
+      retries: 10 # consecutive failures after start_period before giving up (default 3)
+      start_period: 10 # seconds of grace before failures start counting (default 0)
 interaction:
   rails:
     type: exec
@@ -373,6 +379,19 @@ sync: # optional; mirror the source into a named volume instead of bind-mounting
 credential, or auth. Keep real secrets out of the config file and in your runtime environment
 instead — see [Secret Masking](https://github.com/slidict/wip/wiki/Secret-Masking).
 
+`healthcheck.test` accepts the same three shapes real Compose does: a bare string (shell form,
+run as `sh -c "..."`), an array starting with `CMD` (run exactly as written) or `CMD-SHELL`
+(shell form), or `NONE` (spelled either way) to explicitly disable one. `interval`, `timeout`,
+and `start_period` are plain seconds — not Compose's duration strings (`10s`, `1m30s`) — matching
+every other timing field in wip.yml (e.g. `sync.interval`). A dependency with no `healthcheck:`
+behaves exactly as before: `wip up` starts it and moves on without waiting. Under
+`mode: compose-native`, compose.yml's own `healthcheck:` is read the same way, and
+`depends_on: condition: service_healthy` is accepted as long as the named service declares one
+(a `ConfigError` at load time otherwise) — but note that any `healthcheck:`, however it was
+declared, is waited on once its service starts, regardless of which condition (if any)
+named it. If the check never passes, `wip up` fails with a clear error once `retries` is
+exhausted instead of handing a not-yet-ready dependency to whatever depends on it.
+
 `interaction:` can also be spelled `commands:` — the same block under a different name, e.g. for
 projects that already use `commands:`. The two are aliases for the same feature; declaring both in
 the same `wip.yml` is a `ConfigError`. See [Interactions](https://github.com/slidict/wip/wiki/Interactions).
@@ -399,7 +418,7 @@ and examples — start at the
 | `wip doctor` | Diagnose WSL2, WSLC, config, architecture, Git, and the `--ai` host |
 | `wip config` | Print the effective configuration (secrets masked) |
 | `wip build [--no-cache] [-- OPTIONS]` | Build the image from the `build` definition |
-| `wip up [-d] [--no-sync] [--no-cache] [--watch] [--interval N]` | Start the configured stack, creating it if necessary |
+| `wip up [-d] [--no-sync] [--no-cache] [--watch] [--interval N]` | Start the configured stack, creating it if necessary (waits on any `healthcheck:` before starting whatever depends on it) |
 | `wip ps` / `wip status` | Show the current state of the configured container or stack |
 | `wip stop` | Stop the configured stack without removing it |
 | `wip down` | Stop and remove the configured stack |

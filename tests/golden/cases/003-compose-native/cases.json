@@ -19,7 +19,8 @@
           "volumes": [],
           "workdir": null,
           "user": null,
-          "restart": "no"
+          "restart": "no",
+          "healthcheck": null
         },
         "cache": {
           "image": "redis:7",
@@ -29,7 +30,8 @@
           "volumes": [],
           "workdir": null,
           "user": null,
-          "restart": "on-failure:3"
+          "restart": "on-failure:3",
+          "healthcheck": null
         },
         "web": {
           "image": "wip-compose-web:latest",
@@ -46,7 +48,8 @@
           ],
           "workdir": "/app",
           "user": null,
-          "restart": "unless-stopped"
+          "restart": "unless-stopped",
+          "healthcheck": null
         }
       },
       "compose": {
@@ -71,6 +74,7 @@
             ".:/app"
           ],
           "restart": "unless-stopped",
+          "healthcheck": null,
           "image": "wip-compose-web:latest",
           "command": "bin/rails",
           "type": "exec"
@@ -98,7 +102,8 @@
           "volumes": [],
           "workdir": null,
           "user": null,
-          "restart": "no"
+          "restart": "no",
+          "healthcheck": null
         },
         "cache": {
           "image": "redis:7",
@@ -108,7 +113,8 @@
           "volumes": [],
           "workdir": null,
           "user": null,
-          "restart": "on-failure:3"
+          "restart": "on-failure:3",
+          "healthcheck": null
         },
         "web": {
           "image": "wip-compose-web:latest",
@@ -125,7 +131,8 @@
           ],
           "workdir": "/app",
           "user": null,
-          "restart": "unless-stopped"
+          "restart": "unless-stopped",
+          "healthcheck": null
         }
       },
       "compose": {
@@ -150,6 +157,7 @@
             ".:/app"
           ],
           "restart": "unless-stopped",
+          "healthcheck": null,
           "image": "wip-compose-web:latest",
           "command": "bin/rails",
           "type": "exec"
@@ -717,6 +725,7 @@
         ".:/app"
       ],
       "restart": "unless-stopped",
+      "healthcheck": null,
       "image": "wip-compose-web:latest",
       "command": "bin/rails",
       "type": "exec"

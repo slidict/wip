@@ -29,6 +29,9 @@ public sealed class CommandRunner
     // already being streamed to the user's terminal.
     private const int MaxCapturedCharacters = 1024 * 1024;
 
+    /// <summary>Reported for a command killed by <c>timeout</c> — coreutils' own convention.</summary>
+    public const int TimeoutExitCode = 124;
+
     private readonly TextWriter output;
     private readonly TextWriter error;
     private readonly ErrorInterpreter interpreter;
@@ -46,11 +49,18 @@ public sealed class CommandRunner
         this.debug = debug;
     }
 
+    /// <summary>
+    /// <paramref name="timeout"/> only applies to the captured (non-interactive) path: a
+    /// command that runs past it is killed and reported as <see cref="TimeoutExitCode"/>,
+    /// with whatever it had already written still captured for a hint. Used by readiness
+    /// checks, which poll on a schedule and must never let one slow probe hang <c>wip up</c>.
+    /// </summary>
     public int Run(
         IReadOnlyList<string> command,
         IReadOnlyDictionary<string, string>? environment = null,
         bool interactive = false,
-        string? workingDirectory = null)
+        string? workingDirectory = null,
+        TimeSpan? timeout = null)
     {
         if (debug)
         {
@@ -73,10 +83,10 @@ public sealed class CommandRunner
             startInfo.WorkingDirectory = workingDirectory;
         }
 
-        return interactive ? RunInherited(startInfo) : RunCaptured(startInfo);
+        return interactive ? RunInherited(startInfo) : RunCaptured(startInfo, timeout);
     }
 
-    private int RunCaptured(ProcessStartInfo startInfo)
+    private int RunCaptured(ProcessStartInfo startInfo, TimeSpan? timeout)
     {
         startInfo.RedirectStandardOutput = true;
         startInfo.RedirectStandardError = true;
@@ -100,20 +110,42 @@ public sealed class CommandRunner
                 Pump(process.StandardError, error, captured),
             };
 
+            var exited = timeout is null || process.WaitForExit((int)timeout.Value.TotalMilliseconds);
+            if (!exited)
+            {
+                KillTree(process);
+            }
+
             Task.WaitAll(pumps);
             process.WaitForExit();
 
-            if (process.ExitCode != 0)
+            var code = exited ? process.ExitCode : TimeoutExitCode;
+            if (code != 0)
             {
                 ReportHint(captured.ToString());
             }
 
-            return process.ExitCode;
+            return code;
         }
         catch (System.ComponentModel.Win32Exception exception)
         {
             error.WriteLine(exception.Message);
             return 127;
+        }
+    }
+
+    /// <summary>
+    /// Best-effort: the process may have exited on its own between the timeout check and
+    /// here, in which case <see cref="Process.Kill(bool)"/> throwing is not a real failure.
+    /// </summary>
+    private static void KillTree(Process process)
+    {
+        try
+        {
+            process.Kill(entireProcessTree: true);
+        }
+        catch (InvalidOperationException)
+        {
         }
     }
 
