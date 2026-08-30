@@ -9,7 +9,7 @@ commands:
   test:
     command: npm test
   mysql:
-    command: mysql -uroot -ppassword myapp_development
+    command: mysql -uroot -ppassword myapp_development # the local-development-only password from compose.yml
     container: db # redirects this one command to the db service instead of web
     interactive: true
   redis-cli:

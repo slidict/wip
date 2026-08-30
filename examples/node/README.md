@@ -11,7 +11,12 @@ differs from `mode: compose`.
   `healthcheck:` on `db` that `wip up` waits on before starting `web`
 - [`wip.yml`](wip.yml) — points at the `web` service and adds a few day-to-day commands
 - [`Dockerfile.dev`](Dockerfile.dev) — a minimal placeholder image so `wip build` has something
-  to run; replace it with your app's real Dockerfile
+  to run; replace it with your app's real Dockerfile. It runs as the image's non-root `node`
+  user so `npm install` doesn't leave root-owned files in the bind-mounted `/app`.
+
+> **The `root` / `password` MySQL credential here is for local development only.** `db` publishes
+> `127.0.0.1:3306` so it stays on the loopback interface rather than every host interface. Swap in
+> a real secret (and a non-root database user) before running this anywhere shared or reachable.
 
 ## Setup
 
