@@ -95,6 +95,15 @@ flowchart TD
 - **`mode: compose-native`** — wip parses `compose.yml` itself and drives `wslc` the same way
   `mode: container` does, one service at a time. See
   [Compose Native Mode](https://github.com/slidict/wip/wiki/Compose-Native-Mode).
+
+  Supported `services.<name>` keys: `image`, `build`, `command`, `environment`, `ports`
+  (short syntax only, e.g. `"3000:3000"`), `volumes`, `working_dir`, `user`, `restart`,
+  `depends_on` (`condition: service_started` or `service_healthy`), `profiles`, `healthcheck`.
+
+  `tty`, `stdin_open`, `networks`, `cap_add`, and `dns` are accepted and silently ignored:
+  `wslc run`/`exec` has no flag to map any of them onto (TTY/stdin allocation is decided per
+  invocation instead, and every service already shares one project network). Anything else is
+  a `ConfigError` naming the unsupported key, rather than a silent no-op.
 - **`mode: compose`** — wip bridges to a separately-installed compose-for-wslc tool
   (`compose.command` in `wip.yml`), which does the orchestration and itself drives `wslc`. wip
   contributes no orchestration logic here, only argument forwarding.
