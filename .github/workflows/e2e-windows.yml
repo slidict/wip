@@ -58,16 +58,23 @@ jobs:
           $ErrorActionPreference = 'Continue'
           $PSNativeCommandUseErrorActionPreference = $false
 
-          # wsl.exe writes UTF-16LE to a redirected pipe, and PowerShell decodes native output
-          # with [Console]::OutputEncoding -- UTF-8 here, which turns every line into
-          # "W`0S`0L`0 ...". Only wsl.exe does this; wslc.exe is UTF-8, so the decoder is
-          # switched for wsl-only steps and switched back around wslc calls below.
-          [Console]::OutputEncoding = [System.Text.Encoding]::Unicode
+          # wsl.exe writes UTF-16LE. Setting [Console]::OutputEncoding alone is not enough
+          # here: a native command whose output PowerShell does not capture inherits the
+          # step's stdout handle and writes its bytes straight to the log, with nothing
+          # decoding them -- which is why the first attempt at this fix worked inside
+          # run-e2e.ps1 (which pipes) and not in these steps (which did not). So the output
+          # has to go through the pipeline *and* be decoded as UTF-16.
+          function Show-Wsl([string[]] $WslArgs) {
+              $previous = [Console]::OutputEncoding
+              [Console]::OutputEncoding = [System.Text.Encoding]::Unicode
+              try { & wsl.exe @WslArgs 2>&1 | Out-String | Write-Host }
+              finally { [Console]::OutputEncoding = $previous }
+          }
 
-          wsl --update --pre-release
+          Show-Wsl @('--update', '--pre-release')
           $code = $LASTEXITCODE
-          wsl --shutdown
-          wsl --version
+          Show-Wsl @('--shutdown')
+          Show-Wsl @('--version')
           if ($code -ne 0) { throw "wsl --update --pre-release exited $code" }
 
       # Kept separate from the test itself so a runner image without WSLC reports that in one
@@ -107,9 +114,11 @@ jobs:
             Select-Object -First 1
 
           if (-not $wslc) {
-            [Console]::OutputEncoding = [System.Text.Encoding]::Unicode
             Write-Host "--- wsl --status"
-            wsl --status
+            $previous = [Console]::OutputEncoding
+            [Console]::OutputEncoding = [System.Text.Encoding]::Unicode
+            try { & wsl.exe --status 2>&1 | Out-String | Write-Host }
+            finally { [Console]::OutputEncoding = $previous }
             Write-Host "--- $($env:ProgramFiles)\WSL"
             Get-ChildItem -LiteralPath (Join-Path $env:ProgramFiles 'WSL') -ErrorAction SilentlyContinue |
               Select-Object Name, Length | Format-Table | Out-String | Write-Host
@@ -143,13 +152,23 @@ jobs:
           $ErrorActionPreference = 'Continue'
           $PSNativeCommandUseErrorActionPreference = $false
 
-          # wsl.exe is UTF-16LE, wslc.exe is UTF-8: decode each with what it actually writes.
-          $utf8 = [Console]::OutputEncoding
-          [Console]::OutputEncoding = [System.Text.Encoding]::Unicode
-          wsl --version
-          wsl --status
-          [Console]::OutputEncoding = $utf8
+          # wsl.exe writes UTF-16LE. Setting [Console]::OutputEncoding alone is not enough
+          # here: a native command whose output PowerShell does not capture inherits the
+          # step's stdout handle and writes its bytes straight to the log, with nothing
+          # decoding them -- which is why the first attempt at this fix worked inside
+          # run-e2e.ps1 (which pipes) and not in these steps (which did not). So the output
+          # has to go through the pipeline *and* be decoded as UTF-16.
+          function Show-Wsl([string[]] $WslArgs) {
+              $previous = [Console]::OutputEncoding
+              [Console]::OutputEncoding = [System.Text.Encoding]::Unicode
+              try { & wsl.exe @WslArgs 2>&1 | Out-String | Write-Host }
+              finally { [Console]::OutputEncoding = $previous }
+          }
 
+          Show-Wsl @('--version')
+          Show-Wsl @('--status')
+
+          # wslc.exe writes UTF-8, so it is left to print for itself under the step's default.
           wslc version
           wslc list --all
           exit 0
