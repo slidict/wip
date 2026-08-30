@@ -579,33 +579,146 @@ internal sealed partial class CliContext
     }
 
     /// <summary>
-    /// Parses wslc's <c>--format json</c> output, or returns null when it is not a JSON array.
+    /// Reads the records out of wslc's <c>--format json</c> output, whatever shape it arrives
+    /// in: a JSON array, a single object, or one object per line.
     /// </summary>
     /// <remarks>
-    /// Catching JsonException alone is not enough: <c>{}</c> and <c>null</c> parse fine, and
-    /// it is the array operation that then throws InvalidOperationException. A probe exists
-    /// to answer a question, so anything unrecognisable is "no" rather than a crash.
+    /// <para>
+    /// This used to accept an array and nothing else, which was wrong about the tool it was
+    /// reading: <c>wslc list --all --filter name=x --format json</c> prints the record on its
+    /// own, unwrapped —
+    /// <c>{"CreatedAt":…,"Id":"…","Image":"…","Name":"x","Ports":[],"State":2,…}</c>. Every
+    /// probe built on it therefore concluded "no such container", so <c>wip ps</c> reported a
+    /// running container as <c>not found</c> and <c>wip up</c> recreated one that was already
+    /// there. The end-to-end job against real WSLC is what surfaced it; nothing below this
+    /// line had ever seen wslc's actual output.
+    /// </para>
+    /// <para>
+    /// All three shapes are accepted rather than just the one measured, because the shape is
+    /// wslc's to change and this is a probe: reading a record that is there matters, and
+    /// which envelope it came in does not. Anything unparseable stays "no records" rather
+    /// than an exception — a probe exists to answer a question, not to take the command down.
+    /// </para>
     /// </remarks>
-    private static JsonDocument? ParseArray(string output)
+    internal static IReadOnlyList<JsonElement> ParseRecords(string output)
     {
+        // The whole output first, which covers an array and a lone object in one step.
+        if (TryReadRecords(output, out var records))
+        {
+            return records;
+        }
+
+        // Several values in sequence are trailing data to JsonDocument, so line-delimited
+        // output only parses a line at a time.
+        var lines = new List<JsonElement>();
+        foreach (var line in output.Split('\n'))
+        {
+            if (!string.IsNullOrWhiteSpace(line) && TryReadRecords(line, out var parsed))
+            {
+                lines.AddRange(parsed);
+            }
+        }
+
+        return lines;
+    }
+
+    /// <summary>
+    /// Elements are cloned because they outlive the document they were read from: the caller
+    /// gets a list it can keep, not a view into a disposed parser.
+    /// </summary>
+    private static bool TryReadRecords(string text, out IReadOnlyList<JsonElement> records)
+    {
+        records = new List<JsonElement>();
         JsonDocument document;
         try
         {
-            document = JsonDocument.Parse(output);
+            document = JsonDocument.Parse(text);
         }
         catch (JsonException)
         {
-            return null;
+            return false;
         }
 
-        if (document.RootElement.ValueKind == JsonValueKind.Array)
+        using (document)
         {
-            return document;
+            var parsed = new List<JsonElement>();
+
+            // Objects only: a record is what the callers read properties off, and
+            // JsonElement.TryGetProperty throws rather than returning false when handed
+            // anything else, so a stray scalar would take the probe down. Valid JSON that
+            // carries no records at all (`null`, a bare number) leaves the list empty, which
+            // still counts as parsed and stops the line-by-line retry re-reading it.
+            if (document.RootElement.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var entry in document.RootElement.EnumerateArray())
+                {
+                    if (entry.ValueKind == JsonValueKind.Object)
+                    {
+                        parsed.Add(entry.Clone());
+                    }
+                }
+            }
+            else if (document.RootElement.ValueKind == JsonValueKind.Object)
+            {
+                parsed.Add(document.RootElement.Clone());
+            }
+
+            records = parsed;
         }
 
-        document.Dispose();
-        return null;
+        return true;
     }
+
+    /// <summary>
+    /// Picks <paramref name="name"/>'s record out of a listing and reports whether it is
+    /// there and what state it is in.
+    /// </summary>
+    /// <remarks>
+    /// The name is matched rather than the first record taken: <c>--filter name=</c> narrows
+    /// the listing but does not promise a single exact hit, so <c>app</c> could otherwise be
+    /// answered with <c>app-worker</c>'s state. A listing whose records carry no <c>Name</c>
+    /// at all falls back to the first record, which keeps a future rename of that field from
+    /// turning every container into "not found".
+    /// </remarks>
+    internal static (bool Exists, int? State) ReadContainerEntry(string output, string name)
+    {
+        var records = ParseRecords(output);
+        if (records.Count == 0)
+        {
+            return (false, null);
+        }
+
+        var named = records.Where(record => record.TryGetProperty("Name", out _)).ToList();
+        var match = named.Count > 0
+            ? named.FirstOrDefault(record =>
+                record.TryGetProperty("Name", out var value) &&
+                value.ValueKind == JsonValueKind.String &&
+                value.GetString() == name)
+            : records[0];
+
+        if (match.ValueKind != JsonValueKind.Object)
+        {
+            return (false, null);
+        }
+
+        // The kind is checked before the read: TryGetInt32 only reports "no" for a number it
+        // cannot fit, and throws for a String or a Bool. So a wslc that ever reported State
+        // as "running" would take the command down here -- which is the opposite of what a
+        // watch loop needs, and what the old comment on this line wrongly assumed was
+        // already handled. An unreadable state leaves the container listed, state unknown.
+        return match.TryGetProperty("State", out var state) &&
+               state.ValueKind == JsonValueKind.Number &&
+               state.TryGetInt32(out var reported)
+            ? (true, reported)
+            : (true, null);
+    }
+
+    /// <summary>Whether a network listing names <paramref name="network"/>.</summary>
+    internal static bool ListsNetwork(string output, string network) =>
+        ParseRecords(output).Any(record =>
+            record.TryGetProperty("Name", out var name) &&
+            name.ValueKind == JsonValueKind.String &&
+            name.GetString() == network);
 
     private void EnsureNetwork()
     {
@@ -631,12 +744,7 @@ internal sealed partial class CliContext
             return false;
         }
 
-        using var document = ParseArray(output);
-        return document is not null && document.RootElement.EnumerateArray().Any(entry =>
-            entry.ValueKind == JsonValueKind.Object &&
-            entry.TryGetProperty("Name", out var name) &&
-            name.ValueKind == JsonValueKind.String &&
-            name.GetString() == network);
+        return ListsNetwork(output, network);
     }
 
     /// <summary>
@@ -1048,28 +1156,12 @@ internal sealed partial class CliContext
             return (false, null);
         }
 
-        using var document = ParseArray(output);
-        if (document is null)
-        {
-            return (false, null);
-        }
-
-        var first = document.RootElement.EnumerateArray().FirstOrDefault();
         if (Debug)
         {
-            Console.Error.WriteLine($"wip: [debug] '{name}': {first}");
+            Console.Error.WriteLine($"wip: [debug] '{name}': {output.Trim()}");
         }
 
-        if (first.ValueKind != JsonValueKind.Object)
-        {
-            return (false, null);
-        }
-
-        // TryGetInt32 rather than GetInt32: a future wslc could report State as a string, and
-        // a watch loop should keep polling instead of taking the whole command down.
-        return first.TryGetProperty("State", out var state) && state.TryGetInt32(out var value)
-            ? (true, value)
-            : (true, null);
+        return ReadContainerEntry(output, name);
     }
 
     /// <summary>Runs <paramref name="body"/> every <paramref name="interval"/> seconds until Ctrl-C.</summary>
