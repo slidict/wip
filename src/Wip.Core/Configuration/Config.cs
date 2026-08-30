@@ -14,7 +14,7 @@ public sealed partial class Config
     private static readonly (string Key, object? Value)[] DependencyDefaults =
     [
         ("workdir", null), ("user", null), ("interactive", false), ("remove", true),
-        ("env", null), ("ports", null), ("volumes", null), ("restart", "no"),
+        ("env", null), ("ports", null), ("volumes", null), ("restart", "no"), ("healthcheck", null),
     ];
 
     /// <summary>
@@ -417,6 +417,7 @@ public sealed partial class Config
 
         StringifyEnvironment(mapping);
         NormalizeRestart(mapping);
+        NormalizeHealthCheck($"dependencies.{name}.healthcheck", mapping);
     }
 
     /// <summary>
@@ -436,6 +437,22 @@ public sealed partial class Config
         {
             entry["restart"] = "no";
         }
+    }
+
+    /// <summary>
+    /// Mutates <paramref name="entry"/> in place, mirroring <see cref="NormalizeRestart"/>: a
+    /// missing key stays missing (<see cref="Dependency"/> fills in the null default), while a
+    /// present one is replaced by its normalized form so every later reader — <c>wip up</c>,
+    /// <c>wip config</c> — sees the same shape regardless of what was written.
+    /// </summary>
+    private static void NormalizeHealthCheck(string errorPrefix, OrderedDictionary<string, object?> entry)
+    {
+        if (!entry.ContainsKey("healthcheck"))
+        {
+            return;
+        }
+
+        entry["healthcheck"] = HealthCheck.Normalize(errorPrefix, entry["healthcheck"]);
     }
 
     private static void StringifyEnvironment(OrderedDictionary<string, object?> entry)

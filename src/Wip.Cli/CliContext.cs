@@ -555,15 +555,27 @@ internal sealed partial class CliContext
         return code;
     }
 
-    private (int Code, string Output) Probe(IReadOnlyList<string> command)
+    /// <summary>
+    /// <paramref name="captureStderr"/> defaults to false because <see cref="ContainerEntry"/>
+    /// and <see cref="NetworkExists"/> parse this output as JSON — merging in stderr would risk
+    /// breaking that parse the moment wslc ever writes a warning there. A readiness check has
+    /// no such expectation and wants exactly the opposite: stderr is usually where the useful
+    /// diagnostic is, so <see cref="WaitForHealthy"/> opts in.
+    /// </summary>
+    private (int Code, string Output) Probe(
+        IReadOnlyList<string> command,
+        TimeSpan? timeout = null,
+        bool captureStderr = false)
     {
-        var output = new StringWriter();
-        var runner = new CommandRunner(Interpreter, output, new StringWriter(), Debug);
+        var captured = new StringWriter();
+        var output = captureStderr ? TextWriter.Synchronized(captured) : captured;
+        var error = captureStderr ? output : new StringWriter();
+        var runner = new CommandRunner(Interpreter, output, error, Debug);
         var code = Reporter.Step(
             $"checking: {CommandDisplay.ForDebug(command)}",
-            () => runner.Run(command));
+            () => runner.Run(command, timeout: timeout));
 
-        return (code, output.ToString());
+        return (code, captured.ToString());
     }
 
     /// <summary>
@@ -654,7 +666,71 @@ internal sealed partial class CliContext
                 Execute(Builder.DependencyUp(name));
                 break;
         }
+
+        WaitForHealthy(name);
     }
+
+    /// <summary>
+    /// Polls <c>dependencies.&lt;name&gt;.healthcheck</c> — set directly under
+    /// <c>mode: container</c>, or read from compose.yml's own <c>healthcheck:</c> under
+    /// <c>mode: compose-native</c> — the way <c>docker compose up</c> blocks a
+    /// <c>depends_on: condition: service_healthy</c> dependent. A no-op when the dependency
+    /// declares no healthcheck at all, which keeps every project unaffected until it opts in.
+    /// </summary>
+    /// <remarks>
+    /// Waits on any healthcheck it finds, regardless of which depends_on condition (if any)
+    /// named it: <see cref="SidecarNames"/> already starts sidecars before the primary
+    /// container, and compose-native's dependency order already starts a dependency before
+    /// anything depends_on says depends on it, so there is no separate per-edge condition to
+    /// gate on selectively here.
+    /// </remarks>
+    private void WaitForHealthy(string name)
+    {
+        if (RubyValue.AsMapping(Config.Dependency(name)?.GetValueOrDefault("healthcheck")) is not { } healthcheck)
+        {
+            return;
+        }
+
+        var test = RubyValue.AsArray(healthcheck.GetValueOrDefault("test")).Select(RubyValue.ToStringValue).ToList();
+        var interval = Convert.ToDouble(healthcheck.GetValueOrDefault("interval"), CultureInfo.InvariantCulture);
+        var timeout = Convert.ToDouble(healthcheck.GetValueOrDefault("timeout"), CultureInfo.InvariantCulture);
+        var retries = Convert.ToInt32(healthcheck.GetValueOrDefault("retries"), CultureInfo.InvariantCulture);
+        var startPeriod = Convert.ToDouble(healthcheck.GetValueOrDefault("start_period"), CultureInfo.InvariantCulture);
+
+        Console.Error.WriteLine($"wip: waiting for dependency '{name}' to become healthy");
+        var startPeriodEnds = DateTime.UtcNow.AddSeconds(startPeriod);
+        var failures = 0;
+
+        while (true)
+        {
+            var (code, checkOutput) =
+                Probe(Builder.DependencyExec(name, test), TimeSpan.FromSeconds(timeout), captureStderr: true);
+            if (code == 0)
+            {
+                Console.Error.WriteLine($"wip: dependency '{name}' is healthy");
+                return;
+            }
+
+            // Failures during start_period don't count against retries — the same grace real
+            // Compose gives a slow-booting service before it starts judging health at all.
+            if (DateTime.UtcNow >= startPeriodEnds && ++failures > retries)
+            {
+                throw new WipException(HealthCheckFailureMessage(name, failures, code, checkOutput));
+            }
+
+            Thread.Sleep(TimeSpan.FromSeconds(interval));
+        }
+    }
+
+    internal static string HealthCheckFailureMessage(string name, int failures, int code, string output)
+    {
+        var reason = code == CommandRunner.TimeoutExitCode ? "timed out" : $"exited {code}";
+        var detail = LastLine(output) is { } line ? $": {line}" : "";
+        return $"dependency '{name}' did not become healthy after {failures} attempt(s) (last check {reason}){detail}";
+    }
+
+    internal static string? LastLine(string output) =>
+        output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).LastOrDefault();
 
     private void EnsureContainer(bool detach)
     {

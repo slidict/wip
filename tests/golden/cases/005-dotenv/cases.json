@@ -33,6 +33,7 @@
           "ports": [],
           "volumes": [],
           "restart": "no",
+          "healthcheck": null,
           "image": "myapp:dev",
           "type": "exec",
           "command": "env"
@@ -74,6 +75,7 @@
           "ports": [],
           "volumes": [],
           "restart": "no",
+          "healthcheck": null,
           "image": "myapp:dev",
           "type": "exec",
           "command": "env"
@@ -647,6 +649,7 @@
       "ports": [],
       "volumes": [],
       "restart": "no",
+      "healthcheck": null,
       "image": "myapp:dev",
       "type": "exec",
       "command": "env"

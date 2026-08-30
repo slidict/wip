@@ -67,6 +67,7 @@
             "bundle:/usr/local/bundle"
           ],
           "restart": "no",
+          "healthcheck": null,
           "image": "slidict/slidict:development",
           "command": "bin/rails",
           "type": "exec"
@@ -90,6 +91,7 @@
             "bundle:/usr/local/bundle"
           ],
           "restart": "no",
+          "healthcheck": null,
           "image": "slidict/slidict:development",
           "command": "bundle exec rspec",
           "type": "exec"
@@ -113,6 +115,7 @@
             "bundle:/usr/local/bundle"
           ],
           "restart": "no",
+          "healthcheck": null,
           "image": "slidict/slidict:development",
           "command": "psql -U postgres",
           "type": "exec",
@@ -137,6 +140,7 @@
             "bundle:/usr/local/bundle"
           ],
           "restart": "no",
+          "healthcheck": null,
           "image": "slidict/slidict:development",
           "command": "server -p 3000",
           "type": "build",
@@ -214,6 +218,7 @@
             "bundle:/usr/local/bundle"
           ],
           "restart": "no",
+          "healthcheck": null,
           "image": "slidict/slidict:development",
           "command": "bin/rails",
           "type": "exec"
@@ -237,6 +242,7 @@
             "bundle:/usr/local/bundle"
           ],
           "restart": "no",
+          "healthcheck": null,
           "image": "slidict/slidict:development",
           "command": "bundle exec rspec",
           "type": "exec"
@@ -260,6 +266,7 @@
             "bundle:/usr/local/bundle"
           ],
           "restart": "no",
+          "healthcheck": null,
           "image": "slidict/slidict:development",
           "command": "psql -U postgres",
           "type": "exec",
@@ -284,6 +291,7 @@
             "bundle:/usr/local/bundle"
           ],
           "restart": "no",
+          "healthcheck": null,
           "image": "slidict/slidict:development",
           "command": "server -p 3000",
           "type": "build",
@@ -925,6 +933,7 @@
         "bundle:/usr/local/bundle"
       ],
       "restart": "no",
+      "healthcheck": null,
       "image": "slidict/slidict:development",
       "command": "bin/rails",
       "type": "exec"
@@ -992,6 +1001,7 @@
         "bundle:/usr/local/bundle"
       ],
       "restart": "no",
+      "healthcheck": null,
       "image": "slidict/slidict:development",
       "command": "bundle exec rspec",
       "type": "exec"
@@ -1061,6 +1071,7 @@
         "bundle:/usr/local/bundle"
       ],
       "restart": "no",
+      "healthcheck": null,
       "image": "slidict/slidict:development",
       "command": "psql -U postgres",
       "type": "exec",
@@ -1107,6 +1118,7 @@
         "bundle:/usr/local/bundle"
       ],
       "restart": "no",
+      "healthcheck": null,
       "image": "slidict/slidict:development",
       "command": "server -p 3000",
       "type": "build",

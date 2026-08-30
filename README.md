@@ -95,6 +95,22 @@ flowchart TD
 - **`mode: compose-native`** — wip parses `compose.yml` itself and drives `wslc` the same way
   `mode: container` does, one service at a time. See
   [Compose Native Mode](https://github.com/slidict/wip/wiki/Compose-Native-Mode).
+
+  `services.<name>` keys:
+
+  | Key | Status |
+  |---|---|
+  | `image`, `build`, `command`, `environment`, `volumes`, `working_dir`, `user`, `restart`, `profiles`, `healthcheck` | Supported |
+  | `ports` | Supported — short syntax only (e.g. `"3000:3000"`), not long-syntax mappings |
+  | `depends_on` | Supported — `condition: service_started` or `service_healthy` |
+  | `tty`, `stdin_open` | Ignored — TTY/stdin allocation is decided per invocation, not per service |
+  | `networks` | Ignored — every service already shares one project network |
+  | `cap_add` | Ignored — `wslc run`/`exec` has no capability flag to forward it to |
+  | `dns` | Ignored — `wslc run`/`exec` has no flag to set per-container DNS servers |
+  | anything else | `ConfigError` naming the key |
+
+  "Ignored" means accepted without error but with no effect — not a silent no-op passed off as
+  working, but a deliberate choice documented in [`ComposeFile.cs`](src/Wip.Core/Compose/ComposeFile.cs).
 - **`mode: compose`** — wip bridges to a separately-installed compose-for-wslc tool
   (`compose.command` in `wip.yml`), which does the orchestration and itself drives `wslc`. wip
   contributes no orchestration logic here, only argument forwarding.
@@ -337,6 +353,12 @@ dependencies:
     env:
       MYSQL_ROOT_PASSWORD: password
       MYSQL_DATABASE: development
+    healthcheck: # optional; `wip up` waits for this before starting whatever needs it
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 2 # seconds between checks (default 1)
+      timeout: 5 # seconds a single check may take before it counts as a failure (default 1)
+      retries: 10 # consecutive failures after start_period before giving up (default 3)
+      start_period: 10 # seconds of grace before failures start counting (default 0)
 interaction:
   rails:
     type: exec
@@ -373,6 +395,21 @@ sync: # optional; mirror the source into a named volume instead of bind-mounting
 credential, or auth. Keep real secrets out of the config file and in your runtime environment
 instead — see [Secret Masking](https://github.com/slidict/wip/wiki/Secret-Masking).
 
+`healthcheck.test` accepts the same three shapes real Compose does: a bare string (shell form,
+run as `sh -c "..."`), an array starting with `CMD` (run exactly as written) or `CMD-SHELL`
+(shell form), or `NONE` (spelled either way) to explicitly disable one. `interval`, `timeout`,
+and `start_period` accept either a plain number of seconds (matching every other timing field in
+wip.yml, e.g. `sync.interval`) or a Compose duration string (`10s`, `1m30s`) — compose.yml
+healthchecks are almost always written the latter way, so `mode: compose-native` has to read them
+as they actually appear. `retries` is always a plain count. A dependency with no `healthcheck:`
+behaves exactly as before: `wip up` starts it and moves on without waiting. Under
+`mode: compose-native`, compose.yml's own `healthcheck:` is read the same way, and
+`depends_on: condition: service_healthy` is accepted as long as the named service declares one
+(a `ConfigError` at load time otherwise) — but note that any `healthcheck:`, however it was
+declared, is waited on once its service starts, regardless of which condition (if any)
+named it. If the check never passes, `wip up` fails with a clear error once `retries` is
+exhausted instead of handing a not-yet-ready dependency to whatever depends on it.
+
 `interaction:` can also be spelled `commands:` — the same block under a different name, e.g. for
 projects that already use `commands:`. The two are aliases for the same feature; declaring both in
 the same `wip.yml` is a `ConfigError`. See [Interactions](https://github.com/slidict/wip/wiki/Interactions).
@@ -399,7 +436,7 @@ and examples — start at the
 | `wip doctor` | Diagnose WSL2, WSLC, config, architecture, Git, and the `--ai` host |
 | `wip config` | Print the effective configuration (secrets masked) |
 | `wip build [--no-cache] [-- OPTIONS]` | Build the image from the `build` definition |
-| `wip up [-d] [--no-sync] [--no-cache] [--watch] [--interval N]` | Start the configured stack, creating it if necessary |
+| `wip up [-d] [--no-sync] [--no-cache] [--watch] [--interval N]` | Start the configured stack, creating it if necessary (waits on any `healthcheck:` before starting whatever depends on it) |
 | `wip ps` / `wip status` | Show the current state of the configured container or stack |
 | `wip stop` | Stop the configured stack without removing it |
 | `wip down` | Stop and remove the configured stack |

@@ -218,6 +218,18 @@ public sealed class CommandBuilder
 
     public IReadOnlyList<string> DependencyStart(string name) => [wslc, "start", name];
 
+    /// <summary>
+    /// Runs a healthcheck's <c>test</c> inside a sidecar. Unlike <see cref="Exec"/>, this
+    /// targets <paramref name="name"/> directly rather than <c>config.Container</c>, since a
+    /// readiness check runs against whichever dependency it belongs to, not the primary.
+    /// </summary>
+    public IReadOnlyList<string> DependencyExec(string name, IEnumerable<string> arguments)
+    {
+        var command = new List<string> { wslc, "exec", name };
+        command.AddRange(arguments);
+        return command;
+    }
+
     public IReadOnlyList<string> DependencyFind(string name) => Listing(name);
 
     public IReadOnlyList<string> DependencyStop(string name) => [wslc, "stop", name];
