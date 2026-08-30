@@ -548,8 +548,9 @@ dotnet publish src/Wip.Cli/Wip.Cli.csproj -c Release -r win-x64 -o artifacts/win
 pwsh tests/e2e/run-e2e.ps1 -Wip artifacts/win-x64/wip.exe
 ```
 
-CI runs it on `windows-latest` on demand, weekly, and on a pull request labelled `e2e` — not
-on every push, so the ordinary test run stays fast and stays WSLC-free.
+CI runs it on `windows-latest` for every pull request, plus weekly and on demand. It is a
+separate workflow so that the ordinary `Test` run stays fast and stays WSLC-free, not so that
+it runs less often.
 
 The last line needs MSVC — see
 [Requirements & installation](#requirements--installation) for the `winget install` command

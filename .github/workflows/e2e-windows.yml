@@ -1,10 +1,10 @@
 # End-to-end tests against a real WSLC installation.
 #
-# Deliberately not part of the Test workflow. Those jobs must keep running on every push and
-# on Linux, which means they must keep working with no WSLC at all -- see
-# tests/e2e/README.md. This one needs a Windows host with WSL2 and WSLC and takes minutes
-# rather than seconds, so it runs on demand, weekly, and on a pull request that opts in with
-# the `e2e` label.
+# A separate workflow from Test, not a lesser one. Test must keep running on Linux with no
+# WSLC at all -- that independence is what makes it fast and portable -- so the real-WSLC
+# coverage lives here instead of being bolted onto it. It runs on every pull request, plus
+# weekly (so a change in WSLC's own interface surfaces in a week nobody touched the
+# repository) and on demand.
 name: E2E (real WSLC)
 
 on:
@@ -15,11 +15,8 @@ on:
         required: false
         default: "alpine:3.20"
   schedule:
-    # Weekly, so a change in WSLC's own interface surfaces here rather than in someone's
-    # terminal, even in a week nobody touched the repository.
     - cron: "17 4 * * 1"
   pull_request:
-    types: [opened, reopened, labeled, synchronize]
 
 permissions:
   contents: read
@@ -27,9 +24,6 @@ permissions:
 jobs:
   e2e:
     name: Lifecycle against real WSLC
-    # A labeled/synchronize pull request only qualifies while the `e2e` label is on it;
-    # scheduled and manual runs always do.
-    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'e2e')
     runs-on: windows-latest
     timeout-minutes: 45
 

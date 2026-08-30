@@ -57,9 +57,9 @@ are reused by the next run, and the CI runner is thrown away regardless.
 
 [`.github/workflows/e2e-windows.yml`](../../.github/workflows/e2e-windows.yml) runs it on
 `windows-latest`: it publishes `wip.exe`, updates WSL to the pre-release channel that carries
-WSLC, verifies `wslc` is on PATH, then runs this script. It is triggered manually, weekly, and
-on a pull request labelled `e2e` — not on every push, because it needs a real WSLC and takes
-minutes.
+WSLC, verifies `wslc` is on PATH, then runs this script. It runs on every pull request, plus
+weekly and on demand. Keeping it out of the `Test` workflow is about that workflow staying
+WSLC-free on Linux, not about running this one rarely.
 
 If the runner image has no WSLC, the "Verify wslc is available" step says so in one line
 instead of letting a wip command fail for unrelated reasons.
