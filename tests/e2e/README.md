@@ -20,7 +20,7 @@ someone's terminal.
 | preflight | `wslc version`, and `wslc run --rm <base image> echo …` — the environment, before any wip command |
 | `wip version` / `wip config` | exit 0; wip resolves `wslc` and reads the fixture |
 | `wip build` | exit 0; builds `wip-e2e:latest` from the fixture Dockerfile |
-| `wip up -d` | exit 0; `wip ps` reports the container **running** (the state column, not just the name), and `wslc list --all` agrees |
+| `wip up -d` | exit 0; `wslc list --all` shows the container **running**, and `wip ps` reports the same state (the state column, not just the name) |
 | `wip exec` | exit 0 and the build-time marker comes back; an `interaction:` entry (`wip marker`) reaches the same container |
 | `wip exec` (failing command) | a non-zero status inside the container is forwarded as wip's own |
 | `wip run` | exit 0, the marker is echoed, and the long-lived container is untouched |

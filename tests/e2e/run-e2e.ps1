@@ -207,19 +207,19 @@ try {
     Write-Step "Diagnostic: the JSON probe wip reads (not asserted)"
     Invoke-Wslc @('list', '--all', '--filter', 'name=wip-e2e-app', '--format', 'json') | Out-Null
 
+    # wslc's own view first, state and all. It runs ahead of `wip ps` deliberately: if the
+    # container really is not running, that is the container failing and this line says so,
+    # and only once wslc has been made to agree does a disagreeing `wip ps` mean wip is wrong.
+    $listed = Invoke-Wslc @('list', '--all')
+    Assert-Match $listed '(?m)^.*\bwip-e2e-app\b.*\brunning\b' "wslc list --all after wip up"
+
     # The state column, not just the name: `wip ps` exits 0 and prints the row whatever the
     # container's state is, so matching the name alone would pass on a row reading
-    # "wip-e2e-app  not found" -- which is exactly what wip printed here against a container
-    # wslc reported as running.
+    # "wip-e2e-app  not found" -- which is exactly what wip printed here against the container
+    # wslc just reported as running.
     $ps = Invoke-Wip @('ps')
     Assert-Exit $ps 0 "wip ps"
     Assert-Match $ps '(?m)^wip-e2e-app\s+running\b' "wip ps after wip up -d"
-
-    # Straight from wslc as well, because `wip ps` reads the same `list --format json` that
-    # `wip up` used to decide whether to create the container: if that parse is wrong, both
-    # are wrong together and only wslc's own output shows it.
-    $listed = Invoke-Wslc @('list', '--all')
-    Assert-Match $listed 'wip-e2e-app' "wslc list --all after wip up"
 
     # ------------------------------------------------------------------ exec
     Write-Step "wip exec"
