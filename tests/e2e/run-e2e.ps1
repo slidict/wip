@@ -143,7 +143,17 @@ function Write-Diagnostics {
     }
     catch { Write-Host "  (wslc logs $script:Container failed: $_)" }
 
-    try { & wsl.exe --status 2>&1 | Out-String | Write-Host } catch { Write-Host "  (wsl --status failed: $_)" }
+    # wsl.exe writes UTF-16LE to a redirected pipe while wslc.exe writes UTF-8, and PowerShell
+    # decodes native output with [Console]::OutputEncoding -- so reading wsl.exe under the
+    # UTF-8 default turns every line into "W`0S`0L`0 ...". Switch the decoder for this one
+    # call and put it back, rather than leaving it set and garbling the wslc output above.
+    $utf8 = [Console]::OutputEncoding
+    try {
+        [Console]::OutputEncoding = [System.Text.Encoding]::Unicode
+        & wsl.exe --status 2>&1 | Out-String | Write-Host
+    }
+    catch { Write-Host "  (wsl --status failed: $_)" }
+    finally { [Console]::OutputEncoding = $utf8 }
 }
 
 function Remove-Leftovers {

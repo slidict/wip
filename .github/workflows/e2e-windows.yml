@@ -57,6 +57,13 @@ jobs:
         run: |
           $ErrorActionPreference = 'Continue'
           $PSNativeCommandUseErrorActionPreference = $false
+
+          # wsl.exe writes UTF-16LE to a redirected pipe, and PowerShell decodes native output
+          # with [Console]::OutputEncoding -- UTF-8 here, which turns every line into
+          # "W`0S`0L`0 ...". Only wsl.exe does this; wslc.exe is UTF-8, so the decoder is
+          # switched for wsl-only steps and switched back around wslc calls below.
+          [Console]::OutputEncoding = [System.Text.Encoding]::Unicode
+
           wsl --update --pre-release
           $code = $LASTEXITCODE
           wsl --shutdown
@@ -100,6 +107,7 @@ jobs:
             Select-Object -First 1
 
           if (-not $wslc) {
+            [Console]::OutputEncoding = [System.Text.Encoding]::Unicode
             Write-Host "--- wsl --status"
             wsl --status
             Write-Host "--- $($env:ProgramFiles)\WSL"
@@ -134,8 +142,14 @@ jobs:
         run: |
           $ErrorActionPreference = 'Continue'
           $PSNativeCommandUseErrorActionPreference = $false
+
+          # wsl.exe is UTF-16LE, wslc.exe is UTF-8: decode each with what it actually writes.
+          $utf8 = [Console]::OutputEncoding
+          [Console]::OutputEncoding = [System.Text.Encoding]::Unicode
           wsl --version
           wsl --status
+          [Console]::OutputEncoding = $utf8
+
           wslc version
           wslc list --all
           exit 0
