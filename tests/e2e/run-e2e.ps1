@@ -118,7 +118,10 @@ function Assert-NoMatch($Result, [string] $Pattern, [string] $What) {
 # original one.
 function Write-Diagnostics {
     Write-Step "Diagnostics"
-    foreach ($arguments in @(@('version'), @('list', '--all'))) {
+    foreach ($arguments in @(
+            @('version'),
+            @('list', '--all'),
+            @('list', '--all', '--filter', "name=$($script:Container)", '--format', 'json'))) {
         try { Invoke-Wslc $arguments | Out-Null } catch { Write-Host "  (wslc $($arguments -join ' ') itself failed: $_)" }
     }
 
@@ -197,6 +200,13 @@ try {
     $up = Invoke-Wip @('up', '-d')
     Assert-Exit $up 0 "wip up -d"
 
+    # The probe wip's own status and create-vs-start decisions are built on, printed raw and
+    # before anything asserts. Not asserted itself -- it is here so the log carries the JSON
+    # shape those decisions have to parse, and it has to run ahead of the assertions or the
+    # first failure takes the log entry with it.
+    Write-Step "Diagnostic: the JSON probe wip reads (not asserted)"
+    Invoke-Wslc @('list', '--all', '--filter', 'name=wip-e2e-app', '--format', 'json') | Out-Null
+
     # The state column, not just the name: `wip ps` exits 0 and prints the row whatever the
     # container's state is, so matching the name alone would pass on a row reading
     # "wip-e2e-app  not found" -- which is exactly what wip printed here against a container
@@ -210,12 +220,6 @@ try {
     # are wrong together and only wslc's own output shows it.
     $listed = Invoke-Wslc @('list', '--all')
     Assert-Match $listed 'wip-e2e-app' "wslc list --all after wip up"
-
-    # The exact probe wip's own status and create-vs-start decisions are built on, printed
-    # raw. Not asserted -- it is here so the log carries the JSON shape those decisions have
-    # to parse, which is what a fix for the state column needs to be written against.
-    Write-Step "Diagnostic: the JSON probe wip reads (not asserted)"
-    Invoke-Wslc @('list', '--all', '--filter', 'name=wip-e2e-app', '--format', 'json') | Out-Null
 
     # ------------------------------------------------------------------ exec
     Write-Step "wip exec"
