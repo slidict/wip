@@ -48,9 +48,12 @@ param(
 
 # wip reports progress on stderr the way the Ruby build's `warn` did, and PowerShell turns a
 # native command's stderr into a terminating error when $ErrorActionPreference is 'stop' --
-# which the GitHub Actions pwsh shell sets. Disarm both, or `wip up` announcing that it
-# started a container would abort the run.
-$ErrorActionPreference = 'Continue'
+# which the GitHub Actions pwsh shell sets. Only the native half of that is disarmed here:
+# `wip up` announcing that it started a container must not abort the run, but a cmdlet
+# failing must. Staging is the case that matters -- a failed Copy-Item or Set-Location under
+# 'Continue' would print its error and then run the lifecycle against an incomplete
+# workspace, reporting whatever that produced as if it were wip's behaviour.
+$ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false
 
 $script:Container = 'wip-e2e-app'
@@ -128,20 +131,35 @@ function Write-Diagnostics {
     # Container logs run behind a job with a deadline. `wslc logs` is only asked not to
     # follow by wip passing no -f, and a diagnostics helper that hung would replace a
     # readable failure with a job timing out twenty minutes later.
-    $logs = Start-Job -ScriptBlock { param($exe, $name) & $exe logs $name 2>&1 } -ArgumentList $Wslc, $script:Container
-    if (Wait-Job $logs -Timeout 30) { Receive-Job $logs | Out-String | Write-Host }
-    else { Write-Host "  (wslc logs $script:Container did not finish within 30s)" }
-    Remove-Job $logs -Force
+    try {
+        $logs = Start-Job -ScriptBlock { param($exe, $name) & $exe logs $name 2>&1 } -ArgumentList $Wslc, $script:Container
+        if (Wait-Job $logs -Timeout 30) { Receive-Job $logs -ErrorAction SilentlyContinue | Out-String | Write-Host }
+        else { Write-Host "  (wslc logs $script:Container did not finish within 30s)" }
+        Remove-Job $logs -Force
+    }
+    catch { Write-Host "  (wslc logs $script:Container failed: $_)" }
 
     try { & wsl.exe --status 2>&1 | Out-String | Write-Host } catch { Write-Host "  (wsl --status failed: $_)" }
 }
 
 function Remove-Leftovers {
     # `wip down` is the command under test, so cleanup cannot rely on it having worked --
-    # this removes the container directly, and says nothing when there was none. It also runs
-    # from the finally block, where wslc may be the very thing that was missing, so a failure
-    # here must not replace the error that got us there.
-    try { & $Wslc remove -f $script:Container 2>&1 | Out-Null } catch { }
+    # this removes the container directly, and says nothing when there was none.
+    #
+    # Behind a job with a deadline, and with everything swallowed, because this also runs
+    # from the finally block: an unresponsive wslc there would hang the run until the job
+    # timeout, and a throw there would replace the failure that got us there with its own.
+    try {
+        $removal = Start-Job -ScriptBlock { param($exe, $name) & $exe remove -f $name 2>&1 } `
+            -ArgumentList $Wslc, $script:Container
+        if (-not (Wait-Job $removal -Timeout 60)) {
+            Write-Host "  (wslc remove -f $script:Container did not finish within 60s; leaving it)"
+        }
+
+        Receive-Job $removal -ErrorAction SilentlyContinue | Out-Null
+        Remove-Job $removal -Force
+    }
+    catch { }
 }
 
 $resolvedWip = Resolve-Path -LiteralPath $Wip -ErrorAction SilentlyContinue
@@ -243,10 +261,16 @@ try {
     Assert-Exit $run 0 "wip run"
     Assert-Match $run 'wip-e2e-run-marker' "wip run"
 
-    # `remove: true` in the fixture means the ephemeral container is `wslc run --rm`, so the
-    # long-lived one from `wip up` should still be the only wip-e2e container around.
+    # `remove: true` in the fixture means the ephemeral container is `wslc run --rm`, so
+    # counting rows built from the fixture image is what actually proves it was removed --
+    # the long-lived one from `wip up` should be the only one left. Matching the name alone
+    # would pass with the ephemeral container still sitting there beside it.
     $afterRun = Invoke-Wslc @('list', '--all')
     Assert-Match $afterRun 'wip-e2e-app' "wslc list --all after wip run"
+    $fixtureRows = ([regex]::Matches($afterRun.Output, 'wip-e2e:latest')).Count
+    if ($fixtureRows -ne 1) {
+        throw "expected exactly one wip-e2e:latest container after wip run, found $fixtureRows -- did --rm not remove the ephemeral one?"
+    }
 
     # ------------------------------------------------------------------ down
     Write-Step "wip down"
