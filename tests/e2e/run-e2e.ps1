@@ -57,6 +57,10 @@ $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false
 
 $script:Container = 'wip-e2e-app'
+# Every assertion below is built from $script:Container rather than repeating the literal, so
+# renaming the fixture's container: cannot leave a check silently pointed at a container that
+# no longer exists -- which would pass by matching nothing.
+$script:ContainerPattern = [regex]::Escape($script:Container)
 $script:Workspace = $null
 $script:Failed = $false
 
@@ -206,7 +210,7 @@ try {
 
     $config = Invoke-Wip @('config')
     Assert-Exit $config 0 "wip config"
-    Assert-Match $config 'wip-e2e-app' "wip config"
+    Assert-Match $config $script:ContainerPattern "wip config"
 
     # ------------------------------------------------------------------ build
     Write-Step "wip build"
@@ -223,13 +227,13 @@ try {
     # shape those decisions have to parse, and it has to run ahead of the assertions or the
     # first failure takes the log entry with it.
     Write-Step "Diagnostic: the JSON probe wip reads (not asserted)"
-    Invoke-Wslc @('list', '--all', '--filter', 'name=wip-e2e-app', '--format', 'json') | Out-Null
+    Invoke-Wslc @('list', '--all', '--filter', "name=$($script:Container)", '--format', 'json') | Out-Null
 
     # wslc's own view first, state and all. It runs ahead of `wip ps` deliberately: if the
     # container really is not running, that is the container failing and this line says so,
     # and only once wslc has been made to agree does a disagreeing `wip ps` mean wip is wrong.
     $listed = Invoke-Wslc @('list', '--all')
-    Assert-Match $listed '(?m)^.*\bwip-e2e-app\b.*\brunning\b' "wslc list --all after wip up"
+    Assert-Match $listed "(?m)^.*\b$($script:ContainerPattern)\b.*\brunning\b" "wslc list --all after wip up"
 
     # The state column, not just the name: `wip ps` exits 0 and prints the row whatever the
     # container's state is, so matching the name alone would pass on a row reading
@@ -237,7 +241,7 @@ try {
     # wslc just reported as running.
     $ps = Invoke-Wip @('ps')
     Assert-Exit $ps 0 "wip ps"
-    Assert-Match $ps '(?m)^wip-e2e-app\s+running\b' "wip ps after wip up -d"
+    Assert-Match $ps "(?m)^$($script:ContainerPattern)\s+running\b" "wip ps after wip up -d"
 
     # ------------------------------------------------------------------ exec
     Write-Step "wip exec"
@@ -266,7 +270,7 @@ try {
     # the long-lived one from `wip up` should be the only one left. Matching the name alone
     # would pass with the ephemeral container still sitting there beside it.
     $afterRun = Invoke-Wslc @('list', '--all')
-    Assert-Match $afterRun 'wip-e2e-app' "wslc list --all after wip run"
+    Assert-Match $afterRun $script:ContainerPattern "wslc list --all after wip run"
     $fixtureRows = ([regex]::Matches($afterRun.Output, 'wip-e2e:latest')).Count
     if ($fixtureRows -ne 1) {
         throw "expected exactly one wip-e2e:latest container after wip run, found $fixtureRows -- did --rm not remove the ephemeral one?"
@@ -278,7 +282,7 @@ try {
     Assert-Exit $down 0 "wip down"
 
     $afterDown = Invoke-Wslc @('list', '--all')
-    Assert-NoMatch $afterDown 'wip-e2e-app' "wslc list --all after wip down"
+    Assert-NoMatch $afterDown $script:ContainerPattern "wslc list --all after wip down"
 
     Write-Step "All lifecycle assertions passed"
 }
