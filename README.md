@@ -32,6 +32,7 @@ key, every command's flags, guides, and troubleshooting — see the **[wip Wiki]
 ## Contents
 
 - [Which mode should you use?](#which-mode-should-you-use)
+- [Architecture](#architecture)
 - [AI-assisted initialization](#ai-assisted-initialization)
 - [Requirements & installation](#requirements--installation)
 - [Quick start](#quick-start)
@@ -57,6 +58,75 @@ key, every command's flags, guides, and troubleshooting — see the **[wip Wiki]
 `docker-compose.yml`, or `docker-compose.yaml` next to it, and `container` otherwise — see
 [Commands](#commands). For the full breakdown and trade-offs, see
 [Choosing a Mode](https://github.com/slidict/wip/wiki/Choosing-a-Mode) on the wiki.
+
+## Architecture
+
+wip never talks to Docker: every mode ultimately shells out to `wslc.exe` / `wslc`, Microsoft's
+own container CLI, as a safe argv array. What differs between modes is *what sits between*
+`wip.yml` and `wslc` — today WSLC has no native Compose support, so `mode: compose` and
+`mode: compose-native` exist to cover that gap in two different ways:
+
+```mermaid
+flowchart TD
+    yml["wip.yml"] --> wip["wip.exe"]
+
+    subgraph m1["mode: container (default)"]
+        direction TB
+        wip -->|"run / exec / stop / logs / ps / restart"| wslc1["wslc.exe"]
+    end
+
+    subgraph m2["mode: compose-native"]
+        direction TB
+        wip -->|"parses compose.yml itself"| wslc2["wslc.exe"]
+    end
+
+    subgraph m3["mode: compose"]
+        direction TB
+        wip -->|"up / stop / down / exec / logs / ps"| bridge["compose-for-wslc<br/>(third-party, e.g. wslc-compose)"]
+        bridge --> wslc3["wslc.exe"]
+    end
+
+    compose["compose.yml"] -. "read by" .-> m2
+    compose -. "read by" .-> bridge
+```
+
+- **`mode: container`** — no `compose.yml` involved; wip drives `wslc` directly for one
+  container plus its `dependencies:`.
+- **`mode: compose-native`** — wip parses `compose.yml` itself and drives `wslc` the same way
+  `mode: container` does, one service at a time. See
+  [Compose Native Mode](https://github.com/slidict/wip/wiki/Compose-Native-Mode).
+- **`mode: compose`** — wip bridges to a separately-installed compose-for-wslc tool
+  (`compose.command` in `wip.yml`), which does the orchestration and itself drives `wslc`. wip
+  contributes no orchestration logic here, only argument forwarding.
+
+### If/when WSLC ships native Compose support
+
+`mode: compose-native` is a deliberate stopgap (see the `Modes` doc comment in
+[`Config.cs`](src/Wip.Core/Configuration/Config.cs)), not a permanent feature — it exists only
+because WSLC itself has no Compose command yet. Until that changes, wip keeps all three modes
+exactly as they are today. Once WSLC ships a complete native Compose command of its own (e.g.
+`wslc compose up`), `mode: compose-native` retires and `mode: compose` simply points at that
+native command instead of a third-party bridge:
+
+```mermaid
+flowchart TD
+    yml["wip.yml"] --> wip["wip.exe"]
+
+    subgraph m1["mode: container"]
+        direction TB
+        wip -->|"run / exec / stop / logs / ps / restart"| wslc1["wslc.exe"]
+    end
+
+    subgraph m3["mode: compose"]
+        direction TB
+        wip -->|"up / stop / down / exec / logs / ps"| wslc2["wslc.exe compose (native)"]
+    end
+
+    compose["compose.yml"] -. "read by wslc itself" .-> wslc2
+```
+
+Either way, wip stays a thin, safe-argv wrapper around `wip.yml` — it never grows an
+orchestration engine of its own; that job belongs to `wslc`.
 
 ## AI-assisted initialization
 
