@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.RegularExpressions;
 using Wip.Yaml;
 
 namespace Wip.Configuration;
@@ -10,12 +11,13 @@ namespace Wip.Configuration;
 /// a dependency's readiness wait behaves identically regardless of which mode produced it.
 /// </summary>
 /// <remarks>
-/// Real Compose accepts duration strings ("10s", "1m30s") for interval/timeout/start_period.
-/// wip.yml's own numeric config fields (<c>sync.interval</c>, this one included) are plain
-/// seconds instead — a compose.yml healthcheck already written with duration strings needs
-/// those fields rewritten as numbers to be understood here.
+/// <c>interval</c>/<c>timeout</c>/<c>start_period</c> accept either a plain number of seconds
+/// (wip.yml's own convention, matching <c>sync.interval</c>) or a real Compose duration string
+/// ("10s", "1m30s") — compose.yml healthchecks are near-universally written the latter way, so
+/// mode: compose-native has to read them as they actually appear. <c>retries</c> stays a plain
+/// count either way: Compose never accepts a duration there.
 /// </remarks>
-public static class HealthCheck
+public static partial class HealthCheck
 {
     public const double DefaultInterval = 1;
     public const double DefaultTimeout = 1;
@@ -23,6 +25,10 @@ public static class HealthCheck
     public const double DefaultStartPeriod = 0;
 
     private static readonly string[] Keys = ["test", "interval", "timeout", "retries", "start_period"];
+
+    /// <summary>Matches one "&lt;number&gt;&lt;unit&gt;" segment of a Compose duration string.</summary>
+    [GeneratedRegex(@"(\d+(?:\.\d+)?)(h|ms|us|m|s)")]
+    private static partial Regex DurationSegment();
 
     /// <summary>
     /// Null input, and a <c>test: NONE</c> (or <c>test: ["NONE"]</c>) disabling one, both mean
@@ -50,11 +56,11 @@ public static class HealthCheck
 
         var result = RubyValue.NewMapping();
         result["test"] = test.Cast<object?>().ToList();
-        result["interval"] = PositiveNumber(errorPrefix, "interval", mapping.GetValueOrDefault("interval"), DefaultInterval);
-        result["timeout"] = PositiveNumber(errorPrefix, "timeout", mapping.GetValueOrDefault("timeout"), DefaultTimeout);
-        result["retries"] = (long)PositiveNumber(errorPrefix, "retries", mapping.GetValueOrDefault("retries"), DefaultRetries);
+        result["interval"] = PositiveSeconds(errorPrefix, "interval", mapping.GetValueOrDefault("interval"), DefaultInterval);
+        result["timeout"] = PositiveSeconds(errorPrefix, "timeout", mapping.GetValueOrDefault("timeout"), DefaultTimeout);
+        result["retries"] = PositiveCount(errorPrefix, "retries", mapping.GetValueOrDefault("retries"), DefaultRetries);
         result["start_period"] =
-            NonNegativeNumber(errorPrefix, "start_period", mapping.GetValueOrDefault("start_period"), DefaultStartPeriod);
+            NonNegativeSeconds(errorPrefix, "start_period", mapping.GetValueOrDefault("start_period"), DefaultStartPeriod);
         return result;
     }
 
@@ -87,9 +93,9 @@ public static class HealthCheck
         };
     }
 
-    private static double PositiveNumber(string errorPrefix, string key, object? value, double defaultValue)
+    private static double PositiveSeconds(string errorPrefix, string key, object? value, double defaultValue)
     {
-        var seconds = ToDouble(errorPrefix, key, value, defaultValue);
+        var seconds = ToSeconds(errorPrefix, key, value, defaultValue);
         if (seconds <= 0)
         {
             throw new ConfigException($"{errorPrefix}.{key} must be a positive number");
@@ -98,9 +104,9 @@ public static class HealthCheck
         return seconds;
     }
 
-    private static double NonNegativeNumber(string errorPrefix, string key, object? value, double defaultValue)
+    private static double NonNegativeSeconds(string errorPrefix, string key, object? value, double defaultValue)
     {
-        var seconds = ToDouble(errorPrefix, key, value, defaultValue);
+        var seconds = ToSeconds(errorPrefix, key, value, defaultValue);
         if (seconds < 0)
         {
             throw new ConfigException($"{errorPrefix}.{key} must not be negative");
@@ -109,10 +115,67 @@ public static class HealthCheck
         return seconds;
     }
 
-    private static double ToDouble(string errorPrefix, string key, object? value, double defaultValue) => value switch
+    private static double ToSeconds(string errorPrefix, string key, object? value, double defaultValue) => value switch
     {
         null => defaultValue,
         long or int or double => Convert.ToDouble(value, CultureInfo.InvariantCulture),
-        _ => throw new ConfigException($"{errorPrefix}.{key} must be a number of seconds"),
+        string text => ParseDuration(errorPrefix, key, text),
+        _ => throw new ConfigException($"{errorPrefix}.{key} must be a number of seconds or a duration string"),
     };
+
+    /// <summary>
+    /// A whole count of consecutive failures, never a duration: Compose itself never accepts
+    /// one for <c>retries</c>, so "10s" here is a mistake to reject, not 10 seconds to guess at.
+    /// </summary>
+    private static long PositiveCount(string errorPrefix, string key, object? value, long defaultValue)
+    {
+        var count = value switch
+        {
+            null => defaultValue,
+            long number => number,
+            int number => number,
+            double number => (long)number,
+            _ => throw new ConfigException($"{errorPrefix}.{key} must be a whole number"),
+        };
+
+        if (count <= 0)
+        {
+            throw new ConfigException($"{errorPrefix}.{key} must be a positive number");
+        }
+
+        return count;
+    }
+
+    /// <summary>
+    /// Compose's own duration syntax: one or more "&lt;number&gt;&lt;unit&gt;" segments —
+    /// h/m/s/ms/us — concatenated with no separator (<c>1h30m</c>, <c>1m30s</c>). Rejects
+    /// anything the segments don't fully account for, so a typo fails loudly instead of
+    /// silently parsing a prefix and ignoring the rest.
+    /// </summary>
+    private static double ParseDuration(string errorPrefix, string key, string text)
+    {
+        var matches = DurationSegment().Matches(text);
+        if (matches.Count == 0 || matches.Sum(match => match.Length) != text.Length)
+        {
+            throw new ConfigException(
+                $"{errorPrefix}.{key} must be a number of seconds or a duration string (e.g. \"10s\", \"1m30s\")");
+        }
+
+        double seconds = 0;
+        foreach (Match match in matches)
+        {
+            var amount = double.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture);
+            seconds += match.Groups[2].Value switch
+            {
+                "h" => amount * 3600,
+                "m" => amount * 60,
+                "s" => amount,
+                "ms" => amount / 1_000,
+                "us" => amount / 1_000_000,
+                _ => 0,
+            };
+        }
+
+        return seconds;
+    }
 }

@@ -382,8 +382,10 @@ instead — see [Secret Masking](https://github.com/slidict/wip/wiki/Secret-Mask
 `healthcheck.test` accepts the same three shapes real Compose does: a bare string (shell form,
 run as `sh -c "..."`), an array starting with `CMD` (run exactly as written) or `CMD-SHELL`
 (shell form), or `NONE` (spelled either way) to explicitly disable one. `interval`, `timeout`,
-and `start_period` are plain seconds — not Compose's duration strings (`10s`, `1m30s`) — matching
-every other timing field in wip.yml (e.g. `sync.interval`). A dependency with no `healthcheck:`
+and `start_period` accept either a plain number of seconds (matching every other timing field in
+wip.yml, e.g. `sync.interval`) or a Compose duration string (`10s`, `1m30s`) — compose.yml
+healthchecks are almost always written the latter way, so `mode: compose-native` has to read them
+as they actually appear. `retries` is always a plain count. A dependency with no `healthcheck:`
 behaves exactly as before: `wip up` starts it and moves on without waiting. Under
 `mode: compose-native`, compose.yml's own `healthcheck:` is read the same way, and
 `depends_on: condition: service_healthy` is accepted as long as the named service declares one

@@ -150,16 +150,44 @@ public class HealthCheckTests
         Assert.Contains("start_period must not be negative", exception.Message);
     }
 
+    [Theory]
+    [InlineData("10s", 10.0)]
+    [InlineData("1m30s", 90.0)]
+    [InlineData("1h", 3600.0)]
+    [InlineData("1h5m30s", 3930.0)]
+    [InlineData("500ms", 0.5)]
+    public void ComposeDurationStringsAreParsedAsSeconds(string duration, double seconds)
+    {
+        var result = HealthCheck.Normalize("dependencies.db.healthcheck", Load($"""
+            test: ["CMD", "true"]
+            interval: "{duration}"
+            """));
+
+        Assert.Equal(seconds, result!["interval"]);
+    }
+
     [Fact]
-    public void NonNumericIntervalIsRejected()
+    public void UnparseableIntervalIsRejected()
     {
         var exception = Assert.Throws<ConfigException>(() => HealthCheck.Normalize(
             "dependencies.db.healthcheck", Load("""
             test: ["CMD", "true"]
-            interval: "10s"
+            interval: "10 seconds"
             """)));
 
-        Assert.Contains("interval must be a number of seconds", exception.Message);
+        Assert.Contains("interval must be a number of seconds or a duration string", exception.Message);
+    }
+
+    [Fact]
+    public void RetriesRejectsADurationString()
+    {
+        var exception = Assert.Throws<ConfigException>(() => HealthCheck.Normalize(
+            "dependencies.db.healthcheck", Load("""
+            test: ["CMD", "true"]
+            retries: "10s"
+            """)));
+
+        Assert.Contains("retries must be a whole number", exception.Message);
     }
 
     private static object? Load(string yaml) => YamlLoader.LoadText(yaml, allowAliases: false);

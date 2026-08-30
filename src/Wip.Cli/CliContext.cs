@@ -555,15 +555,27 @@ internal sealed partial class CliContext
         return code;
     }
 
-    private (int Code, string Output) Probe(IReadOnlyList<string> command, TimeSpan? timeout = null)
+    /// <summary>
+    /// <paramref name="captureStderr"/> defaults to false because <see cref="ContainerEntry"/>
+    /// and <see cref="NetworkExists"/> parse this output as JSON — merging in stderr would risk
+    /// breaking that parse the moment wslc ever writes a warning there. A readiness check has
+    /// no such expectation and wants exactly the opposite: stderr is usually where the useful
+    /// diagnostic is, so <see cref="WaitForHealthy"/> opts in.
+    /// </summary>
+    private (int Code, string Output) Probe(
+        IReadOnlyList<string> command,
+        TimeSpan? timeout = null,
+        bool captureStderr = false)
     {
-        var output = new StringWriter();
-        var runner = new CommandRunner(Interpreter, output, new StringWriter(), Debug);
+        var captured = new StringWriter();
+        var output = captureStderr ? TextWriter.Synchronized(captured) : captured;
+        var error = captureStderr ? output : new StringWriter();
+        var runner = new CommandRunner(Interpreter, output, error, Debug);
         var code = Reporter.Step(
             $"checking: {CommandDisplay.ForDebug(command)}",
             () => runner.Run(command, timeout: timeout));
 
-        return (code, output.ToString());
+        return (code, captured.ToString());
     }
 
     /// <summary>
@@ -691,7 +703,8 @@ internal sealed partial class CliContext
 
         while (true)
         {
-            var (code, checkOutput) = Probe(Builder.DependencyExec(name, test), TimeSpan.FromSeconds(timeout));
+            var (code, checkOutput) =
+                Probe(Builder.DependencyExec(name, test), TimeSpan.FromSeconds(timeout), captureStderr: true);
             if (code == 0)
             {
                 Console.Error.WriteLine($"wip: dependency '{name}' is healthy");

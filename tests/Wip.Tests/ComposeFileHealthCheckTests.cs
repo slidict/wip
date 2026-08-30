@@ -34,6 +34,30 @@ public class ComposeFileHealthCheckTests
     }
 
     [Fact]
+    public void HealthCheckWithComposeDurationStringsLoads()
+    {
+        using var directory = new TemporaryDirectory();
+        var path = WriteCompose(directory.Path, """
+            services:
+              db:
+                image: mysql:8.0
+                healthcheck:
+                  test: ["CMD", "mysqladmin", "ping"]
+                  interval: 1m30s
+                  timeout: 10s
+                  start_period: 40s
+            """);
+
+        var compose = ComposeFile.Load(path);
+        var db = (OrderedDictionary<string, object?>)compose.ToDependenciesMapping()["db"]!;
+        var healthcheck = (OrderedDictionary<string, object?>)db["healthcheck"]!;
+
+        Assert.Equal(90.0, healthcheck["interval"]);
+        Assert.Equal(10.0, healthcheck["timeout"]);
+        Assert.Equal(40.0, healthcheck["start_period"]);
+    }
+
+    [Fact]
     public void ServiceWithNoHealthCheckHasANullEntry()
     {
         using var directory = new TemporaryDirectory();
