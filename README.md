@@ -403,7 +403,7 @@ and examples — start at the
 | `wip ps` / `wip status` | Show the current state of the configured container or stack |
 | `wip stop` | Stop the configured stack without removing it |
 | `wip down` | Stop and remove the configured stack |
-| `wip restart` | Stop, then start the configured container or stack again — no rebuild, no `down`/`up` |
+| `wip restart` | Stop, then start the configured container or stack again — no rebuild (`mode: compose` runs `stop` then `up -d`; other modes run `stop` then `start`, never `down`) |
 | `wip exec [--no-interactive] COMMAND...` | Run a command in the existing container |
 | `wip run [--no-interactive] COMMAND...` | Run a command in a new `--rm` container (`mode: compose` has no ephemeral run — falls back to `exec` in the running service, with a warning) |
 | `wip shell` | Open the configured shell, falling back to `bash` then `sh` |

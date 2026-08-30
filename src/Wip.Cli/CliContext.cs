@@ -396,11 +396,25 @@ internal sealed partial class CliContext
     {
         if (Config.IsCompose)
         {
-            Execute(Bridge.Stop(), exitOnFailure: false);
+            var stopCode = Execute(Bridge.Stop(), exitOnFailure: false);
+            if (stopCode != 0)
+            {
+                return stopCode;
+            }
+
             return Execute(Bridge.Up(detach: true), interactive: false);
         }
 
-        Execute(Builder.Stop(), exitOnFailure: false);
+        // A failed stop is not swallowed like the sidecar stops below are: if the primary
+        // container is still running afterwards, EnsureContainer sees AlreadyRunning and does
+        // nothing, so returning 0 unconditionally here would report success without the
+        // container having actually restarted.
+        var primaryStopCode = Execute(Builder.Stop(), exitOnFailure: false);
+        if (primaryStopCode != 0)
+        {
+            return primaryStopCode;
+        }
+
         foreach (var name in SidecarNames())
         {
             Execute(Builder.DependencyStop(name), exitOnFailure: false);
