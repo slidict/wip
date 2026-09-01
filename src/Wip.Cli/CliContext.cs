@@ -92,6 +92,8 @@ internal sealed partial class CliContext
     internal bool Debug =>
         options.Debug || !string.IsNullOrEmpty(System.Environment.GetEnvironmentVariable("WIP_DEBUG"));
 
+    internal bool Quiet => options.Quiet;
+
     internal ConfigLoader Loader => new(path: options.ConfigPath, envFile: options.EnvFile);
 
     internal Config Config => config ??= Loader.Load();
@@ -357,9 +359,30 @@ internal sealed partial class CliContext
             // The failure itself was already streamed by CommandRunner (raw child output,
             // plus ErrorInterpreter's hint on top); this is only the missing "it's over, and
             // it did not work" marker the issue asked for, not a second explanation of why.
-            Log.Info($"up failed (exit code {exit.Code})");
+            Log.Error($"up failed (exit code {exit.Code})");
+            NoteIfDisplayLanguageIsNotEnglish();
             throw;
         }
+    }
+
+    /// <summary>
+    /// The output just streamed above came straight from wslc/docker/rsync, unlike everything
+    /// else wip printed around it — and unlike wip's own strings, it is not guaranteed to be in
+    /// English if Windows' display language isn't (issue #134's "Windows / locale angle"; see
+    /// <see cref="DisplayLanguage"/>). A quick note here is cheaper than the reader wondering
+    /// whether a paragraph in another language part-way up the scrollback was a wip message
+    /// they somehow can't parse.
+    /// </summary>
+    private static void NoteIfDisplayLanguageIsNotEnglish()
+    {
+        if (DisplayLanguage.IsEnglish())
+        {
+            return;
+        }
+
+        Log.Info(
+            "the output above came from the command that failed, not from wip, and may not " +
+            "be in English (your Windows display language isn't)");
     }
 
     internal int Sync(bool watch, double? interval)
@@ -573,7 +596,7 @@ internal sealed partial class CliContext
         bool exitOnFailure = true,
         string? workingDirectory = null)
     {
-        var runner = new CommandRunner(Interpreter, debug: Debug);
+        var runner = new CommandRunner(Interpreter, debug: Debug, quiet: Quiet);
         var code = Reporter.Step(
             $"running: {CommandDisplay.ForDebug(command)}",
             () => runner.Run(command, interactive: interactive, workingDirectory: workingDirectory),
@@ -1028,8 +1051,8 @@ internal sealed partial class CliContext
             return;
         }
 
-        Log.Info(
-            $"warning: this project is on the WSL filesystem ({directory}); wslc " +
+        Log.Warn(
+            $"this project is on the WSL filesystem ({directory}); wslc " +
             "resolves bind-mount sources as Windows paths, so volumes: entries can mount " +
             "empty instead of failing. Move the project onto the Windows filesystem " +
             "(C:\\src\\myproject, say) if a container starts up without your files.");
@@ -1088,7 +1111,7 @@ internal sealed partial class CliContext
             return;
         }
 
-        Log.Info(
+        Log.Warn(
             $"commands.{name} in wip.yml is shadowed by the built-in `wip {name}`; " +
             $"run it with `wip dispatch {name}`");
     }
@@ -1229,4 +1252,4 @@ internal sealed partial class CliContext
 }
 
 /// <summary>The options every command shares, parsed once by <see cref="Program"/>.</summary>
-internal sealed record CliOptions(string? ConfigPath, string? EnvFile, bool Debug, string? DebugLog);
+internal sealed record CliOptions(string? ConfigPath, string? EnvFile, bool Debug, string? DebugLog, bool Quiet);

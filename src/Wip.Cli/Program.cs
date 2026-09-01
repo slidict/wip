@@ -26,7 +26,7 @@ internal static class Program
         }
         catch (WipException exception)
         {
-            Log.Info(exception.Message);
+            Log.Error(exception.Message);
             return 1;
         }
     }
@@ -91,6 +91,13 @@ internal static class Program
             Description = "Where --debug snapshots go: a file path, or \"-\" for inline",
             Recursive = true,
         };
+        var quietOption = new Option<bool>("--quiet", "-q")
+        {
+            Description =
+                "Hold back a shelled-out command's own output and print it only if that " +
+                "command fails (--debug's own lines are unaffected)",
+            Recursive = true,
+        };
 
         var root = new RootCommand("A developer-friendly CLI wrapper for Microsoft WSLC.")
         {
@@ -98,13 +105,15 @@ internal static class Program
             envFileOption,
             debugOption,
             debugLogOption,
+            quietOption,
         };
 
         CliContext Context(ParseResult parsed) => new(new CliOptions(
             parsed.GetValue(configOption),
             parsed.GetValue(envFileOption),
             parsed.GetValue(debugOption),
-            parsed.GetValue(debugLogOption)));
+            parsed.GetValue(debugLogOption),
+            parsed.GetValue(quietOption)));
 
         foreach (var command in BuildCommands(Context))
         {
