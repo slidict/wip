@@ -26,15 +26,32 @@ public static class YamlLoader
     // Configuration files do not need arbitrary structural depth. Bounding recursion keeps
     // a malicious repository from turning `wip` startup into a stack-overflow crash.
     private const int MaxNestingDepth = 100;
+    internal const int MaxInputSize = 1024 * 1024;
+    internal const int MaxTotalNodes = 150_000;
+    internal const int MaxScalarLength = 256 * 1024;
+    internal const int MaxCollectionElements = 50_000;
 
     public static object? LoadFile(string path, bool allowAliases)
     {
-        using var reader = new StreamReader(path);
+        var length = new FileInfo(path).Length;
+        if (length > MaxInputSize)
+        {
+            throw LimitExceeded(path, "file size", MaxInputSize);
+        }
+
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        using var limitedStream = new LimitedReadStream(stream, MaxInputSize, path);
+        using var reader = new StreamReader(limitedStream);
         return Load(reader, allowAliases, path);
     }
 
     public static object? LoadText(string text, bool allowAliases, string path = "<text>")
     {
+        if (text.Length > MaxInputSize)
+        {
+            throw LimitExceeded(path, "input length", MaxInputSize);
+        }
+
         using var reader = new StringReader(text);
         return Load(reader, allowAliases, path);
     }
@@ -44,6 +61,7 @@ public static class YamlLoader
         var parser = new Parser(reader);
         var anchors = new Dictionary<string, object?>(StringComparer.Ordinal);
         var pending = new HashSet<string>(StringComparer.Ordinal);
+        var state = new LoadState();
 
         try
         {
@@ -54,7 +72,7 @@ public static class YamlLoader
             }
 
             parser.Consume<DocumentStart>();
-            var value = ReadNode(parser, allowAliases, anchors, pending, path, depth: 0);
+            var value = ReadNode(parser, allowAliases, anchors, pending, state, path, depth: 0);
             parser.Consume<DocumentEnd>();
             return value;
         }
@@ -69,6 +87,7 @@ public static class YamlLoader
         bool allowAliases,
         Dictionary<string, object?> anchors,
         HashSet<string> pending,
+        LoadState state,
         string path,
         int depth)
     {
@@ -76,6 +95,12 @@ public static class YamlLoader
         {
             throw new ConfigException(
                 $"Could not parse {path}: YAML nesting exceeds the limit of {MaxNestingDepth}");
+        }
+
+        state.NodeCount++;
+        if (state.NodeCount > MaxTotalNodes)
+        {
+            throw LimitExceeded(path, "total node count", MaxTotalNodes);
         }
 
         if (parser.Accept<AnchorAlias>(out var alias))
@@ -87,19 +112,23 @@ public static class YamlLoader
         if (parser.Accept<Scalar>(out var scalar))
         {
             parser.MoveNext();
-            var value = YamlScalarResolver.Resolve(scalar!.Value, scalar.Style);
+            if (scalar!.Value.Length > MaxScalarLength)
+            {
+                throw LimitExceeded(path, "scalar length", MaxScalarLength);
+            }
+            var value = YamlScalarResolver.Resolve(scalar.Value, scalar.Style);
             Remember(scalar.Anchor, value, anchors);
             return value;
         }
 
         if (parser.Accept<SequenceStart>(out var sequenceStart))
         {
-            return ReadSequence(parser, allowAliases, anchors, pending, path, sequenceStart!.Anchor, depth);
+            return ReadSequence(parser, allowAliases, anchors, pending, state, path, sequenceStart!.Anchor, depth);
         }
 
         if (parser.Accept<MappingStart>(out var mappingStart))
         {
-            return ReadMapping(parser, allowAliases, anchors, pending, path, mappingStart!.Anchor, depth);
+            return ReadMapping(parser, allowAliases, anchors, pending, state, path, mappingStart!.Anchor, depth);
         }
 
         throw new ConfigException($"Could not parse {path}: unexpected {parser.Current?.GetType().Name}");
@@ -138,6 +167,7 @@ public static class YamlLoader
         bool allowAliases,
         Dictionary<string, object?> anchors,
         HashSet<string> pending,
+        LoadState state,
         string path,
         AnchorName anchor,
         int depth)
@@ -148,7 +178,11 @@ public static class YamlLoader
 
         while (!parser.Accept<SequenceEnd>(out _))
         {
-            items.Add(ReadNode(parser, allowAliases, anchors, pending, path, depth + 1));
+            if (items.Count >= MaxCollectionElements)
+            {
+                throw LimitExceeded(path, "sequence element count", MaxCollectionElements);
+            }
+            items.Add(ReadNode(parser, allowAliases, anchors, pending, state, path, depth + 1));
         }
 
         parser.Consume<SequenceEnd>();
@@ -161,6 +195,7 @@ public static class YamlLoader
         bool allowAliases,
         Dictionary<string, object?> anchors,
         HashSet<string> pending,
+        LoadState state,
         string path,
         AnchorName anchor,
         int depth)
@@ -168,11 +203,17 @@ public static class YamlLoader
         parser.Consume<MappingStart>();
         var mapping = new OrderedDictionary<string, object?>(StringComparer.Ordinal);
         Track(anchor, pending);
+        var elementCount = 0;
 
         while (!parser.Accept<MappingEnd>(out _))
         {
-            var key = ReadNode(parser, allowAliases, anchors, pending, path, depth + 1);
-            var value = ReadNode(parser, allowAliases, anchors, pending, path, depth + 1);
+            if (elementCount >= MaxCollectionElements)
+            {
+                throw LimitExceeded(path, "mapping element count", MaxCollectionElements);
+            }
+            elementCount++;
+            var key = ReadNode(parser, allowAliases, anchors, pending, state, path, depth + 1);
+            var value = ReadNode(parser, allowAliases, anchors, pending, state, path, depth + 1);
             var name = RubyValue.ToStringValue(key);
 
             if (name == MergeKey && TryMerge(mapping, value))
@@ -267,5 +308,38 @@ public static class YamlLoader
         {
             anchors[anchor.ToString()] = value;
         }
+    }
+
+    private static ConfigException LimitExceeded(string path, string limit, int maximum) =>
+        new($"Could not parse {path}: YAML {limit} exceeds the limit of {maximum}");
+
+    private sealed class LoadState
+    {
+        public int NodeCount { get; set; }
+    }
+
+    private sealed class LimitedReadStream(Stream inner, int maximum, string path) : Stream
+    {
+        private int bytesRead;
+        public override bool CanRead => inner.CanRead;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => inner.Length;
+        public override long Position { get => inner.Position; set => throw new NotSupportedException(); }
+        public override void Flush() => inner.Flush();
+        public override int Read(byte[] buffer, int offset, int count) => Check(inner.Read(buffer, offset, count));
+        public override int Read(Span<byte> buffer) => Check(inner.Read(buffer));
+        private int Check(int count)
+        {
+            bytesRead += count;
+            if (bytesRead > maximum)
+            {
+                throw LimitExceeded(path, "file size", maximum);
+            }
+            return count;
+        }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 }
