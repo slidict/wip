@@ -30,6 +30,16 @@ public class HelpCommandTests
     }
 
     [Fact]
+    public void NoCacheWithoutAiIsRejected()
+    {
+        var parsed = Program.BuildRoot().Parse(["help", "--no-cache"]);
+        var invocation = new InvocationConfiguration { EnableDefaultExceptionHandler = false };
+
+        var exception = Assert.Throws<WipException>(() => parsed.Invoke(invocation));
+        Assert.Equal("--no-cache requires --ai", exception.Message);
+    }
+
+    [Fact]
     public void QuestionWithoutAiIsRejected()
     {
         var parsed = Program.BuildRoot().Parse(["help", "how", "do", "I", "sync"]);

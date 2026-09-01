@@ -154,6 +154,9 @@ internal static class Program
 
         yield return DoctorCommand(context);
         yield return HelpCommand(context);
+        yield return Simple(
+            "manual", "Download the wip wiki so `wip help --ai` can answer offline",
+            context, ctx => ctx.ManualDownload());
         yield return Simple("config", "Print the effective configuration", context, ctx => ctx.ShowConfig());
 
         yield return BuildCommand(context);
@@ -205,10 +208,14 @@ internal static class Program
         };
         var url = AiUrlOption();
         var allowRemoteAi = AllowRemoteAiOption();
+        var noCache = new Option<bool>("--no-cache")
+        {
+            Description = "Skip the `wip manual` cache and fetch the wiki manual live for this question",
+        };
         var question = new Argument<string[]>("question") { Arity = ArgumentArity.ZeroOrMore };
         var command = new Command("help", "Show usage help (add --ai to ask an AI server instead)")
         {
-            ai, url, allowRemoteAi, question,
+            ai, url, allowRemoteAi, noCache, question,
         };
 
         command.SetAction(parsed =>
@@ -224,6 +231,11 @@ internal static class Program
                     throw new WipException("--allow-remote-ai requires --ai");
                 }
 
+                if (parsed.GetValue(noCache))
+                {
+                    throw new WipException("--no-cache requires --ai");
+                }
+
                 if ((parsed.GetValue(question) ?? []).Length > 0)
                 {
                     throw new WipException("a question requires --ai");
@@ -233,7 +245,8 @@ internal static class Program
             }
 
             return context(parsed).HelpAi(
-                parsed.GetValue(url), parsed.GetValue(question) ?? [], parsed.GetValue(allowRemoteAi));
+                parsed.GetValue(url), parsed.GetValue(question) ?? [],
+                parsed.GetValue(allowRemoteAi), parsed.GetValue(noCache));
         });
 
         return command;

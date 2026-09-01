@@ -450,6 +450,7 @@ and examples — start at the
 | `wip init [--force] [--template NAME]` | Write a starter `wip.yml`: `mode: compose-native` if a `compose.yml`, `compose.yaml`, `docker-compose.yml`, or `docker-compose.yaml` is found next to it, `mode: container` otherwise |
 | `wip version` | wip's version, plus WSLC's if it can be detected |
 | `wip doctor` | Diagnose WSL2, WSLC, config, architecture, Git, and the `--ai` host |
+| `wip manual` | Download the wip wiki so `wip help --ai` can answer offline |
 | `wip config` | Print the effective configuration (secrets masked) |
 | `wip build [--no-cache] [-- OPTIONS]` | Build the image from the `build` definition |
 | `wip up [-d] [--no-sync] [--no-cache] [--watch] [--interval N]` | Start the configured stack, creating it if necessary (waits on any `healthcheck:` before starting whatever depends on it) |
