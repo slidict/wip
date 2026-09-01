@@ -19,32 +19,33 @@ public sealed class CommandResolver
     private readonly IReadOnlyList<string> candidates;
     private readonly string label;
     private readonly string installHint;
-    private readonly Func<string, bool> isExecutable;
+    private readonly Func<string, string?> resolveExecutable;
 
     public CommandResolver(
         IReadOnlyList<string>? candidates = null,
         string label = "WSLC",
         string? installHint = null,
-        Func<string, bool>? isExecutable = null)
+        Func<string, string?>? resolveExecutable = null)
     {
         this.candidates = candidates ?? DefaultCandidates;
         this.label = label;
         this.installHint = installHint ?? DefaultInstallHint;
-        this.isExecutable = isExecutable ?? IsExecutable;
+        this.resolveExecutable = resolveExecutable ?? ResolveExecutable;
     }
 
     public string Resolve(string configured = "auto")
     {
         if (configured != "auto")
         {
-            return isExecutable(configured) ? configured : throw NotFound([configured]);
+            return resolveExecutable(configured) ?? throw NotFound([configured]);
         }
 
         foreach (var candidate in candidates)
         {
-            if (isExecutable(candidate))
+            var resolved = resolveExecutable(candidate);
+            if (resolved is not null)
             {
-                return candidate;
+                return resolved;
             }
         }
 
@@ -53,12 +54,15 @@ public sealed class CommandResolver
 
     private static IReadOnlyList<string> BuildDefaultCandidates()
     {
-        var candidates = new List<string> { "wslc.exe", "wslc" };
+        var candidates = new List<string>();
         if (OperatingSystem.IsWindows())
         {
             candidates.Add(Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.System),
                 "wslc.exe"));
         }
+
+        candidates.Add("wslc.exe");
+        candidates.Add("wslc");
 
         return candidates;
     }
@@ -68,40 +72,52 @@ public sealed class CommandResolver
     /// PATH. On Windows an extensionless name is retried against each PATHEXT suffix, which
     /// is what lets a bare "wslc" resolve to wslc.exe.
     /// </summary>
-    private static bool IsExecutable(string command)
+    private static string? ResolveExecutable(string command)
     {
         if (command.Contains(Path.DirectorySeparatorChar) || command.Contains(Path.AltDirectorySeparatorChar))
         {
-            return FileExists(command);
+            return ResolveFile(command);
         }
 
         var path = System.Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
         foreach (var directory in path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
         {
-            if (FileExists(Path.Combine(directory, command)))
+            var resolved = ResolveFile(Path.Combine(directory, command));
+            if (resolved is not null)
             {
-                return true;
+                return resolved;
             }
         }
 
-        return false;
+        return null;
     }
 
-    private static bool FileExists(string candidate)
+    private static string? ResolveFile(string candidate)
     {
-        if (File.Exists(candidate))
+        // Freeze relative paths before checking them so the returned value cannot be
+        // reinterpreted against a different working directory by the eventual caller.
+        var fullPath = Path.GetFullPath(candidate);
+        if (File.Exists(fullPath))
         {
-            return true;
+            return fullPath;
         }
 
         if (!OperatingSystem.IsWindows() || Path.HasExtension(candidate))
         {
-            return false;
+            return null;
         }
 
         var extensions = System.Environment.GetEnvironmentVariable("PATHEXT") ?? ".COM;.EXE;.BAT;.CMD";
-        return extensions.Split(';', StringSplitOptions.RemoveEmptyEntries)
-            .Any(extension => File.Exists(candidate + extension));
+        foreach (var extension in extensions.Split(';', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var extendedPath = Path.GetFullPath(candidate + extension);
+            if (File.Exists(extendedPath))
+            {
+                return extendedPath;
+            }
+        }
+
+        return null;
     }
 
     private CommandNotFoundException NotFound(IReadOnlyList<string> attempted) => new(
