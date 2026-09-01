@@ -305,6 +305,10 @@ internal sealed partial class CliContext
                 var code = UpViaComposeBridge(detach, sync, watch);
                 if (detach)
                 {
+                    // No container count here, unlike the non-compose branch below: under
+                    // mode: compose, wip delegates entirely to wslc-compose and deliberately
+                    // never parses compose.yml's service list (see the ConfigException in
+                    // UpViaComposeBridge for --watch), so it has nothing accurate to count.
                     Log.Info("up complete");
                 }
 
