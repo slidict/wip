@@ -353,7 +353,7 @@ internal sealed partial class CliContext
             // The failure itself was already streamed by CommandRunner (raw child output,
             // plus ErrorInterpreter's hint on top); this is only the missing "it's over, and
             // it did not work" marker the issue asked for, not a second explanation of why.
-            Log.Info($"up failed (exit code {exit.Code})");
+            Log.Error($"up failed (exit code {exit.Code})");
             throw;
         }
     }
@@ -1024,8 +1024,8 @@ internal sealed partial class CliContext
             return;
         }
 
-        Log.Info(
-            $"warning: this project is on the WSL filesystem ({directory}); wslc " +
+        Log.Warn(
+            $"this project is on the WSL filesystem ({directory}); wslc " +
             "resolves bind-mount sources as Windows paths, so volumes: entries can mount " +
             "empty instead of failing. Move the project onto the Windows filesystem " +
             "(C:\\src\\myproject, say) if a container starts up without your files.");
@@ -1084,7 +1084,7 @@ internal sealed partial class CliContext
             return;
         }
 
-        Log.Info(
+        Log.Warn(
             $"commands.{name} in wip.yml is shadowed by the built-in `wip {name}`; " +
             $"run it with `wip dispatch {name}`");
     }

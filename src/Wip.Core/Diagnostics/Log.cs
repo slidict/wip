@@ -3,29 +3,62 @@ using Wip.Platform;
 namespace Wip.Diagnostics;
 
 /// <summary>
-/// Writes wip's own progress/status lines to stderr, tinting the "wip:" tag so they read apart
-/// at a glance from the raw, unprefixed passthrough output <see cref="Execution.CommandRunner"/>
-/// streams from whatever wip shells out to (docker, rsync, wslc, ...).
+/// Writes wip's own progress/status/warning/error lines to stderr, tinting the "wip:" tag so
+/// they read apart at a glance from the raw, unprefixed passthrough output
+/// <see cref="Execution.CommandRunner"/> streams from whatever wip shells out to (docker, rsync,
+/// wslc, ...), and tinting a "warning:"/"error:" label on top for the two lines actually mean.
 /// </summary>
 /// <remarks>
 /// Before this, every "wip: ..." line in <c>CliContext</c> was its own
 /// <c>Console.Error.WriteLine</c> call, indistinguishable in color or shape from a child
-/// process's raw output interleaved with it (issue #134). This does not touch <c>--debug</c>
-/// output: those "wip: [debug] ..." lines are a deliberately raw, uncolored channel already
-/// distinguished by their own tag, and stay on <see cref="DebugReporter"/>'s direct writes.
+/// process's raw output interleaved with it, and from each other regardless of whether the
+/// line was routine progress or something the user needed to notice (issue #134). Severity
+/// here covers only wip's own messages: a child process's raw output (a docker warning, an
+/// rsync error) is not parsed or reclassified, since guessing at arbitrary third-party output
+/// shapes is exactly the fragility the issue's design discussion ruled out. This also does not
+/// touch <c>--debug</c> output: those "wip: [debug] ..." lines are a deliberately raw,
+/// uncolored channel already distinguished by their own tag, and stay on
+/// <see cref="DebugReporter"/>'s direct writes.
 /// </remarks>
 public static class Log
 {
     private const string TagAccent = "\x1b[36m";
+    private const string WarnAccent = "\x1b[33m";
+    private const string ErrorAccent = "\x1b[31m";
     private const string Reset = "\x1b[0m";
 
     /// <summary>Writes "wip: message" to stderr, tinting the tag when the terminal supports it.</summary>
     public static void Info(string message) => Console.Error.WriteLine(Format(message, IsColorEnabled()));
 
+    /// <summary>Writes "wip: warning: message" -- something the user should notice but that
+    /// does not stop wip from continuing.</summary>
+    public static void Warn(string message) => Console.Error.WriteLine(FormatWarn(message, IsColorEnabled()));
+
+    /// <summary>Writes "wip: error: message" -- wip is about to stop, or a command it ran
+    /// already failed.</summary>
+    public static void Error(string message) => Console.Error.WriteLine(FormatError(message, IsColorEnabled()));
+
     /// <summary>Pure formatting, kept apart from <see cref="IsColorEnabled"/> so the tag's shape
     /// is testable without a real console or environment variables.</summary>
-    internal static string Format(string message, bool colorize) =>
-        colorize ? $"{TagAccent}wip:{Reset} {message}" : $"wip: {message}";
+    internal static string Format(string message, bool colorize) => FormatTagged(null, message, colorize);
+
+    internal static string FormatWarn(string message, bool colorize) =>
+        FormatTagged(("warning", WarnAccent), message, colorize);
+
+    internal static string FormatError(string message, bool colorize) =>
+        FormatTagged(("error", ErrorAccent), message, colorize);
+
+    private static string FormatTagged((string Label, string Accent)? severity, string message, bool colorize)
+    {
+        var tag = colorize ? $"{TagAccent}wip:{Reset}" : "wip:";
+        if (severity is not { } level)
+        {
+            return $"{tag} {message}";
+        }
+
+        var label = colorize ? $"{level.Accent}{level.Label}:{Reset}" : $"{level.Label}:";
+        return $"{tag} {label} {message}";
+    }
 
     /// <summary>
     /// NO_COLOR (https://no-color.org) always wins. Otherwise color only makes sense when

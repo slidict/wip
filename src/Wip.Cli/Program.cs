@@ -26,7 +26,7 @@ internal static class Program
         }
         catch (WipException exception)
         {
-            Log.Info(exception.Message);
+            Log.Error(exception.Message);
             return 1;
         }
     }
