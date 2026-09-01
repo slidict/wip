@@ -17,8 +17,8 @@
           "remove": true,
           "command": "server -p 3000",
           "env": {
-            "RAILS_ENV": "development",
-            "PORT": "3000",
+            "RAILS_ENV": "[REDACTED]",
+            "PORT": "[REDACTED]",
             "DATABASE_PASSWORD": "[REDACTED]"
           },
           "ports": [
@@ -54,8 +54,8 @@
           "interactive": true,
           "remove": true,
           "env": {
-            "RAILS_ENV": "development",
-            "PORT": "3000",
+            "RAILS_ENV": "[REDACTED]",
+            "PORT": "[REDACTED]",
             "DATABASE_PASSWORD": "[REDACTED]"
           },
           "ports": [
@@ -78,8 +78,8 @@
           "interactive": false,
           "remove": true,
           "env": {
-            "RAILS_ENV": "development",
-            "PORT": "3000",
+            "RAILS_ENV": "[REDACTED]",
+            "PORT": "[REDACTED]",
             "DATABASE_PASSWORD": "[REDACTED]"
           },
           "ports": [
@@ -102,8 +102,8 @@
           "interactive": true,
           "remove": true,
           "env": {
-            "RAILS_ENV": "development",
-            "PORT": "3000",
+            "RAILS_ENV": "[REDACTED]",
+            "PORT": "[REDACTED]",
             "DATABASE_PASSWORD": "[REDACTED]"
           },
           "ports": [
@@ -127,8 +127,8 @@
           "interactive": false,
           "remove": true,
           "env": {
-            "RAILS_ENV": "development",
-            "PORT": "3000",
+            "RAILS_ENV": "[REDACTED]",
+            "PORT": "[REDACTED]",
             "DATABASE_PASSWORD": "[REDACTED]"
           },
           "ports": [

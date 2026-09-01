@@ -37,8 +37,8 @@
           "image": "wip-compose-web:latest",
           "command": "bin/rails server -b 0.0.0.0",
           "env": {
-            "RAILS_ENV": "development",
-            "DATABASE_URL": "postgres://db/app"
+            "RAILS_ENV": "[REDACTED]",
+            "DATABASE_URL": "[REDACTED]"
           },
           "ports": [
             "3000:3000"
@@ -64,8 +64,8 @@
           "interactive": true,
           "remove": true,
           "env": {
-            "RAILS_ENV": "development",
-            "DATABASE_URL": "postgres://db/app"
+            "RAILS_ENV": "[REDACTED]",
+            "DATABASE_URL": "[REDACTED]"
           },
           "ports": [
             "3000:3000"

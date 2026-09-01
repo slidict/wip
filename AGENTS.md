@@ -13,7 +13,3 @@ Examples:
 - `feat(cli): add doctor command`
 - `fix(config): accept positional path argument`
 - `ci: add push trigger for main`
-
-## Version bumps
-
-Follow [Semantic Versioning](https://semver.org/). Bump minor for new commands/features (`feat`), patch for bug fixes (`fix`), major for breaking changes.

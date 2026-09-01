@@ -43,7 +43,7 @@
           "interactive": false,
           "remove": false,
           "env": {
-            "RAILS_ENV": "test"
+            "RAILS_ENV": "[REDACTED]"
           },
           "ports": [],
           "volumes": [],

@@ -430,11 +430,224 @@ public class WipAiTests
         Assert.ThrowsAny<OperationCanceledException>(() => provider.Generate("Run Rails", cts.Token));
     }
 
+    [Fact]
+    public void DiscoverModelRejectsOversizedContentLengthWithoutReadingTheBody()
+    {
+        var stream = new TrackingStream(new byte[] { (byte)'{' });
+        var content = new StreamContent(stream);
+        content.Headers.ContentLength = LocalAiProvider.ModelsResponseMaxBytes + 1;
+        var handler = new ResponseHandler(() => new HttpResponseMessage(System.Net.HttpStatusCode.OK) { Content = content });
+
+        var exception = Assert.Throws<WipException>(
+            () => LocalAiProvider.DiscoverModel("http://localhost:11434/v1", handler));
+
+        Assert.Contains("larger", exception.Message);
+        Assert.Equal(0, stream.BytesRead);
+    }
+
+    [Fact]
+    public void GenerateStopsAChunkedResponseAsSoonAsItExceedsTheStreamLimit()
+    {
+        var stream = new TrackingStream(Enumerable.Repeat(
+            (byte)' ', (int)LocalAiProvider.ChatResponseMaxBytes + 100).ToArray());
+        var content = new StreamContent(stream);
+        content.Headers.ContentLength = null;
+        var handler = new ResponseHandler(() => new HttpResponseMessage(System.Net.HttpStatusCode.OK) { Content = content });
+        var provider = new LocalAiProvider("http://localhost:11434/v1", "llama3.1", handler);
+
+        var exception = Assert.Throws<WipException>(
+            () => provider.Generate("Run Rails", TestContext.Current.CancellationToken));
+
+        Assert.Contains("larger", exception.Message);
+        Assert.Equal(LocalAiProvider.ChatResponseMaxBytes + 1, stream.BytesRead);
+    }
+
+    [Fact]
+    public void DiscoverModelGivesUpWhenTheBodyNeverFollowsItsHeaders()
+    {
+        var content = new StreamContent(new StallingStream());
+        content.Headers.ContentLength = null;
+        var handler = new ResponseHandler(() => new HttpResponseMessage(System.Net.HttpStatusCode.OK) { Content = content });
+
+        var exception = Assert.Throws<WipException>(() => LocalAiProvider.DiscoverModel(
+            "http://localhost:11434/v1", handler, TimeSpan.FromMilliseconds(200)));
+
+        Assert.Contains("did not respond in time", exception.Message);
+    }
+
+    [Fact]
+    public void GenerateGivesUpWhenTheBodyNeverFollowsItsHeaders()
+    {
+        var content = new StreamContent(new StallingStream());
+        content.Headers.ContentLength = null;
+        var handler = new ResponseHandler(() => new HttpResponseMessage(System.Net.HttpStatusCode.OK) { Content = content });
+        var provider = new LocalAiProvider("http://localhost:11434/v1", "llama3.1", handler)
+        {
+            RequestTimeout = TimeSpan.FromMilliseconds(200),
+        };
+
+        var exception = Assert.Throws<WipException>(
+            () => provider.Generate("Run Rails", TestContext.Current.CancellationToken));
+
+        Assert.Contains("did not respond in time", exception.Message);
+    }
+
+    [Fact]
+    public void GenerateLetsCallerCancellationOfAStalledBodyPropagateUnwrapped()
+    {
+        var content = new StreamContent(new StallingStream());
+        content.Headers.ContentLength = null;
+        var handler = new ResponseHandler(() => new HttpResponseMessage(System.Net.HttpStatusCode.OK) { Content = content });
+        // A deadline far longer than the caller's cancellation, so a regression that ignores the
+        // caller's token fails on the wrong exception type rather than hanging the suite.
+        var provider = new LocalAiProvider("http://localhost:11434/v1", "llama3.1", handler)
+        {
+            RequestTimeout = TimeSpan.FromSeconds(30),
+        };
+        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(200));
+
+        Assert.ThrowsAny<OperationCanceledException>(() => provider.Generate("Run Rails", cts.Token));
+    }
+
+    [Fact]
+    public void DiscoverModelRejectsARootThatIsNotAnObject()
+    {
+        var handler = new StubHandler("""["llama3.1"]""");
+
+        var exception = Assert.Throws<WipException>(() => LocalAiProvider.DiscoverModel("http://localhost:11434/v1", handler));
+        Assert.Contains("not shaped as expected", exception.Message);
+    }
+
+    [Fact]
+    public void GenerateRejectsARootThatIsNotAnObject()
+    {
+        var handler = new StubHandler("""["nope"]""");
+        var provider = new LocalAiProvider("http://localhost:11434/v1", "llama3.1", handler);
+
+        var exception = Assert.Throws<WipException>(
+            () => provider.Generate("Run Rails", TestContext.Current.CancellationToken));
+        Assert.Contains("choices[0].message.content", exception.Message);
+    }
+
+    [Fact]
+    public void GenerateRejectsAChoiceThatIsNotAnObject()
+    {
+        var handler = new StubHandler("""{"choices":["nope"]}""");
+        var provider = new LocalAiProvider("http://localhost:11434/v1", "llama3.1", handler);
+
+        var exception = Assert.Throws<WipException>(
+            () => provider.Generate("Run Rails", TestContext.Current.CancellationToken));
+        Assert.Contains("choices[0].message.content", exception.Message);
+    }
+
+    [Fact]
+    public void GenerateTruncatesAndEscapesAHugeErrorBody()
+    {
+        var body = "bad\n\t" + new string('x', LocalAiProvider.ErrorBodyMaxBytes * 2);
+        var handler = new ResponseHandler(() => new HttpResponseMessage(System.Net.HttpStatusCode.BadRequest)
+        {
+            Content = new StringContent(body),
+        });
+        var provider = new LocalAiProvider("http://localhost:11434/v1", "llama3.1", handler);
+
+        var exception = Assert.Throws<WipException>(
+            () => provider.Generate("Run Rails", TestContext.Current.CancellationToken));
+
+        Assert.Contains("bad\\u000a\\u0009", exception.Message);
+        Assert.Contains("[truncated]", exception.Message);
+        Assert.True(exception.Message.Length < LocalAiProvider.ErrorBodyMaxBytes + 200);
+    }
+
+    [Fact]
+    public void GenerateAcceptsAResponseWithinAllLimits()
+    {
+        var expected = new string('a', 32 * 1024);
+        var handler = new StubHandler($"{{\"choices\":[{{\"message\":{{\"content\":\"{expected}\"}}}}]}}");
+        var provider = new LocalAiProvider("http://localhost:11434/v1", "llama3.1", handler);
+
+        Assert.Equal(expected, provider.Generate("Run Rails", TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public void GenerateRejectsContentThatExceedsItsOwnCharacterLimit()
+    {
+        var generated = new string('a', LocalAiProvider.GeneratedContentMaxCharacters + 1);
+        var handler = new StubHandler($"{{\"choices\":[{{\"message\":{{\"content\":\"{generated}\"}}}}]}}");
+        var provider = new LocalAiProvider("http://localhost:11434/v1", "llama3.1", handler);
+
+        var exception = Assert.Throws<WipException>(
+            () => provider.Generate("Run Rails", TestContext.Current.CancellationToken));
+        Assert.Contains("character limit", exception.Message);
+    }
+
     private sealed class ThrowingHandler(Exception exception) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request, CancellationToken cancellationToken) =>
             Task.FromException<HttpResponseMessage>(exception);
+    }
+
+    private sealed class ResponseHandler(Func<HttpResponseMessage> responseFactory) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken) =>
+            Task.FromResult(responseFactory());
+    }
+
+    /// <summary>
+    /// A body stream that records how much of itself was actually consumed. Only the two
+    /// synchronous reads are counted: MemoryStream's own ReadAsync overloads delegate to them,
+    /// so counting ReadAsync too would double every byte.
+    /// </summary>
+    private sealed class TrackingStream(byte[] bytes) : MemoryStream(bytes)
+    {
+        internal long BytesRead { get; private set; }
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            var read = base.Read(buffer, offset, count);
+            BytesRead += read;
+            return read;
+        }
+
+        public override int Read(Span<byte> buffer)
+        {
+            var read = base.Read(buffer);
+            BytesRead += read;
+            return read;
+        }
+    }
+
+    /// <summary>A body stream whose headers arrived but whose content never does — the shape of a
+    /// server that stalls mid-response, which no HttpClient.Timeout covers under
+    /// ResponseHeadersRead.</summary>
+    private sealed class StallingStream : Stream
+    {
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => 0; set => throw new NotSupportedException(); }
+        public override void Flush() => throw new NotSupportedException();
+
+        // Only the token-carrying reads are supported: a synchronous read has no token to
+        // observe, so it could only ever hang the test run instead of failing it.
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+        public override Task<int> ReadAsync(
+            byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
+            ReadAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
+
+        public override async ValueTask<int> ReadAsync(
+            Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            await Task.Delay(Timeout.Infinite, cancellationToken);
+            return 0;
+        }
+
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 
     private sealed class StubHandler(string responseBody) : HttpMessageHandler
