@@ -159,8 +159,7 @@ internal sealed partial class CliContext
 
         var initializer = new Initializer(Path.GetDirectoryName(path), template);
         File.WriteAllText(path, initializer.Call());
-        Console.Error.WriteLine(
-            $"wip: wrote {path} (mode: {(initializer.IsCompose ? "compose-native" : "container")})");
+        Log.Info($"wrote {path} (mode: {(initializer.IsCompose ? "compose-native" : "container")})");
         return 0;
     }
 
@@ -187,9 +186,9 @@ internal sealed partial class CliContext
         }
 
         var existing = File.Exists(path) ? File.ReadAllText(path) : null;
-        Console.Error.WriteLine($"wip: analyzing {directory}");
+        Log.Info($"analyzing {directory}");
         var project = new ProjectAnalyzer(directory).Analyze();
-        Console.Error.WriteLine($"wip: sending {project.Files.Count} selected project files to {model} at {baseUrl}");
+        Log.Info($"sending {project.Files.Count} selected project files to {model} at {baseUrl}");
         var candidate = new WipAiGenerator(new LocalAiProvider(baseUrl, model)).Generate(
             string.Join(System.Environment.NewLine, lines), project, existing, path);
 
@@ -201,12 +200,12 @@ internal sealed partial class CliContext
         if (!string.Equals(answer, "y", StringComparison.OrdinalIgnoreCase) &&
             !string.Equals(answer, "yes", StringComparison.OrdinalIgnoreCase))
         {
-            Console.Error.WriteLine("wip: not saved");
+            Log.Info("not saved");
             return 0;
         }
 
         File.WriteAllText(path, candidate);
-        Console.Error.WriteLine($"wip: wrote {path}");
+        Log.Info($"wrote {path}");
         return 0;
     }
 
@@ -226,7 +225,7 @@ internal sealed partial class CliContext
             throw new WipException("A question is required");
         }
 
-        Console.Error.WriteLine($"wip: asking {model} at {baseUrl}");
+        Log.Info($"asking {model} at {baseUrl}");
         var answer = new LocalAiProvider(baseUrl, model).Generate(HelpAiPrompt(asked));
         Console.WriteLine(answer);
         return 0;
@@ -285,49 +284,78 @@ internal sealed partial class CliContext
             Path.GetDirectoryName(Path.GetFullPath(Config.Path!))!,
             RubyValue.Presence(settings.GetValueOrDefault("context")) ?? "."));
 
-        Console.Error.WriteLine($"wip: staging build context ({context})");
+        Log.Info($"staging build context ({context})");
         return StageAndBuild(context, settings, arguments);
     }
 
+    /// <summary>
+    /// Gives <c>wip up</c> an explicit final outcome line (issue #134) instead of leaving
+    /// success or failure to be inferred from the tail of a build/boot log. The success line
+    /// only fires for a detached or --watch run: an attached run instead ends when the primary
+    /// container exits, and "up complete" printed after that would describe the wrong event.
+    /// </summary>
     internal int Up(bool detach, bool sync, bool noCache, bool watch, double interval)
     {
         WarnWslProject();
 
-        if (Config.IsCompose)
+        try
         {
-            return UpViaComposeBridge(detach, sync, watch);
-        }
+            if (Config.IsCompose)
+            {
+                var code = UpViaComposeBridge(detach, sync, watch);
+                if (detach)
+                {
+                    Log.Info("up complete");
+                }
 
-        // Validated up front, before any startup side effect (image build, network or
-        // container creation) — otherwise a bad --interval would only surface after
-        // everything was already running.
-        if (watch && interval <= 0)
+                return code;
+            }
+
+            // Validated up front, before any startup side effect (image build, network or
+            // container creation) — otherwise a bad --interval would only surface after
+            // everything was already running.
+            if (watch && interval <= 0)
+            {
+                throw new ConfigException("--interval must be a positive number");
+            }
+
+            EnsureComposeImages(noCache);
+            EnsureNetwork();
+            foreach (var name in SidecarNames())
+            {
+                EnsureDependency(name);
+            }
+
+            if (sync)
+            {
+                SyncBeforeBoot();
+            }
+
+            // --watch polls in a loop after boot, which cannot share this one thread with an
+            // attached primary container, so it forces the same behaviour -d gives.
+            EnsureContainer(detach || watch);
+
+            if (detach || watch)
+            {
+                var count = SidecarNames().Count + 1;
+                Log.Info($"up complete ({count} container(s) running)");
+            }
+
+            if (watch)
+            {
+                WatchRestarts(interval);
+            }
+
+            return 0;
+        }
+        catch (ExitException exit)
         {
-            throw new ConfigException("--interval must be a positive number");
+            // The failure itself was already streamed by CommandRunner (raw child output,
+            // plus ErrorInterpreter's hint on top); this is only the missing "it's over, and
+            // it did not work" marker the issue asked for, not a second explanation of why.
+            Log.Info($"up failed (exit code {exit.Code})");
+            throw;
         }
-
-        EnsureComposeImages(noCache);
-        EnsureNetwork();
-        foreach (var name in SidecarNames())
-        {
-            EnsureDependency(name);
-        }
-
-        if (sync)
-        {
-            SyncBeforeBoot();
-        }
-
-        // --watch polls in a loop after boot, which cannot share this one thread with an
-        // attached primary container, so it forces the same behaviour -d gives.
-        EnsureContainer(detach || watch);
-
-        if (watch)
-        {
-            WatchRestarts(interval);
-        }
-
-        return 0;
     }
 
     internal int Sync(bool watch, double? interval)
@@ -347,8 +375,8 @@ internal sealed partial class CliContext
             throw new ConfigException("--interval must be a positive number");
         }
 
-        Console.Error.WriteLine(string.Create(CultureInfo.InvariantCulture,
-            $"wip: syncing {settings.Source} -> {settings.Volume}:{settings.Target} every {seconds}s (Ctrl-C to stop)"));
+        Log.Info(string.Create(CultureInfo.InvariantCulture,
+            $"syncing {settings.Source} -> {settings.Volume}:{settings.Target} every {seconds}s (Ctrl-C to stop)"));
 
         return Loop(seconds, () => RunSync(exitOnFailure: false), "sync stopped");
     }
@@ -456,8 +484,8 @@ internal sealed partial class CliContext
 
         if (Config.IsCompose)
         {
-            Console.Error.WriteLine(
-                "wip: compose mode has no ephemeral 'run'; executing in the running " +
+            Log.Info(
+                "compose mode has no ephemeral 'run'; executing in the running " +
                 $"'{Config.ComposeService}' service instead");
             return Execute(ExecTarget(command, interactive), interactive: Tty(interactive));
         }
@@ -732,7 +760,7 @@ internal sealed partial class CliContext
             return;
         }
 
-        Console.Error.WriteLine($"wip: creating network '{network}'");
+        Log.Info($"creating network '{network}'");
         Execute(Builder.NetworkCreate(), exitOnFailure: false);
     }
 
@@ -761,16 +789,16 @@ internal sealed partial class CliContext
         switch (DecideContainerAction(exists, state))
         {
             case ContainerAction.AlreadyRunning:
-                Console.Error.WriteLine($"wip: dependency '{name}' is already running");
+                Log.Info($"dependency '{name}' is already running");
                 break;
 
             case ContainerAction.Start:
-                Console.Error.WriteLine($"wip: starting existing dependency '{name}'");
+                Log.Info($"starting existing dependency '{name}'");
                 Execute(Builder.DependencyStart(name));
                 break;
 
             default:
-                Console.Error.WriteLine($"wip: dependency '{name}' not found, creating it");
+                Log.Info($"dependency '{name}' not found, creating it");
                 Execute(Builder.DependencyUp(name));
                 break;
         }
@@ -805,7 +833,7 @@ internal sealed partial class CliContext
         var retries = Convert.ToInt32(healthcheck.GetValueOrDefault("retries"), CultureInfo.InvariantCulture);
         var startPeriod = Convert.ToDouble(healthcheck.GetValueOrDefault("start_period"), CultureInfo.InvariantCulture);
 
-        Console.Error.WriteLine($"wip: waiting for dependency '{name}' to become healthy");
+        Log.Info($"waiting for dependency '{name}' to become healthy");
         var startPeriodEnds = DateTime.UtcNow.AddSeconds(startPeriod);
         var failures = 0;
 
@@ -815,7 +843,7 @@ internal sealed partial class CliContext
                 Probe(Builder.DependencyExec(name, test), TimeSpan.FromSeconds(timeout), captureStderr: true);
             if (code == 0)
             {
-                Console.Error.WriteLine($"wip: dependency '{name}' is healthy");
+                Log.Info($"dependency '{name}' is healthy");
                 return;
             }
 
@@ -849,16 +877,16 @@ internal sealed partial class CliContext
         switch (DecideContainerAction(exists, state))
         {
             case ContainerAction.AlreadyRunning:
-                Console.Error.WriteLine($"wip: container '{Config.Container}' is already running");
+                Log.Info($"container '{Config.Container}' is already running");
                 break;
 
             case ContainerAction.Start:
-                Console.Error.WriteLine($"wip: starting existing container '{Config.Container}'");
+                Log.Info($"starting existing container '{Config.Container}'");
                 Execute(Builder.Start(detach), interactive);
                 break;
 
             default:
-                Console.Error.WriteLine($"wip: container '{Config.Container}' not found, creating it");
+                Log.Info($"container '{Config.Container}' not found, creating it");
                 Execute(Builder.Up(detach), interactive);
                 break;
         }
@@ -898,10 +926,9 @@ internal sealed partial class CliContext
         }
 
         EnsureSyncImage(settings);
-        Console.Error.WriteLine($"wip: syncing {settings.Source} -> {settings.Volume}:{settings.Target}");
+        Log.Info($"syncing {settings.Source} -> {settings.Volume}:{settings.Target}");
         Execute(Builder.SyncRun());
-        Console.Error.WriteLine(
-            $"wip: run `wip sync --watch` in another terminal to keep {settings.Target} up to date");
+        Log.Info($"run `wip sync --watch` in another terminal to keep {settings.Target} up to date");
     }
 
     /// <summary>
@@ -967,8 +994,8 @@ internal sealed partial class CliContext
         settings["tag"] = spec.GetValueOrDefault("tag");
 
         var context = RubyValue.ToStringValue(spec.GetValueOrDefault("context"));
-        Console.Error.WriteLine(
-            $"wip: building service '{name}' (tag: {RubyValue.ToStringValue(spec.GetValueOrDefault("tag"))}) " +
+        Log.Info(
+            $"building service '{name}' (tag: {RubyValue.ToStringValue(spec.GetValueOrDefault("tag"))}) " +
             $"from {context}");
 
         StageAndBuild(context, settings, WithNoCache(extra, noCache));
@@ -997,8 +1024,8 @@ internal sealed partial class CliContext
             return;
         }
 
-        Console.Error.WriteLine(
-            $"wip: warning: this project is on the WSL filesystem ({directory}); wslc " +
+        Log.Info(
+            $"warning: this project is on the WSL filesystem ({directory}); wslc " +
             "resolves bind-mount sources as Windows paths, so volumes: entries can mount " +
             "empty instead of failing. Move the project onto the Windows filesystem " +
             "(C:\\src\\myproject, say) if a container starts up without your files.");
@@ -1016,7 +1043,7 @@ internal sealed partial class CliContext
                 progress.Finish();
                 if (buildContext.UsesCache)
                 {
-                    Console.Error.WriteLine($"wip: using cached build context at {staged}");
+                    Log.Info($"using cached build context at {staged}");
                 }
 
                 // wslc build crashes when handed an absolute context path; running from
@@ -1057,8 +1084,8 @@ internal sealed partial class CliContext
             return;
         }
 
-        Console.Error.WriteLine(
-            $"wip: commands.{name} in wip.yml is shadowed by the built-in `wip {name}`; " +
+        Log.Info(
+            $"commands.{name} in wip.yml is shadowed by the built-in `wip {name}`; " +
             $"run it with `wip dispatch {name}`");
     }
 
@@ -1071,8 +1098,8 @@ internal sealed partial class CliContext
     {
         var names = Config.Dependencies.Keys.ToList();
         var joined = string.Join(", ", names);
-        Console.Error.WriteLine(string.Create(CultureInfo.InvariantCulture,
-            $"wip: watching {joined} for exited restart: containers every {interval}s (running detached; Ctrl-C to stop)"));
+        Log.Info(string.Create(CultureInfo.InvariantCulture,
+            $"watching {joined} for exited restart: containers every {interval}s (running detached; Ctrl-C to stop)"));
 
         Loop(interval, () =>
         {
@@ -1098,7 +1125,7 @@ internal sealed partial class CliContext
             return;
         }
 
-        Console.Error.WriteLine($"wip: '{name}' has exited, restarting it (restart: {policy})");
+        Log.Info($"'{name}' has exited, restarting it (restart: {policy})");
         Execute(Builder.DependencyStart(name), exitOnFailure: false);
     }
 
@@ -1189,7 +1216,7 @@ internal sealed partial class CliContext
         }
 
         Console.Error.WriteLine();
-        Console.Error.WriteLine($"wip: {stoppedMessage}");
+        Log.Info(stoppedMessage);
         return 0;
     }
 

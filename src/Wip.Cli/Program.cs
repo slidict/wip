@@ -1,6 +1,7 @@
 using System.CommandLine;
 using Wip.Ai;
 using Wip.Configuration;
+using Wip.Diagnostics;
 
 namespace Wip.Cli;
 
@@ -25,7 +26,7 @@ internal static class Program
         }
         catch (WipException exception)
         {
-            Console.Error.WriteLine($"wip: {exception.Message}");
+            Log.Info(exception.Message);
             return 1;
         }
     }
