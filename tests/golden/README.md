@@ -50,6 +50,17 @@ Windows side rather than inside WSL — see `docs/csharp-migration-plan.md` §3:
 - `builder.up`, `builder.run`, `builder.custom[*]` → `-v` entries derived from `volumes:`
 - `config.compose_build_specs` → `context`
 
+There is one further divergence, and it is not about paths:
+
+- `config.to_h` → every value under `dependencies.*.env` and `commands.*.env`
+
+Ruby redacted environment values by variable *name*, so anything it did not recognise as
+a credential — `DATABASE_URL`, an `APP_*` variable holding a token, a password stored
+under a house-style name — was printed in full by `wip config`. Name matching cannot be
+made complete, so the port redacts the whole `env` mapping instead and keeps only the
+variable names, which is what the diagnostic actually needs. `config.to_h.unredacted` is
+unchanged and still records the real values.
+
 When one of these changes, update the expectation in the same commit as the code and say
 why. Everything else should stay green untouched; an unexplained diff outside this list
 is a regression.

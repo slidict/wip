@@ -181,6 +181,12 @@ public sealed partial class Config
         return RubyValue.Merge(defaults, RubyValue.AsMapping(entry));
     }
 
+    /// <summary>
+    /// Renders the whole config the way <c>wip config</c> prints it, with dependency defaults
+    /// and inherited settings already merged into each command. Secrets are masked unless
+    /// <paramref name="redact"/> says otherwise; callers that need the real values (running a
+    /// container, building argv) read the config directly rather than going through here.
+    /// </summary>
     public OrderedDictionary<string, object?> ToMapping(bool redact = true)
     {
         var commands = RubyValue.NewMapping();
@@ -524,6 +530,12 @@ public sealed partial class Config
         }
     }
 
+    /// <summary>
+    /// Walks the rendered config and masks secret values, carrying the traversal
+    /// <paramref name="path"/> so <see cref="RedactMapping"/> can tell where a value lives.
+    /// Lists keep the path of their parent: an <c>env</c> mapping nested in one is still an
+    /// <c>env</c> mapping.
+    /// </summary>
     private static object? RedactSecrets(object? value, IReadOnlyList<string>? path = null) => value switch
     {
         List<object?> list => list.Select(item => RedactSecrets(item, path)).ToList(),
@@ -531,6 +543,12 @@ public sealed partial class Config
         _ => value,
     };
 
+    /// <summary>
+    /// Copies one mapping with its secret values replaced. Inside a container <c>env</c> block
+    /// every value goes, because a variable name is not a reliable signal of what it holds;
+    /// everywhere else only keys matching <see cref="SecretPattern"/> do. Keys and structure
+    /// survive either way, which is what makes the printed config still worth reading.
+    /// </summary>
     private static OrderedDictionary<string, object?> RedactMapping(
         OrderedDictionary<string, object?> mapping,
         IReadOnlyList<string> path)
@@ -547,6 +565,11 @@ public sealed partial class Config
         return result;
     }
 
+    /// <summary>
+    /// True for the <c>env</c> mapping of a dependency or a command — that is,
+    /// <c>dependencies.&lt;name&gt;.env</c> or <c>commands.&lt;name&gt;.env</c> — and nothing else,
+    /// so an <c>env</c> key elsewhere in the tree keeps name-based matching.
+    /// </summary>
     private static bool IsContainerEnvironment(IReadOnlyList<string> path) =>
         path.Count == 3 &&
         path[2] == "env" &&

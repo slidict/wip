@@ -13,8 +13,8 @@
           "image": "myapp:dev",
           "workdir": "/app",
           "env": {
-            "RAILS_ENV": "development",
-            "PORT": "4000"
+            "RAILS_ENV": "[REDACTED]",
+            "PORT": "[REDACTED]"
           }
         }
       },
@@ -27,8 +27,8 @@
           "interactive": false,
           "remove": true,
           "env": {
-            "RAILS_ENV": "development",
-            "PORT": "4000"
+            "RAILS_ENV": "[REDACTED]",
+            "PORT": "[REDACTED]"
           },
           "ports": [],
           "volumes": [],

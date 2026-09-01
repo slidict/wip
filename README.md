@@ -403,9 +403,12 @@ sync: # optional; mirror the source into a named volume instead of bind-mounting
     - node_modules/
 ```
 
-`env` values are stringified. `wip config` masks any key matching token, password, secret,
-credential, or auth. Keep real secrets out of the config file and in your runtime environment
-instead — see [Secret Masking](https://github.com/slidict/wip/wiki/Secret-Masking).
+`env` values are stringified. `wip config` masks every `env` value it prints, whatever the
+variable is called, and keeps the variable names so the output is still readable; elsewhere in
+the config it masks keys naming credential material (token, password, secret, credential, auth,
+passphrase, connection string, database URL, DSN, cookie, session, and API/access/private/SSH
+keys). Keep real secrets out of the config file and in your runtime environment instead — see
+[Secret Masking](https://github.com/slidict/wip/wiki/Secret-Masking).
 
 `healthcheck.test` accepts the same three shapes real Compose does: a bare string (shell form,
 run as `sh -c "..."`), an array starting with `CMD` (run exactly as written) or `CMD-SHELL`
