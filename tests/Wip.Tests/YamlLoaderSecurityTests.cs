@@ -93,8 +93,44 @@ public class YamlLoaderSecurityTests
         File.WriteAllText(path, oversized);
         var fileException = Assert.Throws<ConfigException>(() => YamlLoader.LoadFile(path, allowAliases: false));
 
-        Assert.Contains($"input length exceeds the limit of {YamlLoader.MaxInputSize}", textException.Message);
+        Assert.Contains($"input size exceeds the limit of {YamlLoader.MaxInputSize}", textException.Message);
         Assert.Contains($"file size exceeds the limit of {YamlLoader.MaxInputSize}", fileException.Message);
+    }
+
+    [Fact]
+    public void RejectsTextThatOnlyExceedsTheLimitInUtf8Bytes()
+    {
+        // Three bytes per character in UTF-8, so this is over the byte limit while its
+        // character count stays well under it.
+        var yaml = new string('\u3042', (YamlLoader.MaxInputSize / 3) + 1);
+
+        var exception = Assert.Throws<ConfigException>(
+            () => YamlLoader.LoadText(yaml, allowAliases: false, path: "text.yml"));
+
+        Assert.Contains($"input size exceeds the limit of {YamlLoader.MaxInputSize}", exception.Message);
+    }
+
+    [Fact]
+    public void RejectsMergeExpansionOverTheLimit()
+    {
+        var yaml = MergeDocument((YamlLoader.MaxMergeEntries / MergeSourceKeys) + 1);
+
+        var exception = Assert.Throws<ConfigException>(
+            () => YamlLoader.LoadText(yaml, allowAliases: true, path: "merge.yml"));
+
+        Assert.Contains($"merge expansion exceeds the limit of {YamlLoader.MaxMergeEntries}", exception.Message);
+    }
+
+    [Fact]
+    public void AcceptsMergeExpansionAtTheLimit()
+    {
+        var yaml = MergeDocument(YamlLoader.MaxMergeEntries / MergeSourceKeys);
+
+        var value = Assert.IsType<OrderedDictionary<string, object?>>(
+            YamlLoader.LoadText(yaml, allowAliases: true, path: "merge.yml"));
+        var target = Assert.IsType<OrderedDictionary<string, object?>>(value["target"]);
+
+        Assert.Equal(MergeSourceKeys, target.Count);
     }
 
     [Fact]
@@ -121,6 +157,19 @@ public class YamlLoaderSecurityTests
         var compose = ComposeFile.Load(path);
 
         Assert.Equal(["app", "worker"], compose.ServiceNamesInDependencyOrder);
+    }
+
+    private const int MergeSourceKeys = 1_000;
+
+    /// <summary>
+    /// A merge that costs one node per copy but copies <see cref="MergeSourceKeys"/> entries
+    /// each time — the shape the node limits alone do not bound.
+    /// </summary>
+    private static string MergeDocument(int copies)
+    {
+        var source = string.Concat(Enumerable.Range(0, MergeSourceKeys).Select(index => $"  k{index}: {index}\n"));
+        var aliases = string.Join(", ", Enumerable.Repeat("*source", copies));
+        return $"source: &source\n{source}target:\n  <<: [{aliases}]\n";
     }
 
     private sealed class TemporaryDirectory : IDisposable

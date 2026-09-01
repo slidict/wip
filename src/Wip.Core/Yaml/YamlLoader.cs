@@ -1,3 +1,4 @@
+using System.Text;
 using YamlDotNet.Core;
 using YamlDotNet.Core.Events;
 
@@ -26,10 +27,29 @@ public static class YamlLoader
     // Configuration files do not need arbitrary structural depth. Bounding recursion keeps
     // a malicious repository from turning `wip` startup into a stack-overflow crash.
     private const int MaxNestingDepth = 100;
+
+    /// <summary>Largest accepted document, in UTF-8 bytes, for both file and text input.</summary>
     internal const int MaxInputSize = 1024 * 1024;
+
+    /// <summary>Largest number of nodes one document may parse into.</summary>
     internal const int MaxTotalNodes = 150_000;
+
+    /// <summary>Largest accepted scalar, in characters.</summary>
     internal const int MaxScalarLength = 256 * 1024;
+
+    /// <summary>Largest number of elements one sequence or mapping may hold.</summary>
     internal const int MaxCollectionElements = 50_000;
+
+    /// <summary>
+    /// Largest number of entries <c>&lt;&lt;</c> merges may copy across one document.
+    /// </summary>
+    /// <remarks>
+    /// Aliases make a merge source shareable, so the node limits alone do not bound merge work:
+    /// <c>&lt;&lt;: [*big, *big, ...]</c> costs one node per copy but copies the whole source
+    /// each time, and repeating that across mappings multiplies it again. The copies are what
+    /// has to be budgeted.
+    /// </remarks>
+    internal const int MaxMergeEntries = 1_000_000;
 
     public static object? LoadFile(string path, bool allowAliases)
     {
@@ -47,9 +67,12 @@ public static class YamlLoader
 
     public static object? LoadText(string text, bool allowAliases, string path = "<text>")
     {
-        if (text.Length > MaxInputSize)
+        // Measured in UTF-8 bytes rather than UTF-16 code units so text and file input are held
+        // to the same bound: a document of non-ASCII characters is up to three times the size
+        // its character count suggests.
+        if (Encoding.UTF8.GetByteCount(text) > MaxInputSize)
         {
-            throw LimitExceeded(path, "input length", MaxInputSize);
+            throw LimitExceeded(path, "input size", MaxInputSize);
         }
 
         using var reader = new StringReader(text);
@@ -216,7 +239,7 @@ public static class YamlLoader
             var value = ReadNode(parser, allowAliases, anchors, pending, state, path, depth + 1);
             var name = RubyValue.ToStringValue(key);
 
-            if (name == MergeKey && TryMerge(mapping, value))
+            if (name == MergeKey && TryMerge(mapping, value, state, path))
             {
                 continue;
             }
@@ -244,11 +267,15 @@ public static class YamlLoader
     /// A sequence of mappings is merged back to front, which is what makes earlier entries
     /// take precedence over later ones.
     /// </remarks>
-    private static bool TryMerge(OrderedDictionary<string, object?> target, object? value)
+    private static bool TryMerge(
+        OrderedDictionary<string, object?> target,
+        object? value,
+        LoadState state,
+        string path)
     {
         if (RubyValue.AsMapping(value) is { } single)
         {
-            MergeInto(target, single);
+            MergeInto(target, single, state, path);
             return true;
         }
 
@@ -260,7 +287,7 @@ public static class YamlLoader
 
         for (var index = sequence.Count - 1; index >= 0; index--)
         {
-            MergeInto(target, RubyValue.AsMapping(sequence[index])!);
+            MergeInto(target, RubyValue.AsMapping(sequence[index])!, state, path);
         }
 
         return true;
@@ -270,8 +297,18 @@ public static class YamlLoader
     /// An existing key keeps its position but takes the new value; a new key is appended.
     /// Position matters because it becomes the order of the generated command line.
     /// </summary>
-    private static void MergeInto(OrderedDictionary<string, object?> target, OrderedDictionary<string, object?> source)
+    private static void MergeInto(
+        OrderedDictionary<string, object?> target,
+        OrderedDictionary<string, object?> source,
+        LoadState state,
+        string path)
     {
+        state.MergedEntries += source.Count;
+        if (state.MergedEntries > MaxMergeEntries)
+        {
+            throw LimitExceeded(path, "merge expansion", MaxMergeEntries);
+        }
+
         foreach (var (key, value) in source)
         {
             target[key] = value;
@@ -310,14 +347,24 @@ public static class YamlLoader
         }
     }
 
+    /// <summary>Names the limit and its value, so a caller can say what to shrink.</summary>
     private static ConfigException LimitExceeded(string path, string limit, int maximum) =>
         new($"Could not parse {path}: YAML {limit} exceeds the limit of {maximum}");
 
+    /// <summary>Counters that span a whole document rather than a single node.</summary>
     private sealed class LoadState
     {
+        /// <summary>Nodes parsed so far, bounded by <see cref="MaxTotalNodes"/>.</summary>
         public int NodeCount { get; set; }
+
+        /// <summary>Entries copied by merges so far, bounded by <see cref="MaxMergeEntries"/>.</summary>
+        public int MergedEntries { get; set; }
     }
 
+    /// <summary>
+    /// Stops reading past the byte maximum it is given, so a file that grows between the
+    /// <see cref="FileInfo.Length"/> check and the read still cannot exceed the bound.
+    /// </summary>
     private sealed class LimitedReadStream(Stream inner, int maximum, string path) : Stream
     {
         private int bytesRead;
