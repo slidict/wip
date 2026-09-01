@@ -133,6 +133,35 @@ public class ConfigRedactionTests
         Assert.Equal("[REDACTED]", EnvironmentFrom(mapping)["SERVICE_URL"]);
     }
 
+    /// <summary>
+    /// The blanket rule is scoped to <c>dependencies.&lt;name&gt;.env</c> and
+    /// <c>commands.&lt;name&gt;.env</c>. An <c>env</c> mapping anywhere else is ordinary config and
+    /// falls back to name matching, so a change that widened the scope would fail here.
+    /// </summary>
+    [Fact]
+    public void KeepsNameMatchingForEnvironmentBlocksElsewhereInTheTree()
+    {
+        var config = ConfigFrom("""
+            version: 1
+            mode: container
+            container: app
+            dependencies:
+              app:
+                image: example
+                settings:
+                  env:
+                    LOG_LEVEL: debug
+                    API_KEY: sensitive-value
+            """);
+
+        var dependency = DependencyFrom(config.ToMapping());
+        var settings = (OrderedDictionary<string, object?>)dependency["settings"]!;
+        var environment = (OrderedDictionary<string, object?>)settings["env"]!;
+
+        Assert.Equal("debug", environment["LOG_LEVEL"]);
+        Assert.Equal("[REDACTED]", environment["API_KEY"]);
+    }
+
     /// <summary>Nothing is masked when the caller asks for the unredacted mapping.</summary>
     [Fact]
     public void KeepsEveryValueWhenRedactionIsDisabled()
