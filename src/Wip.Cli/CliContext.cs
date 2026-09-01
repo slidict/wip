@@ -92,6 +92,8 @@ internal sealed partial class CliContext
     internal bool Debug =>
         options.Debug || !string.IsNullOrEmpty(System.Environment.GetEnvironmentVariable("WIP_DEBUG"));
 
+    internal bool Quiet => options.Quiet;
+
     internal ConfigLoader Loader => new(path: options.ConfigPath, envFile: options.EnvFile);
 
     internal Config Config => config ??= Loader.Load();
@@ -569,7 +571,7 @@ internal sealed partial class CliContext
         bool exitOnFailure = true,
         string? workingDirectory = null)
     {
-        var runner = new CommandRunner(Interpreter, debug: Debug);
+        var runner = new CommandRunner(Interpreter, debug: Debug, quiet: Quiet);
         var code = Reporter.Step(
             $"running: {CommandDisplay.ForDebug(command)}",
             () => runner.Run(command, interactive: interactive, workingDirectory: workingDirectory),
@@ -1225,4 +1227,4 @@ internal sealed partial class CliContext
 }
 
 /// <summary>The options every command shares, parsed once by <see cref="Program"/>.</summary>
-internal sealed record CliOptions(string? ConfigPath, string? EnvFile, bool Debug, string? DebugLog);
+internal sealed record CliOptions(string? ConfigPath, string? EnvFile, bool Debug, string? DebugLog, bool Quiet);
