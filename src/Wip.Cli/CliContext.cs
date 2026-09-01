@@ -356,8 +356,29 @@ internal sealed partial class CliContext
             // plus ErrorInterpreter's hint on top); this is only the missing "it's over, and
             // it did not work" marker the issue asked for, not a second explanation of why.
             Log.Error($"up failed (exit code {exit.Code})");
+            NoteIfDisplayLanguageIsNotEnglish();
             throw;
         }
+    }
+
+    /// <summary>
+    /// The output just streamed above came straight from wslc/docker/rsync, unlike everything
+    /// else wip printed around it — and unlike wip's own strings, it is not guaranteed to be in
+    /// English if Windows' display language isn't (issue #134's "Windows / locale angle"; see
+    /// <see cref="DisplayLanguage"/>). A quick note here is cheaper than the reader wondering
+    /// whether a paragraph in another language part-way up the scrollback was a wip message
+    /// they somehow can't parse.
+    /// </summary>
+    private static void NoteIfDisplayLanguageIsNotEnglish()
+    {
+        if (DisplayLanguage.IsEnglish())
+        {
+            return;
+        }
+
+        Log.Info(
+            "the output above came from the command that failed, not from wip, and may not " +
+            "be in English (your Windows display language isn't)");
     }
 
     internal int Sync(bool watch, double? interval)

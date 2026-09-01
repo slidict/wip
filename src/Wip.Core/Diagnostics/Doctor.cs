@@ -36,13 +36,14 @@ public sealed class Doctor
                                new CommandResolver([], "compose command", ComposeBridge.InstallHint);
     }
 
-    public IReadOnlyList<Result> Call(string? aiBaseUrl = null)
+    public IReadOnlyList<Result> Call(string? aiBaseUrl = null, bool? englishDisplayLanguage = null)
     {
         var results = new List<Result>
         {
             new(environment.IsWsl2 ? Level.Ok : Level.Fail,
                 environment.IsWsl2 ? "WSL2 is available" : "WSL2 is not available"),
             new(Level.Ok, $"Architecture: {environment.Architecture}"),
+            DisplayLanguageResult(englishDisplayLanguage ?? DisplayLanguage.IsEnglish()),
         };
 
         var config = LoadConfig(results);
@@ -287,6 +288,17 @@ public sealed class Doctor
             "throwaway container) — sync.mode: exec’s `wip sync`/`wip sync --watch` run " +
             "rsync inside the primary container instead, so its image needs rsync too"));
     }
+
+    /// <summary>
+    /// Informational either way, never a <see cref="Level.Warn"/>: a non-English display
+    /// language is not itself a problem, just a fact worth surfacing so raw wslc/docker/rsync
+    /// text elsewhere in wip's output (or pasted into a bug report) has an explanation instead
+    /// of looking like garbage output.
+    /// </summary>
+    private static Result DisplayLanguageResult(bool isEnglish) => new(Level.Ok, isEnglish
+        ? "Display language: English"
+        : "Display language: not English (wslc/docker/rsync output may appear in a " +
+          "different language)");
 
     private static bool CommandAvailable(string name)
     {
