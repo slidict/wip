@@ -37,12 +37,12 @@ public sealed class CommandResolver
     {
         if (configured != "auto")
         {
-            return resolveExecutable(configured) ?? throw NotFound([configured]);
+            return TryGetFullPath(resolveExecutable(configured)) ?? throw NotFound([configured]);
         }
 
         foreach (var candidate in candidates)
         {
-            var resolved = resolveExecutable(candidate);
+            var resolved = TryGetFullPath(resolveExecutable(candidate));
             if (resolved is not null)
             {
                 return resolved;
@@ -96,8 +96,8 @@ public sealed class CommandResolver
     {
         // Freeze relative paths before checking them so the returned value cannot be
         // reinterpreted against a different working directory by the eventual caller.
-        var fullPath = Path.GetFullPath(candidate);
-        if (File.Exists(fullPath))
+        var fullPath = TryGetFullPath(candidate);
+        if (fullPath is not null && File.Exists(fullPath))
         {
             return fullPath;
         }
@@ -110,14 +110,40 @@ public sealed class CommandResolver
         var extensions = System.Environment.GetEnvironmentVariable("PATHEXT") ?? ".COM;.EXE;.BAT;.CMD";
         foreach (var extension in extensions.Split(';', StringSplitOptions.RemoveEmptyEntries))
         {
-            var extendedPath = Path.GetFullPath(candidate + extension);
-            if (File.Exists(extendedPath))
+            var extendedPath = TryGetFullPath(candidate + extension);
+            if (extendedPath is not null && File.Exists(extendedPath))
             {
                 return extendedPath;
             }
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Normalizes a candidate against the current working directory, including one produced
+    /// by an injected resolver, so a later directory change cannot reinterpret it. A path the
+    /// runtime refuses to normalize (invalid characters, too long, unsupported format) counts
+    /// as unresolved, keeping <see cref="CommandNotFoundException"/> the only failure callers
+    /// have to handle.
+    /// </summary>
+    private static string? TryGetFullPath(string? candidate)
+    {
+        if (candidate is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            return Path.GetFullPath(candidate);
+        }
+        catch (Exception exception)
+            when (exception is ArgumentException or IOException or NotSupportedException
+                or System.Security.SecurityException)
+        {
+            return null;
+        }
     }
 
     private CommandNotFoundException NotFound(IReadOnlyList<string> attempted) => new(

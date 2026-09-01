@@ -119,15 +119,32 @@ public sealed class CommandResolverTests
         }
     }
 
+    [Fact]
+    public void ResolveNormalizesRelativePathReturnedByExecutableResolver()
+    {
+        var relative = Path.Combine("tools", "wslc");
+        var resolver = new CommandResolver(["wslc"], resolveExecutable: candidate =>
+            candidate == "wslc" ? relative : null);
+
+        var resolved = resolver.Resolve();
+
+        Assert.Equal(Path.GetFullPath(relative), resolved);
+        Assert.True(Path.IsPathFullyQualified(resolved));
+    }
+
+    [Fact]
+    public void UnnormalizableCandidateReportsCommandNotFoundInsteadOfThrowingIoException()
+    {
+        var resolver = new CommandResolver([]);
+
+        Assert.Throws<CommandNotFoundException>(() => resolver.Resolve(Path.Combine("bin", "to\0ol")));
+    }
+
     private sealed class TemporaryDirectory : IDisposable
     {
-        public TemporaryDirectory()
-        {
-            Path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"wip-{Guid.NewGuid():N}");
-            Directory.CreateDirectory(Path);
-        }
+        internal TemporaryDirectory() => Path = Directory.CreateTempSubdirectory("wip-resolver-test-").FullName;
 
-        public string Path { get; }
+        internal string Path { get; }
 
         public void Dispose() => Directory.Delete(Path, recursive: true);
     }
