@@ -180,6 +180,35 @@ internal sealed partial class CliContext
         var baseUrl = LocalAiProvider.ResolveBaseUrl(url);
         var endpoint = LocalAiProvider.ValidateBaseUrl(baseUrl, allowRemoteAi);
         RequireRemoteApproval(endpoint, allowRemoteAi);
+
+        // Everything that decides what leaves this machine is settled — and disclosed — before
+        // the first packet: the availability probe and model discovery below already talk to the
+        // endpoint, so announcing afterwards would tell the user where their data went, not
+        // where it is about to go.
+        var directory = Path.GetDirectoryName(path) ?? Directory.GetCurrentDirectory();
+        Log.Info($"analyzing {directory}");
+        var project = new ProjectAnalyzer(directory).Analyze();
+        var name = Path.GetFileName(path);
+        var existing = File.Exists(path) ? File.ReadAllText(path) : null;
+
+        // WipAiGenerator embeds the existing wip.yml in the prompt on its own, outside the
+        // analyzer's snapshot, so it needs the same screening the snapshot's files get — and the
+        // same disclosure, since it is sent just as literally as they are.
+        var existingToSend = existing is not null && !ProjectAnalyzer.ContainsPossibleSecret(existing)
+            ? existing
+            : null;
+        if (existing is not null && existingToSend is null)
+        {
+            Log.Warn($"{name} looks like it contains a secret — generating without sending it");
+        }
+
+        var sending = project.Files.Select(file => file.RelativePath).ToList();
+        if (existingToSend is not null)
+        {
+            sending.Add(name);
+        }
+
+        AnnounceDestination(endpoint, sending);
         if (!LocalAiProvider.IsAvailable(baseUrl, allowRemoteAi))
         {
             throw new WipException(
@@ -189,7 +218,6 @@ internal sealed partial class CliContext
         var model = LocalAiProvider.ResolveModel() ?? LocalAiProvider.DiscoverModel(
             baseUrl, allowInsecureRemoteHttp: allowRemoteAi);
 
-        var directory = Path.GetDirectoryName(path) ?? Directory.GetCurrentDirectory();
         Console.Error.WriteLine(
             "Describe the development environment wip should run, then press Enter twice " +
             "(once after your text, once more on a blank line) to finish:");
@@ -200,20 +228,10 @@ internal sealed partial class CliContext
             lines.Add(line);
         }
 
-        var existing = File.Exists(path) ? File.ReadAllText(path) : null;
-        Log.Info($"analyzing {directory}");
-        var project = new ProjectAnalyzer(directory).Analyze();
-        Console.Error.WriteLine($"AI destination: {endpoint.Host} ({endpoint.Scheme.ToUpperInvariant()})");
-        Console.Error.WriteLine("Files to send:");
-        foreach (var file in project.Files)
-        {
-            Console.Error.WriteLine($"  - {file.RelativePath}");
-        }
-
-        Log.Info($"sending {project.Files.Count} selected project files to {model} at {baseUrl}");
+        Log.Info($"sending {sending.Count} selected project files to {model} at {baseUrl}");
         var candidate = new WipAiGenerator(
             new LocalAiProvider(baseUrl, model, allowInsecureRemoteHttp: allowRemoteAi)).Generate(
-            string.Join(System.Environment.NewLine, lines), project, existing, path);
+            string.Join(System.Environment.NewLine, lines), project, existingToSend, path);
 
         Console.WriteLine(candidate);
         Console.Error.Write(existing is null
@@ -237,6 +255,10 @@ internal sealed partial class CliContext
         var baseUrl = LocalAiProvider.ResolveBaseUrl(url);
         var endpoint = LocalAiProvider.ValidateBaseUrl(baseUrl, allowRemoteAi);
         RequireRemoteApproval(endpoint, allowRemoteAi);
+
+        // `wip help --ai` sends the question and wip's own help text, never project files — but
+        // the destination is still announced before the probe below opens a connection to it.
+        AnnounceDestination(endpoint, []);
         if (!LocalAiProvider.IsAvailable(baseUrl, allowRemoteAi))
         {
             throw new WipException(
@@ -252,11 +274,28 @@ internal sealed partial class CliContext
         }
 
         Log.Info($"asking {model} at {baseUrl}");
-        Console.Error.WriteLine($"AI destination: {endpoint.Host} ({endpoint.Scheme.ToUpperInvariant()})");
         var answer = new LocalAiProvider(baseUrl, model, allowInsecureRemoteHttp: allowRemoteAi)
             .Generate(HelpAiPrompt(asked));
         Console.WriteLine(answer);
         return 0;
+    }
+
+    /// <summary>Names the host and transport the prompt is about to cross, and every file that
+    /// travels with it, so the user can stop an unintended destination before it is contacted.</summary>
+    private static void AnnounceDestination(Uri endpoint, IReadOnlyList<string> files)
+    {
+        Console.Error.WriteLine($"AI destination: {endpoint.Host} ({endpoint.Scheme.ToUpperInvariant()})");
+        if (files.Count == 0)
+        {
+            Console.Error.WriteLine("Files to send: none");
+            return;
+        }
+
+        Console.Error.WriteLine("Files to send:");
+        foreach (var file in files)
+        {
+            Console.Error.WriteLine($"  - {file}");
+        }
     }
 
     private static void RequireRemoteApproval(Uri endpoint, bool allowRemoteAi)

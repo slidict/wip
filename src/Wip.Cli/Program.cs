@@ -134,7 +134,8 @@ internal static class Program
         };
         var ai = new Option<bool>("--ai")
         {
-            Description = "Generate or update wip.yml from a natural-language request using a local AI server",
+            Description = "Generate or update wip.yml from a natural-language request using an AI server " +
+                "(loopback only unless --allow-remote-ai is given)",
         };
         var url = AiUrlOption();
         var allowRemoteAi = AllowRemoteAiOption();
@@ -178,7 +179,8 @@ internal static class Program
 
     private static Option<string?> AiUrlOption() => new("--url")
     {
-        Description = $"Local AI server base URL for --ai (default: {LocalAiProvider.BaseUrlEnvironmentVariable} or {LocalAiProvider.DefaultBaseUrl})",
+        Description = "AI server base URL for --ai; non-loopback hosts need --allow-remote-ai " +
+            $"(default: {LocalAiProvider.BaseUrlEnvironmentVariable} or {LocalAiProvider.DefaultBaseUrl})",
     };
 
     private static Option<bool> AllowRemoteAiOption() => new("--allow-remote-ai")
@@ -198,12 +200,13 @@ internal static class Program
     {
         var ai = new Option<bool>("--ai")
         {
-            Description = "Ask a local AI server how to use wip instead of printing --help",
+            Description = "Ask an AI server how to use wip instead of printing --help " +
+                "(loopback only unless --allow-remote-ai is given)",
         };
         var url = AiUrlOption();
         var allowRemoteAi = AllowRemoteAiOption();
         var question = new Argument<string[]>("question") { Arity = ArgumentArity.ZeroOrMore };
-        var command = new Command("help", "Show usage help (add --ai to ask a local AI server instead)")
+        var command = new Command("help", "Show usage help (add --ai to ask an AI server instead)")
         {
             ai, url, allowRemoteAi, question,
         };

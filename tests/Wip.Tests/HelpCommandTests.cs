@@ -61,6 +61,21 @@ public class HelpCommandTests
         Assert.Contains("ai.example.com", exception.Message);
     }
 
+    /// <summary>The option text is the only place a user learns remote use exists at all, so it
+    /// has to name both the possibility and the flag that gates it.</summary>
+    [Fact]
+    public void AiOptionDescriptionsSayRemoteUseNeedsExplicitApproval()
+    {
+        var root = Program.BuildRoot();
+
+        foreach (var name in new[] { "init", "help" })
+        {
+            var command = root.Subcommands.Single(subcommand => subcommand.Name == name);
+            var ai = command.Options.Single(option => option.Name == "--ai");
+            Assert.Contains("--allow-remote-ai", ai.Description);
+        }
+    }
+
     [Fact]
     public void AllowRemoteAiFlagIsAvailableToAiCommands()
     {

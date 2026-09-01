@@ -101,6 +101,11 @@ public sealed class LocalAiProvider : IWipAiProvider
         $"No model configured, and the server has no model loaded either. Set {ModelEnvironmentVariable} " +
         "to a model name already pulled or loaded in your local AI server, e.g. WIP_AI_MODEL=llama3.1.";
 
+    public static string RedirectRefusedMessage(string baseUrl, Uri? location) =>
+        $"AI server at '{baseUrl}' answered with a redirect to " +
+        $"'{location?.ToString() ?? "an unspecified location"}'. wip does not follow redirects from " +
+        "an AI endpoint — point --url (or " + BaseUrlEnvironmentVariable + ") at the final URL instead.";
+
     public static string AmbiguousModelMessage(IReadOnlyList<string> models) =>
         $"No model configured, and the server has more than one loaded: {string.Join(", ", models)}. " +
         $"Set {ModelEnvironmentVariable} to the one to use, e.g. {ModelEnvironmentVariable}={models[0]}.";
@@ -117,7 +122,7 @@ public sealed class LocalAiProvider : IWipAiProvider
         bool allowInsecureRemoteHttp = false)
     {
         baseUrl = ValidateBaseUrl(baseUrl, allowInsecureRemoteHttp).ToString().TrimEnd('/');
-        using var client = handler is null ? new HttpClient() : new HttpClient(handler);
+        using var client = CreateClient(handler);
         client.Timeout = TimeSpan.FromSeconds(5);
 
         HttpResponseMessage response;
@@ -138,6 +143,7 @@ public sealed class LocalAiProvider : IWipAiProvider
 
         using (response)
         {
+            RejectRedirect(response, baseUrl);
             var text = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
             if (!response.IsSuccessStatusCode)
             {
@@ -202,7 +208,7 @@ public sealed class LocalAiProvider : IWipAiProvider
 
     public string Generate(string prompt, CancellationToken cancellationToken = default)
     {
-        using var client = handler is null ? new HttpClient() : new HttpClient(handler);
+        using var client = CreateClient(handler);
         client.Timeout = TimeSpan.FromMinutes(5);
 
         var body = new JsonObject
@@ -235,6 +241,7 @@ public sealed class LocalAiProvider : IWipAiProvider
 
         using (response)
         {
+            RejectRedirect(response, baseUrl);
             var text = response.Content.ReadAsStringAsync(cancellationToken).GetAwaiter().GetResult();
             if (!response.IsSuccessStatusCode)
             {
@@ -242,6 +249,26 @@ public sealed class LocalAiProvider : IWipAiProvider
             }
 
             return ExtractContent(text);
+        }
+    }
+
+    /// <summary>
+    /// The client every request goes through, with automatic redirects turned off.
+    /// <see cref="ValidateBaseUrl"/> only vets the URL wip was configured with, and 307/308
+    /// redirects preserve the method and body — so a loopback endpoint answering with one would
+    /// otherwise hand a whole prompt, project files included, to a host the user never approved.
+    /// </summary>
+    private static HttpClient CreateClient(HttpMessageHandler? handler) => handler is null
+        ? new HttpClient(new HttpClientHandler { AllowAutoRedirect = false })
+        : new HttpClient(handler);
+
+    /// <summary>Turns the redirect <see cref="CreateClient"/> declined to follow into an
+    /// explanation, rather than the bare status code the generic error would report.</summary>
+    private static void RejectRedirect(HttpResponseMessage response, string baseUrl)
+    {
+        if ((int)response.StatusCode is >= 300 and < 400)
+        {
+            throw new WipException(RedirectRefusedMessage(baseUrl, response.Headers.Location));
         }
     }
 
