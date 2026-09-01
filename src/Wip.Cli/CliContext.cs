@@ -424,13 +424,29 @@ internal sealed partial class CliContext
         return 0;
     }
 
-    internal int Down()
+    /// <summary>
+    /// <paramref name="terminateSession"/> is opt-in and never implied: <c>wslc system session
+    /// terminate</c> resets the whole WSLC session, not anything scoped to this
+    /// <c>wip.yml</c> — running it by default would silently take down unrelated containers
+    /// from any other project currently using the same session. It runs regardless of which
+    /// branch below removed this project's own containers.
+    /// </summary>
+    internal int Down(bool terminateSession = false)
     {
-        if (Config.IsCompose)
+        var code = Config.IsCompose ? DownCompose() : DownContainer();
+
+        if (terminateSession)
         {
-            return Execute(Bridge.Down(), exitOnFailure: false);
+            TerminateSession();
         }
 
+        return code;
+    }
+
+    private int DownCompose() => Execute(Bridge.Down(), exitOnFailure: false);
+
+    private int DownContainer()
+    {
         Execute(Builder.Remove(), exitOnFailure: false);
         foreach (var name in SidecarNames())
         {
@@ -438,6 +454,16 @@ internal sealed partial class CliContext
         }
 
         return 0;
+    }
+
+    /// <summary>
+    /// Best-effort, like the removes above it: a session that was already idle is not a reason
+    /// to fail <c>wip down</c> outright.
+    /// </summary>
+    private void TerminateSession()
+    {
+        Console.Error.WriteLine("wip: terminating WSLC session (--terminate-session)");
+        Execute(Builder.SystemSessionTerminate(), exitOnFailure: false);
     }
 
     /// <summary>

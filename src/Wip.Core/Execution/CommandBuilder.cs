@@ -127,6 +127,15 @@ public sealed class CommandBuilder
     public IReadOnlyList<string> NetworkList() => [wslc, "network", "list", "--format", "json"];
 
     /// <summary>
+    /// Tears down the whole WSLC session, not anything scoped to this <c>wip.yml</c> —
+    /// <see cref="Wip.Diagnostics.ErrorInterpreter"/> already points a user at this same
+    /// command by hand, as the recovery step for a session-wide mounted-volume limit. Every
+    /// other command in this file resolves a specific container or network first; this one
+    /// takes no argument at all, because there is nothing project-scoped about it.
+    /// </summary>
+    public IReadOnlyList<string> SystemSessionTerminate() => [wslc, "system", "session", "terminate"];
+
+    /// <summary>
     /// Mirrors into the volume from a throwaway container, for <c>sync.mode: run</c>. The
     /// image comes from <c>sync.build</c>'s tag, else <c>sync.image</c>, else the primary
     /// dependencies entry; compose mode requires one of the first two, since it has no

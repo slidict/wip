@@ -162,8 +162,7 @@ internal static class Program
 
         yield return Simple("stop", "Stop the configured container and its dependencies without removing them",
             context, ctx => ctx.Stop());
-        yield return Simple("down", "Stop and remove the configured container and its dependencies",
-            context, ctx => ctx.Down());
+        yield return DownCommand(context);
         yield return Simple("restart", "Restart the configured container or stack (stop, then start — no rebuild)",
             context, ctx => ctx.Restart());
 
@@ -312,6 +311,24 @@ internal static class Program
 
         var command = new Command("sync", "Mirror the source tree into the sync volume") { watch, interval };
         command.SetAction(parsed => context(parsed).Sync(parsed.GetValue(watch), parsed.GetValue(interval)));
+        return command;
+    }
+
+    private static Command DownCommand(Func<ParseResult, CliContext> context)
+    {
+        var terminateSession = new Option<bool>("--terminate-session")
+        {
+            Description =
+                "Also run `wslc system session terminate` after removing containers — resets " +
+                "the whole WSLC session (every project sharing it, not just this one), which " +
+                "is otherwise a manual recovery step for a session-wide mounted-volume limit",
+        };
+
+        var command = new Command("down", "Stop and remove the configured container and its dependencies")
+        {
+            terminateSession,
+        };
+        command.SetAction(parsed => context(parsed).Down(parsed.GetValue(terminateSession)));
         return command;
     }
 
