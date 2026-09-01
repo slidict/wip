@@ -372,7 +372,7 @@ internal sealed partial class CliContext
     /// <summary>
     /// <paramref name="terminateSession"/> is opt-in and never implied: <c>wslc system session
     /// terminate</c> resets the whole WSLC session, not anything scoped to this
-    /// <c>wip.yml</c> -- running it by default would silently take down unrelated containers
+    /// <c>wip.yml</c> — running it by default would silently take down unrelated containers
     /// from any other project currently using the same session. It runs regardless of which
     /// branch below removed this project's own containers.
     /// </summary>

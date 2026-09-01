@@ -309,7 +309,7 @@ internal static class Program
         var terminateSession = new Option<bool>("--terminate-session")
         {
             Description =
-                "Also run `wslc system session terminate` after removing containers -- resets " +
+                "Also run `wslc system session terminate` after removing containers — resets " +
                 "the whole WSLC session (every project sharing it, not just this one), which " +
                 "is otherwise a manual recovery step for a session-wide mounted-volume limit",
         };
