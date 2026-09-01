@@ -48,4 +48,25 @@ public class HelpCommandTests
         var ai = parsed.CommandResult.Command.Options.OfType<Option<bool>>().Single(option => option.Name == "--ai");
         Assert.False(parsed.GetValue(ai));
     }
+
+    [Fact]
+    public void RemoteAiIsRejectedWithoutExplicitApprovalBeforeAnyNetworkRequest()
+    {
+        var parsed = Program.BuildRoot().Parse(
+            ["help", "--ai", "--url", "https://ai.example.com/v1", "how do I sync"]);
+        var invocation = new InvocationConfiguration { EnableDefaultExceptionHandler = false };
+
+        var exception = Assert.Throws<WipException>(() => parsed.Invoke(invocation));
+        Assert.Contains("--allow-remote-ai", exception.Message);
+        Assert.Contains("ai.example.com", exception.Message);
+    }
+
+    [Fact]
+    public void AllowRemoteAiFlagIsAvailableToAiCommands()
+    {
+        var root = Program.BuildRoot();
+
+        Assert.Empty(root.Parse(["init", "--ai", "--allow-remote-ai"]).Errors);
+        Assert.Empty(root.Parse(["help", "--ai", "--allow-remote-ai", "question"]).Errors);
+    }
 }

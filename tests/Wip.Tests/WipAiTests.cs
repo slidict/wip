@@ -120,6 +120,56 @@ public class WipAiTests
         Assert.False(LocalAiProvider.IsAvailable("file:///tmp"));
     }
 
+    [Theory]
+    [InlineData("http://localhost:11434/v1")]
+    [InlineData("http://127.42.1.9:11434/v1")]
+    [InlineData("http://[::1]:11434/v1")]
+    public void ValidationAllowsLoopbackHttp(string url)
+    {
+        Assert.True(LocalAiProvider.ValidateBaseUrl(url).IsLoopback);
+    }
+
+    [Fact]
+    public void ValidationAllowsRemoteHttps()
+    {
+        var endpoint = LocalAiProvider.ValidateBaseUrl("https://ai.example.com/v1");
+
+        Assert.Equal(Uri.UriSchemeHttps, endpoint.Scheme);
+        Assert.False(endpoint.IsLoopback);
+    }
+
+    [Fact]
+    public void ValidationRejectsRemoteHttpUnlessExplicitlyApproved()
+    {
+        Assert.Throws<WipException>(() => LocalAiProvider.ValidateBaseUrl("http://ai.example.com/v1"));
+
+        var endpoint = LocalAiProvider.ValidateBaseUrl(
+            "http://ai.example.com/v1", allowInsecureRemoteHttp: true);
+        Assert.Equal(Uri.UriSchemeHttp, endpoint.Scheme);
+    }
+
+    [Theory]
+    [InlineData("file:///tmp/model")]
+    [InlineData("ftp://localhost/model")]
+    public void ValidationRejectsNonHttpSchemes(string url)
+    {
+        Assert.Throws<WipException>(() => LocalAiProvider.ValidateBaseUrl(url));
+    }
+
+    [Fact]
+    public void AnalyzerExcludesAnAllowListedFileContainingAPossibleSecret()
+    {
+        using var directory = new TemporaryDirectory();
+        File.WriteAllText(Path.Combine(directory.Path, "README.md"), "API_KEY=do-not-send-this");
+        File.WriteAllText(Path.Combine(directory.Path, "package.json"), "{\"name\":\"safe\"}");
+
+        var snapshot = new ProjectAnalyzer(directory.Path).Analyze();
+
+        var file = Assert.Single(snapshot.Files);
+        Assert.Equal("package.json", file.RelativePath);
+        Assert.DoesNotContain("do-not-send-this", snapshot.ToPromptText());
+    }
+
     [Fact]
     public void GenerateSendsOpenAiCompatibleChatCompletionsRequest()
     {

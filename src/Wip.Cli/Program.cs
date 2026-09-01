@@ -137,15 +137,18 @@ internal static class Program
             Description = "Generate or update wip.yml from a natural-language request using a local AI server",
         };
         var url = AiUrlOption();
+        var allowRemoteAi = AllowRemoteAiOption();
         var init = new Command("init", "Create a starter wip.yml (detects an existing compose file)")
         {
             force,
             template,
             ai,
             url,
+            allowRemoteAi,
         };
         init.SetAction(parsed => context(parsed).Init(
-            parsed.GetValue(force), parsed.GetValue(template), parsed.GetValue(ai), parsed.GetValue(url)));
+            parsed.GetValue(force), parsed.GetValue(template), parsed.GetValue(ai), parsed.GetValue(url),
+            parsed.GetValue(allowRemoteAi)));
         yield return init;
 
         yield return DoctorCommand(context);
@@ -178,6 +181,11 @@ internal static class Program
         Description = $"Local AI server base URL for --ai (default: {LocalAiProvider.BaseUrlEnvironmentVariable} or {LocalAiProvider.DefaultBaseUrl})",
     };
 
+    private static Option<bool> AllowRemoteAiOption() => new("--allow-remote-ai")
+    {
+        Description = "Explicitly allow sending data to a non-loopback AI server (including insecure HTTP)",
+    };
+
     private static Command DoctorCommand(Func<ParseResult, CliContext> context)
     {
         var url = AiUrlOption();
@@ -193,10 +201,11 @@ internal static class Program
             Description = "Ask a local AI server how to use wip instead of printing --help",
         };
         var url = AiUrlOption();
+        var allowRemoteAi = AllowRemoteAiOption();
         var question = new Argument<string[]>("question") { Arity = ArgumentArity.ZeroOrMore };
         var command = new Command("help", "Show usage help (add --ai to ask a local AI server instead)")
         {
-            ai, url, question,
+            ai, url, allowRemoteAi, question,
         };
 
         command.SetAction(parsed =>
@@ -207,6 +216,10 @@ internal static class Program
                 {
                     throw new WipException("--url requires --ai");
                 }
+                if (parsed.GetValue(allowRemoteAi))
+                {
+                    throw new WipException("--allow-remote-ai requires --ai");
+                }
 
                 if ((parsed.GetValue(question) ?? []).Length > 0)
                 {
@@ -216,7 +229,8 @@ internal static class Program
                 return ShowHelp();
             }
 
-            return context(parsed).HelpAi(parsed.GetValue(url), parsed.GetValue(question) ?? []);
+            return context(parsed).HelpAi(
+                parsed.GetValue(url), parsed.GetValue(question) ?? [], parsed.GetValue(allowRemoteAi));
         });
 
         return command;

@@ -22,11 +22,33 @@ public sealed class LocalAiProvider : IWipAiProvider
     private readonly string model;
     private readonly HttpMessageHandler? handler;
 
-    public LocalAiProvider(string baseUrl, string model, HttpMessageHandler? handler = null)
+    public LocalAiProvider(
+        string baseUrl,
+        string model,
+        HttpMessageHandler? handler = null,
+        bool allowInsecureRemoteHttp = false)
     {
-        this.baseUrl = baseUrl;
+        this.baseUrl = ValidateBaseUrl(baseUrl, allowInsecureRemoteHttp).ToString().TrimEnd('/');
         this.model = model;
         this.handler = handler;
+    }
+
+    /// <summary>Validates an AI endpoint and enforces transport security away from loopback.</summary>
+    public static Uri ValidateBaseUrl(string baseUrl, bool allowInsecureRemoteHttp = false)
+    {
+        if (!Uri.TryCreate(baseUrl, UriKind.Absolute, out var uri) || string.IsNullOrEmpty(uri.Host) ||
+            (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+        {
+            throw new WipException("AI server URL must be an absolute HTTP or HTTPS URL");
+        }
+
+        if (!uri.IsLoopback && uri.Scheme == Uri.UriSchemeHttp && !allowInsecureRemoteHttp)
+        {
+            throw new WipException(
+                "Remote AI servers must use HTTPS (or require explicit --allow-remote-ai approval for insecure HTTP)");
+        }
+
+        return uri;
     }
 
     /// <summary>The base URL a default instance would use: an explicit value, then the
@@ -45,14 +67,14 @@ public sealed class LocalAiProvider : IWipAiProvider
     /// <c>wip init --ai</c> can report a missing server up front instead of only after the
     /// user has typed a whole request into a prompt that was never going anywhere.
     /// </summary>
-    public static bool IsAvailable(string? baseUrl = null)
+    public static bool IsAvailable(string? baseUrl = null, bool allowInsecureRemoteHttp = false)
     {
         Uri uri;
         try
         {
-            uri = new Uri(ResolveBaseUrl(baseUrl));
+            uri = ValidateBaseUrl(ResolveBaseUrl(baseUrl), allowInsecureRemoteHttp);
         }
-        catch (UriFormatException)
+        catch (WipException)
         {
             return false;
         }
@@ -89,8 +111,12 @@ public sealed class LocalAiProvider : IWipAiProvider
     /// reasonable answer — the common case for a single `ollama pull`. Embedding models are
     /// excluded since they cannot generate the chat completion wip needs.
     /// </summary>
-    public static string DiscoverModel(string baseUrl, HttpMessageHandler? handler = null)
+    public static string DiscoverModel(
+        string baseUrl,
+        HttpMessageHandler? handler = null,
+        bool allowInsecureRemoteHttp = false)
     {
+        baseUrl = ValidateBaseUrl(baseUrl, allowInsecureRemoteHttp).ToString().TrimEnd('/');
         using var client = handler is null ? new HttpClient() : new HttpClient(handler);
         client.Timeout = TimeSpan.FromSeconds(5);
 

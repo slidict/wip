@@ -136,7 +136,12 @@ internal sealed partial class CliContext
         }
     }
 
-    internal int Init(bool force, string? template, bool ai = false, string? url = null)
+    internal int Init(
+        bool force,
+        string? template,
+        bool ai = false,
+        string? url = null,
+        bool allowRemoteAi = false)
     {
         var path = Path.GetFullPath(options.ConfigPath ?? ConfigLoader.Filename);
         if (ai)
@@ -146,12 +151,17 @@ internal sealed partial class CliContext
                 throw new WipException("--template cannot be combined with --ai");
             }
 
-            return InitWithAi(path, url);
+            return InitWithAi(path, url, allowRemoteAi);
         }
 
         if (url is not null)
         {
             throw new WipException("--url requires --ai");
+        }
+
+        if (allowRemoteAi)
+        {
+            throw new WipException("--allow-remote-ai requires --ai");
         }
 
         if (File.Exists(path) && !force)
@@ -165,16 +175,19 @@ internal sealed partial class CliContext
         return 0;
     }
 
-    private static int InitWithAi(string path, string? url)
+    private static int InitWithAi(string path, string? url, bool allowRemoteAi)
     {
         var baseUrl = LocalAiProvider.ResolveBaseUrl(url);
-        if (!LocalAiProvider.IsAvailable(baseUrl))
+        var endpoint = LocalAiProvider.ValidateBaseUrl(baseUrl, allowRemoteAi);
+        RequireRemoteApproval(endpoint, allowRemoteAi);
+        if (!LocalAiProvider.IsAvailable(baseUrl, allowRemoteAi))
         {
             throw new WipException(
                 $"{LocalAiProvider.NotFoundMessage(baseUrl)} Run `wip doctor` to check again.");
         }
 
-        var model = LocalAiProvider.ResolveModel() ?? LocalAiProvider.DiscoverModel(baseUrl);
+        var model = LocalAiProvider.ResolveModel() ?? LocalAiProvider.DiscoverModel(
+            baseUrl, allowInsecureRemoteHttp: allowRemoteAi);
 
         var directory = Path.GetDirectoryName(path) ?? Directory.GetCurrentDirectory();
         Console.Error.WriteLine(
@@ -190,8 +203,16 @@ internal sealed partial class CliContext
         var existing = File.Exists(path) ? File.ReadAllText(path) : null;
         Log.Info($"analyzing {directory}");
         var project = new ProjectAnalyzer(directory).Analyze();
+        Console.Error.WriteLine($"AI destination: {endpoint.Host} ({endpoint.Scheme.ToUpperInvariant()})");
+        Console.Error.WriteLine("Files to send:");
+        foreach (var file in project.Files)
+        {
+            Console.Error.WriteLine($"  - {file.RelativePath}");
+        }
+
         Log.Info($"sending {project.Files.Count} selected project files to {model} at {baseUrl}");
-        var candidate = new WipAiGenerator(new LocalAiProvider(baseUrl, model)).Generate(
+        var candidate = new WipAiGenerator(
+            new LocalAiProvider(baseUrl, model, allowInsecureRemoteHttp: allowRemoteAi)).Generate(
             string.Join(System.Environment.NewLine, lines), project, existing, path);
 
         Console.WriteLine(candidate);
@@ -211,16 +232,19 @@ internal sealed partial class CliContext
         return 0;
     }
 
-    internal int HelpAi(string? url, IReadOnlyList<string> question)
+    internal int HelpAi(string? url, IReadOnlyList<string> question, bool allowRemoteAi = false)
     {
         var baseUrl = LocalAiProvider.ResolveBaseUrl(url);
-        if (!LocalAiProvider.IsAvailable(baseUrl))
+        var endpoint = LocalAiProvider.ValidateBaseUrl(baseUrl, allowRemoteAi);
+        RequireRemoteApproval(endpoint, allowRemoteAi);
+        if (!LocalAiProvider.IsAvailable(baseUrl, allowRemoteAi))
         {
             throw new WipException(
                 $"{LocalAiProvider.NotFoundMessage(baseUrl)} Run `wip doctor` to check again.");
         }
 
-        var model = LocalAiProvider.ResolveModel() ?? LocalAiProvider.DiscoverModel(baseUrl);
+        var model = LocalAiProvider.ResolveModel() ?? LocalAiProvider.DiscoverModel(
+            baseUrl, allowInsecureRemoteHttp: allowRemoteAi);
         var asked = question.Count > 0 ? string.Join(' ', question) : ReadQuestion();
         if (string.IsNullOrWhiteSpace(asked))
         {
@@ -228,9 +252,20 @@ internal sealed partial class CliContext
         }
 
         Log.Info($"asking {model} at {baseUrl}");
-        var answer = new LocalAiProvider(baseUrl, model).Generate(HelpAiPrompt(asked));
+        Console.Error.WriteLine($"AI destination: {endpoint.Host} ({endpoint.Scheme.ToUpperInvariant()})");
+        var answer = new LocalAiProvider(baseUrl, model, allowInsecureRemoteHttp: allowRemoteAi)
+            .Generate(HelpAiPrompt(asked));
         Console.WriteLine(answer);
         return 0;
+    }
+
+    private static void RequireRemoteApproval(Uri endpoint, bool allowRemoteAi)
+    {
+        if (!endpoint.IsLoopback && !allowRemoteAi)
+        {
+            throw new WipException(
+                $"Refusing to send data to remote AI host '{endpoint.Host}' without --allow-remote-ai");
+        }
     }
 
     private static string ReadQuestion()

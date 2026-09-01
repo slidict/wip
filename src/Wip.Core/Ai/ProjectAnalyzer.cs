@@ -19,6 +19,13 @@ public sealed class ProjectAnalyzer
 
     private readonly string directory;
 
+    private static readonly string[] SecretMarkers =
+    [
+        "-----BEGIN PRIVATE KEY-----", "-----BEGIN RSA PRIVATE KEY-----", "AKIA",
+        "ghp_", "github_pat_", "sk-", "password=", "password:", "api_key=", "api_key:",
+        "secret=", "secret:", "token=", "token:",
+    ];
+
     public ProjectAnalyzer(string? directory = null) =>
         this.directory = Path.GetFullPath(directory ?? Directory.GetCurrentDirectory());
 
@@ -37,12 +44,21 @@ public sealed class ProjectAnalyzer
 
             var remaining = Math.Min(MaxFileCharacters, MaxTotalCharacters - total);
             var content = ReadBounded(path, remaining);
+            if (ContainsPossibleSecret(content))
+            {
+                continue;
+            }
+
             total += content.Length;
             files.Add(new ProjectFile(name, content));
         }
 
         return new ProjectSnapshot(directory, files);
     }
+
+    /// <summary>Conservatively identifies files that should be excluded rather than rewritten.</summary>
+    public static bool ContainsPossibleSecret(string content) => SecretMarkers.Any(marker =>
+        content.Contains(marker, StringComparison.OrdinalIgnoreCase));
 
     private static string ReadBounded(string path, int limit)
     {
