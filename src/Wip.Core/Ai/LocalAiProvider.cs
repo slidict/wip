@@ -215,15 +215,19 @@ public sealed class LocalAiProvider : IWipAiProvider
             ["stream"] = false,
         };
 
+        // Disposed at the end of the method rather than right after the send: the response body
+        // is read further down, and tearing the request down early is what breaks that on a
+        // handler that ties the two together.
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"{baseUrl}/chat/completions")
+        {
+            Content = new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json"),
+        };
+
         HttpResponseMessage response;
         try
         {
             response = client.SendAsync(
-                new HttpRequestMessage(HttpMethod.Post, $"{baseUrl}/chat/completions")
-                {
-                    Content = new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json"),
-                }, HttpCompletionOption.ResponseHeadersRead,
-                deadline.Token).GetAwaiter().GetResult();
+                request, HttpCompletionOption.ResponseHeadersRead, deadline.Token).GetAwaiter().GetResult();
         }
         catch (HttpRequestException exception)
         {
