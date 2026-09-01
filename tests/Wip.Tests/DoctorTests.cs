@@ -9,6 +9,31 @@ namespace Wip.Tests;
 public class DoctorTests
 {
     [Fact]
+    public void ReportsEnglishDisplayLanguageWithNoQualifier()
+    {
+        using var directory = new TemporaryDirectory();
+        var results = new Doctor(new ConfigLoader(directory.Path), new FakeEnvironment())
+            .Call(englishDisplayLanguage: true);
+
+        var language = Assert.Single(results, result => result.Message.StartsWith("Display language:"));
+        Assert.Equal(Doctor.Level.Ok, language.Level);
+        Assert.Equal("Display language: English", language.Message);
+    }
+
+    [Fact]
+    public void FlagsANonEnglishDisplayLanguageAsPossiblyAffectingToolOutput()
+    {
+        using var directory = new TemporaryDirectory();
+        var results = new Doctor(new ConfigLoader(directory.Path), new FakeEnvironment())
+            .Call(englishDisplayLanguage: false);
+
+        var language = Assert.Single(results, result => result.Message.StartsWith("Display language:"));
+        Assert.Equal(Doctor.Level.Ok, language.Level);
+        Assert.Contains("not English", language.Message);
+        Assert.Contains("may appear in a different language", language.Message);
+    }
+
+    [Fact]
     public void ReportsMissingAiServerAsWarnWithFixHint()
     {
         using var baseUrl = new TemporaryEnvironmentVariable(LocalAiProvider.BaseUrlEnvironmentVariable, "http://127.0.0.1:1");

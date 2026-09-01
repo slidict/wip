@@ -36,17 +36,26 @@ public sealed class CommandRunner
     private readonly TextWriter error;
     private readonly ErrorInterpreter interpreter;
     private readonly bool debug;
+    private readonly bool quiet;
 
+    /// <summary>
+    /// <paramref name="quiet"/> holds back the captured (non-interactive) path's own stdout
+    /// and stderr until the command is known to have failed, instead of streaming it live — see
+    /// issue #134's point 4. It has no effect on the interactive path: a child that owns the
+    /// console writes straight to it, with nothing passing through here to hold back.
+    /// </summary>
     public CommandRunner(
         ErrorInterpreter interpreter,
         TextWriter? output = null,
         TextWriter? error = null,
-        bool debug = false)
+        bool debug = false,
+        bool quiet = false)
     {
         this.interpreter = interpreter;
         this.output = output ?? Console.Out;
         this.error = error ?? Console.Error;
         this.debug = debug;
+        this.quiet = quiet;
     }
 
     /// <summary>
@@ -94,6 +103,13 @@ public sealed class CommandRunner
 
         var captured = new StringBuilder();
 
+        // Holding each stream's own writer back, rather than buffering just one merged
+        // stream, is what keeps stdout and stderr from bleeding into each other once a quiet
+        // run's output is finally released -- `captured` above still merges both, same as
+        // always, but that copy is only ever read by ErrorInterpreter, never replayed verbatim.
+        var outputSink = quiet ? new BufferingWriter(output) : output;
+        var errorSink = quiet ? new BufferingWriter(error) : error;
+
         try
         {
             using var process = Process.Start(startInfo)
@@ -106,8 +122,8 @@ public sealed class CommandRunner
 
             var pumps = new[]
             {
-                Pump(process.StandardOutput, output, captured),
-                Pump(process.StandardError, error, captured),
+                Pump(process.StandardOutput, outputSink, captured),
+                Pump(process.StandardError, errorSink, captured),
             };
 
             var exited = timeout is null || process.WaitForExit((int)timeout.Value.TotalMilliseconds);
@@ -122,6 +138,11 @@ public sealed class CommandRunner
             var code = exited ? process.ExitCode : TimeoutExitCode;
             if (code != 0)
             {
+                // A held-back run only earns its silence by succeeding; a failure gets the
+                // full transcript released before the hint, in the same shape it would have
+                // printed in all along.
+                (outputSink as BufferingWriter)?.Release();
+                (errorSink as BufferingWriter)?.Release();
                 ReportHint(captured.ToString());
             }
 
@@ -234,5 +255,47 @@ public sealed class CommandRunner
         }
 
         public void Dispose() => Console.CancelKeyPress -= handler;
+    }
+
+    /// <summary>
+    /// Accumulates everything written to it instead of forwarding it, until <see cref="Release"/>
+    /// says the run turned out to need it after all.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="Pump"/> calls <see cref="TextWriter.Flush"/> after every chunk so a live run
+    /// echoes immediately; overriding it to do nothing here is exactly what makes a quiet run
+    /// quiet; without that override the base class default would still eagerly forward each
+    /// write.
+    /// </remarks>
+    private sealed class BufferingWriter(TextWriter inner) : TextWriter
+    {
+        private readonly StringBuilder buffer = new();
+
+        public override Encoding Encoding => inner.Encoding;
+
+        public override void Write(char value) => buffer.Append(value);
+
+        public override void Write(string? value)
+        {
+            if (value is not null)
+            {
+                buffer.Append(value);
+            }
+        }
+
+        public override void Flush()
+        {
+        }
+
+        internal void Release()
+        {
+            if (buffer.Length == 0)
+            {
+                return;
+            }
+
+            inner.Write(buffer.ToString());
+            inner.Flush();
+        }
     }
 }
