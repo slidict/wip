@@ -16,6 +16,10 @@ public sealed class LocalAiProvider : IWipAiProvider
     public const string BaseUrlEnvironmentVariable = "WIP_AI_BASE_URL";
     public const string ModelEnvironmentVariable = "WIP_AI_MODEL";
     public const string DefaultBaseUrl = "http://localhost:11434/v1";
+    internal const long ModelsResponseMaxBytes = 2 * 1024 * 1024;
+    internal const long ChatResponseMaxBytes = 4 * 1024 * 1024;
+    internal const int GeneratedContentMaxCharacters = 1024 * 1024;
+    internal const int ErrorBodyMaxBytes = 4 * 1024;
     private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(1);
 
     private readonly string baseUrl;
@@ -97,7 +101,8 @@ public sealed class LocalAiProvider : IWipAiProvider
         HttpResponseMessage response;
         try
         {
-            response = client.GetAsync($"{baseUrl}/models").GetAwaiter().GetResult();
+            response = client.GetAsync(
+                $"{baseUrl}/models", HttpCompletionOption.ResponseHeadersRead).GetAwaiter().GetResult();
         }
         catch (HttpRequestException exception)
         {
@@ -112,13 +117,15 @@ public sealed class LocalAiProvider : IWipAiProvider
 
         using (response)
         {
-            var text = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
             if (!response.IsSuccessStatusCode)
             {
-                throw new WipException($"Local AI server returned {(int)response.StatusCode} listing models: {text}");
+                var detail = ReadErrorSnippetAsync(response.Content, CancellationToken.None).GetAwaiter().GetResult();
+                throw new WipException($"Local AI server returned {(int)response.StatusCode} listing models: {detail}");
             }
 
-            var models = ExtractModelIds(text);
+            using var document = ParseResponseAsync(
+                response.Content, ModelsResponseMaxBytes, "models list", CancellationToken.None).GetAwaiter().GetResult();
+            var models = ExtractModelIds(document);
             return models.Count switch
             {
                 0 => throw new WipException(MissingModelMessage()),
@@ -128,50 +135,37 @@ public sealed class LocalAiProvider : IWipAiProvider
         }
     }
 
-    private static IReadOnlyList<string> ExtractModelIds(string responseBody)
+    private static IReadOnlyList<string> ExtractModelIds(JsonDocument document)
     {
-        JsonDocument document;
-        try
+        if (!document.RootElement.TryGetProperty("data", out var data))
         {
-            document = JsonDocument.Parse(responseBody);
+            var detail = document.RootElement.TryGetProperty("error", out var error)
+                ? TruncateAndEscape(error.ToString(), ErrorBodyMaxBytes)
+                : "unexpected response";
+            throw new WipException(
+                $"Local AI server rejected the models request: {detail} — check that " +
+                $"{BaseUrlEnvironmentVariable}/--url includes the API version path, e.g. '.../v1'.");
         }
-        catch (JsonException exception)
+
+        if (data.ValueKind != JsonValueKind.Array)
         {
-            throw new WipException("Local AI server returned a models list wip could not parse", exception);
+            throw new WipException("Local AI server's models list was not shaped as expected: data is not an array");
         }
 
-        using (document)
+        var models = new List<string>();
+        foreach (var element in data.EnumerateArray())
         {
-            if (!document.RootElement.TryGetProperty("data", out var data))
+            if (element.ValueKind == JsonValueKind.Object &&
+                element.TryGetProperty("id", out var idElement) &&
+                idElement.ValueKind == JsonValueKind.String &&
+                idElement.GetString() is { Length: > 0 } id &&
+                !id.Contains("embed", StringComparison.OrdinalIgnoreCase))
             {
-                var detail = document.RootElement.TryGetProperty("error", out var error)
-                    ? error.ToString()
-                    : responseBody;
-                throw new WipException(
-                    $"Local AI server rejected the models request: {detail} — check that " +
-                    $"{BaseUrlEnvironmentVariable}/--url includes the API version path, e.g. '.../v1'.");
+                models.Add(id);
             }
-
-            if (data.ValueKind != JsonValueKind.Array)
-            {
-                throw new WipException("Local AI server's models list was not shaped as expected: data is not an array");
-            }
-
-            var models = new List<string>();
-            foreach (var element in data.EnumerateArray())
-            {
-                if (element.ValueKind == JsonValueKind.Object &&
-                    element.TryGetProperty("id", out var idElement) &&
-                    idElement.ValueKind == JsonValueKind.String &&
-                    idElement.GetString() is { Length: > 0 } id &&
-                    !id.Contains("embed", StringComparison.OrdinalIgnoreCase))
-                {
-                    models.Add(id);
-                }
-            }
-
-            return models;
         }
+
+        return models;
     }
 
     public string Generate(string prompt, CancellationToken cancellationToken = default)
@@ -193,7 +187,7 @@ public sealed class LocalAiProvider : IWipAiProvider
                 new HttpRequestMessage(HttpMethod.Post, $"{baseUrl}/chat/completions")
                 {
                     Content = new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json"),
-                },
+                }, HttpCompletionOption.ResponseHeadersRead,
                 cancellationToken).GetAwaiter().GetResult();
         }
         catch (HttpRequestException exception)
@@ -209,45 +203,137 @@ public sealed class LocalAiProvider : IWipAiProvider
 
         using (response)
         {
-            var text = response.Content.ReadAsStringAsync(cancellationToken).GetAwaiter().GetResult();
             if (!response.IsSuccessStatusCode)
             {
-                throw new WipException($"Local AI server returned {(int)response.StatusCode}: {text}");
+                var detail = ReadErrorSnippetAsync(response.Content, cancellationToken).GetAwaiter().GetResult();
+                throw new WipException($"Local AI server returned {(int)response.StatusCode}: {detail}");
             }
 
-            return ExtractContent(text);
+            using var document = ParseResponseAsync(
+                response.Content, ChatResponseMaxBytes, "response", cancellationToken).GetAwaiter().GetResult();
+            return ExtractContent(document);
         }
     }
 
-    private static string ExtractContent(string responseBody)
+    private static string ExtractContent(JsonDocument document)
     {
-        JsonDocument document;
+        if (!document.RootElement.TryGetProperty("choices", out var choices) ||
+            choices.ValueKind != JsonValueKind.Array || choices.GetArrayLength() == 0 ||
+            !choices[0].TryGetProperty("message", out var message) ||
+            message.ValueKind != JsonValueKind.Object ||
+            !message.TryGetProperty("content", out var contentElement) ||
+            contentElement.ValueKind != JsonValueKind.String)
+        {
+            throw new WipException(
+                "Local AI server response did not contain the expected choices[0].message.content field");
+        }
+
+        var content = contentElement.GetString();
+        if (content?.Length > GeneratedContentMaxCharacters)
+        {
+            throw new WipException(
+                $"Local AI server generated content larger than the {GeneratedContentMaxCharacters}-character limit");
+        }
+
+        return string.IsNullOrWhiteSpace(content)
+            ? throw new WipException("Local AI server returned an empty response")
+            : content;
+    }
+
+    private static async Task<JsonDocument> ParseResponseAsync(
+        HttpContent content, long maxBytes, string description, CancellationToken cancellationToken)
+    {
+        if (content.Headers.ContentLength is long contentLength && contentLength > maxBytes)
+        {
+            throw new WipException(
+                $"Local AI server returned a {description} larger than the {maxBytes}-byte limit");
+        }
+
         try
         {
-            document = JsonDocument.Parse(responseBody);
+            await using var responseStream = await content.ReadAsStreamAsync(cancellationToken);
+            await using var limitedStream = new LimitedReadStream(responseStream, maxBytes);
+            return await JsonDocument.ParseAsync(limitedStream, cancellationToken: cancellationToken);
+        }
+        catch (ResponseTooLargeException exception)
+        {
+            throw new WipException(
+                $"Local AI server returned a {description} larger than the {maxBytes}-byte limit", exception);
         }
         catch (JsonException exception)
         {
-            throw new WipException("Local AI server returned a response wip could not parse", exception);
+            throw new WipException($"Local AI server returned a {description} wip could not parse", exception);
+        }
+    }
+
+    private static async Task<string> ReadErrorSnippetAsync(HttpContent content, CancellationToken cancellationToken)
+    {
+        await using var stream = await content.ReadAsStreamAsync(cancellationToken);
+        var buffer = new byte[ErrorBodyMaxBytes + 1];
+        var read = 0;
+        while (read < buffer.Length)
+        {
+            var count = await stream.ReadAsync(buffer.AsMemory(read, buffer.Length - read), cancellationToken);
+            if (count == 0) break;
+            read += count;
         }
 
-        using (document)
-        {
-            if (!document.RootElement.TryGetProperty("choices", out var choices) ||
-                choices.ValueKind != JsonValueKind.Array || choices.GetArrayLength() == 0 ||
-                !choices[0].TryGetProperty("message", out var message) ||
-                message.ValueKind != JsonValueKind.Object ||
-                !message.TryGetProperty("content", out var contentElement) ||
-                contentElement.ValueKind != JsonValueKind.String)
-            {
-                throw new WipException(
-                    "Local AI server response did not contain the expected choices[0].message.content field");
-            }
+        var truncated = read > ErrorBodyMaxBytes;
+        var text = Encoding.UTF8.GetString(buffer, 0, Math.Min(read, ErrorBodyMaxBytes));
+        return TruncateAndEscape(text, ErrorBodyMaxBytes) + (truncated ? "… [truncated]" : string.Empty);
+    }
 
-            var content = contentElement.GetString();
-            return string.IsNullOrWhiteSpace(content)
-                ? throw new WipException("Local AI server returned an empty response")
-                : content;
+    private static string TruncateAndEscape(string value, int maxCharacters)
+    {
+        var length = Math.Min(value.Length, maxCharacters);
+        var result = new StringBuilder(length);
+        for (var index = 0; index < length; index++)
+        {
+            var character = value[index];
+            result.Append(char.IsControl(character) ? $"\\u{(int)character:x4}" : character);
+        }
+        return result.ToString();
+    }
+
+    private sealed class ResponseTooLargeException : IOException
+    {
+    }
+
+    private sealed class LimitedReadStream(Stream inner, long maxBytes) : Stream
+    {
+        private long bytesRead;
+
+        public override bool CanRead => inner.CanRead;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => bytesRead; set => throw new NotSupportedException(); }
+        public override void Flush() => throw new NotSupportedException();
+        public override int Read(byte[] buffer, int offset, int count) =>
+            ReadAsync(buffer.AsMemory(offset, count)).AsTask().GetAwaiter().GetResult();
+        public override async ValueTask<int> ReadAsync(
+            Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (buffer.IsEmpty) return 0;
+            var remainingWithSentinel = maxBytes - bytesRead + 1;
+            if (remainingWithSentinel <= 0) throw new ResponseTooLargeException();
+            var count = await inner.ReadAsync(buffer[..(int)Math.Min(buffer.Length, remainingWithSentinel)], cancellationToken);
+            bytesRead += count;
+            if (bytesRead > maxBytes) throw new ResponseTooLargeException();
+            return count;
+        }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) inner.Dispose();
+            base.Dispose(disposing);
+        }
+        public override async ValueTask DisposeAsync()
+        {
+            await inner.DisposeAsync();
+            GC.SuppressFinalize(this);
         }
     }
 }

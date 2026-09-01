@@ -254,11 +254,117 @@ public class WipAiTests
         Assert.ThrowsAny<OperationCanceledException>(() => provider.Generate("Run Rails", cts.Token));
     }
 
+    [Fact]
+    public void DiscoverModelRejectsOversizedContentLengthWithoutReadingTheBody()
+    {
+        var stream = new TrackingStream(new byte[] { (byte)'{' });
+        var content = new StreamContent(stream);
+        content.Headers.ContentLength = LocalAiProvider.ModelsResponseMaxBytes + 1;
+        var handler = new ResponseHandler(() => new HttpResponseMessage(System.Net.HttpStatusCode.OK) { Content = content });
+
+        var exception = Assert.Throws<WipException>(
+            () => LocalAiProvider.DiscoverModel("http://localhost:11434/v1", handler));
+
+        Assert.Contains("larger", exception.Message);
+        Assert.Equal(0, stream.BytesRead);
+    }
+
+    [Fact]
+    public void GenerateStopsAChunkedResponseAsSoonAsItExceedsTheStreamLimit()
+    {
+        var stream = new TrackingStream(Enumerable.Repeat(
+            (byte)' ', (int)LocalAiProvider.ChatResponseMaxBytes + 100).ToArray());
+        var content = new StreamContent(stream);
+        content.Headers.ContentLength = null;
+        var handler = new ResponseHandler(() => new HttpResponseMessage(System.Net.HttpStatusCode.OK) { Content = content });
+        var provider = new LocalAiProvider("http://localhost:11434/v1", "llama3.1", handler);
+
+        var exception = Assert.Throws<WipException>(
+            () => provider.Generate("Run Rails", TestContext.Current.CancellationToken));
+
+        Assert.Contains("larger", exception.Message);
+        Assert.Equal(LocalAiProvider.ChatResponseMaxBytes + 1, stream.BytesRead);
+    }
+
+    [Fact]
+    public void GenerateTruncatesAndEscapesAHugeErrorBody()
+    {
+        var body = "bad\n\t" + new string('x', LocalAiProvider.ErrorBodyMaxBytes * 2);
+        var handler = new ResponseHandler(() => new HttpResponseMessage(System.Net.HttpStatusCode.BadRequest)
+        {
+            Content = new StringContent(body),
+        });
+        var provider = new LocalAiProvider("http://localhost:11434/v1", "llama3.1", handler);
+
+        var exception = Assert.Throws<WipException>(
+            () => provider.Generate("Run Rails", TestContext.Current.CancellationToken));
+
+        Assert.Contains("bad\\u000a\\u0009", exception.Message);
+        Assert.Contains("[truncated]", exception.Message);
+        Assert.True(exception.Message.Length < LocalAiProvider.ErrorBodyMaxBytes + 200);
+    }
+
+    [Fact]
+    public void GenerateAcceptsAResponseWithinAllLimits()
+    {
+        var expected = new string('a', 32 * 1024);
+        var handler = new StubHandler($"{{\"choices\":[{{\"message\":{{\"content\":\"{expected}\"}}}}]}}");
+        var provider = new LocalAiProvider("http://localhost:11434/v1", "llama3.1", handler);
+
+        Assert.Equal(expected, provider.Generate("Run Rails", TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public void GenerateRejectsContentThatExceedsItsOwnCharacterLimit()
+    {
+        var generated = new string('a', LocalAiProvider.GeneratedContentMaxCharacters + 1);
+        var handler = new StubHandler($"{{\"choices\":[{{\"message\":{{\"content\":\"{generated}\"}}}}]}}");
+        var provider = new LocalAiProvider("http://localhost:11434/v1", "llama3.1", handler);
+
+        var exception = Assert.Throws<WipException>(
+            () => provider.Generate("Run Rails", TestContext.Current.CancellationToken));
+        Assert.Contains("character limit", exception.Message);
+    }
+
     private sealed class ThrowingHandler(Exception exception) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request, CancellationToken cancellationToken) =>
             Task.FromException<HttpResponseMessage>(exception);
+    }
+
+    private sealed class ResponseHandler(Func<HttpResponseMessage> responseFactory) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken) =>
+            Task.FromResult(responseFactory());
+    }
+
+    private sealed class TrackingStream(byte[] bytes) : MemoryStream(bytes)
+    {
+        internal long BytesRead { get; private set; }
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            var read = base.Read(buffer, offset, count);
+            BytesRead += read;
+            return read;
+        }
+
+        public override int Read(Span<byte> buffer)
+        {
+            var read = base.Read(buffer);
+            BytesRead += read;
+            return read;
+        }
+
+        public override async ValueTask<int> ReadAsync(
+            Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            var read = await base.ReadAsync(buffer, cancellationToken);
+            BytesRead += read;
+            return read;
+        }
     }
 
     private sealed class StubHandler(string responseBody) : HttpMessageHandler
