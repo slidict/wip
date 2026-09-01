@@ -524,29 +524,39 @@ public sealed partial class Config
         }
     }
 
-    private static object? RedactSecrets(object? value) => value switch
+    private static object? RedactSecrets(object? value, IReadOnlyList<string>? path = null) => value switch
     {
-        List<object?> list => list.Select(RedactSecrets).ToList(),
-        OrderedDictionary<string, object?> mapping => RedactMapping(mapping),
+        List<object?> list => list.Select(item => RedactSecrets(item, path)).ToList(),
+        OrderedDictionary<string, object?> mapping => RedactMapping(mapping, path ?? []),
         _ => value,
     };
 
-    private static OrderedDictionary<string, object?> RedactMapping(OrderedDictionary<string, object?> mapping)
+    private static OrderedDictionary<string, object?> RedactMapping(
+        OrderedDictionary<string, object?> mapping,
+        IReadOnlyList<string> path)
     {
         var result = RubyValue.NewMapping();
+        var redactEnvironment = IsContainerEnvironment(path);
         foreach (var (key, value) in mapping)
         {
-            result[key] = SecretPattern().IsMatch(key) ? "[REDACTED]" : RedactSecrets(value);
+            result[key] = redactEnvironment || SecretPattern().IsMatch(key)
+                ? "[REDACTED]"
+                : RedactSecrets(value, [.. path, key]);
         }
 
         return result;
     }
 
+    private static bool IsContainerEnvironment(IReadOnlyList<string> path) =>
+        path.Count == 3 &&
+        path[2] == "env" &&
+        path[0] is "dependencies" or "commands";
+
     // Keep this focused on names conventionally used for secret material. A blanket "key"
     // match would hide harmless fields such as public_key, while omitting API_KEY and
     // SSH_KEY would leak two of the most common credential names from `wip config`.
     [GeneratedRegex(
-        "token|password|secret|credential|auth|passphrase|pwd|(?:api|access|private|ssh|encryption|signing)[_-]?key",
+        "token|password|secret|credential|auth|passphrase|pwd|connection[_-]?string|database[_-]?url|dsn|cookie|session|(?:api|access|private|ssh|encryption|signing)[_-]?key",
         RegexOptions.IgnoreCase)]
     private static partial Regex SecretPattern();
 }
