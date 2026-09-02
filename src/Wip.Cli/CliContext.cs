@@ -320,17 +320,19 @@ internal sealed partial class CliContext
     /// even when one exists, for a question about a page that changed on the wiki since the
     /// last <c>wip manual</c> run.
     /// </summary>
+    /// <remarks>
+    /// No separate reachability preflight: a live fetch is simply attempted and its failure
+    /// caught. A preflight built on a raw TCP connect (as an earlier version of this did) gives
+    /// a false "unreachable" on a network that only permits HTTP through a proxy — the actual
+    /// fetch below goes through <see cref="HttpClient"/>, which is proxy-aware, so trying it
+    /// directly is both simpler and more accurate than probing first.
+    /// </remarks>
     private static (string Excerpt, string Source) ResolveManual(string question, bool noCache = false)
     {
         IReadOnlyList<ManualPage> cached = noCache ? [] : WikiManual.LoadCache(WikiManual.DefaultCacheDirectory());
         if (cached.Count > 0)
         {
             return (Join(ManualSelector.SelectRelevant(question, cached)), "cached");
-        }
-
-        if (!WikiManual.IsReachable())
-        {
-            return ("", "unavailable");
         }
 
         try
@@ -342,7 +344,7 @@ internal sealed partial class CliContext
         }
         catch (WipException)
         {
-            return ("", "live (fetch failed)");
+            return ("", "unavailable");
         }
     }
 
@@ -379,15 +381,11 @@ internal sealed partial class CliContext
 
     /// <summary>Downloads the whole wiki manual to <see
     /// cref="WikiManual.DefaultCacheDirectory"/> so <c>wip help --ai</c> can select from it
-    /// offline instead of needing a live fetch per question.</summary>
+    /// offline instead of needing a live fetch per question. A network failure surfaces as
+    /// <see cref="WikiManual"/>'s own <see cref="WipException"/> — naming the page it was
+    /// fetching — rather than a separate, less specific preflight check here.</summary>
     internal int ManualDownload()
     {
-        if (!WikiManual.IsReachable())
-        {
-            throw new WipException(
-                "Could not reach the wip wiki (raw.githubusercontent.com). Check your network connection.");
-        }
-
         var directory = WikiManual.DefaultCacheDirectory();
         var count = new WikiManual().Download(directory);
         Log.Info($"downloaded {count} manual page(s) to {directory}");

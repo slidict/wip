@@ -1,4 +1,3 @@
-using System.Net.Sockets;
 using System.Text.RegularExpressions;
 
 namespace Wip.Ai;
@@ -25,9 +24,9 @@ public sealed partial class WikiManual
     private const string Repository = "wip";
     private const string RawBaseUrl = "https://raw.githubusercontent.com/wiki";
     private const string SidebarPageName = "_Sidebar";
-    private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(1);
 
     private readonly HttpMessageHandler? handler;
+    private HttpClient? client;
 
     public WikiManual(HttpMessageHandler? handler = null) => this.handler = handler;
 
@@ -36,22 +35,6 @@ public sealed partial class WikiManual
     /// <c>%LocalAppData%\wip\&lt;name&gt;</c> shape as <c>BuildContext.DefaultCacheRoot()</c>.</summary>
     public static string DefaultCacheDirectory() => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "wip", "manual");
-
-    /// <summary>Whether the wiki's raw-content host is reachable, so callers can fall back to
-    /// "no manual" instead of hanging or throwing when there is no network. Host/port are
-    /// overridable so tests can point this at a local listener instead of the real internet.</summary>
-    public static bool IsReachable(string? host = null, int port = 443)
-    {
-        try
-        {
-            using var client = new TcpClient();
-            return client.ConnectAsync(host ?? "raw.githubusercontent.com", port).Wait(ProbeTimeout);
-        }
-        catch (Exception exception) when (exception is AggregateException or ArgumentException)
-        {
-            return false;
-        }
-    }
 
     /// <summary>Reads whatever <c>*.md</c> pages are already sitting in <paramref
     /// name="cacheDirectory"/> — empty when <c>wip manual</c> has never been run.</summary>
@@ -129,19 +112,30 @@ public sealed partial class WikiManual
         return pages.Count;
     }
 
+    /// <summary>
+    /// One client for this instance's whole lifetime, not one per page: <see cref="Download"/>
+    /// and <see cref="FetchPages"/> can call this dozens of times in a loop, and a fresh
+    /// <see cref="HttpClient"/> per call both wastes a connection setup each time and — with a
+    /// caller-injected <paramref name="handler"/> — would dispose it the moment the first
+    /// request's client is torn down, breaking every fetch after the first. Never disposed: a
+    /// `wip` invocation is a short-lived process, so there is nothing to reclaim the client's
+    /// resources back to.
+    /// </summary>
+    private HttpClient Client => client ??= CreateClient();
+
+    private HttpClient CreateClient()
+    {
+        var created = handler is null ? new HttpClient() : new HttpClient(handler, disposeHandler: false);
+        created.Timeout = TimeSpan.FromSeconds(10);
+        return created;
+    }
+
     private string FetchRaw(string pageName)
     {
-        // disposeHandler: false — a caller-injected handler is reused across every page this
-        // instance fetches (FetchPages/Download call this in a loop); the default `true` would
-        // dispose *their* handler the first time this method's `using` tears the client down,
-        // breaking every fetch after the first.
-        using var client = handler is null ? new HttpClient() : new HttpClient(handler, disposeHandler: false);
-        client.Timeout = TimeSpan.FromSeconds(10);
-
         HttpResponseMessage response;
         try
         {
-            response = client.GetAsync($"{RawBaseUrl}/{Owner}/{Repository}/{pageName}.md").GetAwaiter().GetResult();
+            response = Client.GetAsync($"{RawBaseUrl}/{Owner}/{Repository}/{pageName}.md").GetAwaiter().GetResult();
         }
         catch (HttpRequestException exception)
         {

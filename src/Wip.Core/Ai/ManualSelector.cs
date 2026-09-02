@@ -14,6 +14,11 @@ namespace Wip.Ai;
 /// </remarks>
 public static partial class ManualSelector
 {
+    /// <summary>Appended to a page truncated to fit the character budget; reserved space for
+    /// this is deducted from the budget before slicing, so the result never runs past
+    /// <c>maxCharacters</c> the way appending it afterward would.</summary>
+    private const string TruncationMarker = "\n[truncated by wip]";
+
     /// <summary>
     /// Common English function words that carry no page-selection signal on their own. Left
     /// unfiltered, a word like "the" or "how" occurs so often in ordinary prose that it can
@@ -100,9 +105,7 @@ public static partial class ManualSelector
                 break;
             }
 
-            var fitted = page.Content.Length <= budget
-                ? page
-                : page with { Content = page.Content[..budget] + "\n[truncated by wip]" };
+            var fitted = Fit(page, budget);
             trimmed.Add(fitted);
             budget -= fitted.Content.Length;
         }
@@ -110,19 +113,57 @@ public static partial class ManualSelector
         return trimmed;
     }
 
+    /// <summary>
+    /// Fits <paramref name="page"/>'s content into <paramref name="budget"/> characters,
+    /// guaranteeing the result never exceeds it — including the marker. When the marker itself
+    /// wouldn't fit in what's left, it is dropped rather than appended anyway, since attaching a
+    /// 19-character marker to a 5-character budget would blow straight past the limit it exists
+    /// to enforce.
+    /// </summary>
+    private static ManualPage Fit(ManualPage page, int budget)
+    {
+        if (page.Content.Length <= budget)
+        {
+            return page;
+        }
+
+        return budget > TruncationMarker.Length
+            ? page with { Content = page.Content[..(budget - TruncationMarker.Length)] + TruncationMarker }
+            : page with { Content = page.Content[..budget] };
+    }
+
     private static int NameScore(string name, IReadOnlyList<string> keywords) =>
-        keywords.Count(keyword => name.Contains(keyword, StringComparison.OrdinalIgnoreCase)) * 5;
+        keywords.Count(keyword => CountWordStartOccurrences(name, keyword) > 0) * 5;
 
     private static int ContentScore(string content, IReadOnlyList<string> keywords) =>
-        keywords.Sum(keyword => CountOccurrences(content, keyword));
+        keywords.Sum(keyword => CountWordStartOccurrences(content, keyword));
 
-    private static int CountOccurrences(string haystack, string needle)
+    /// <summary>
+    /// Occurrences of <paramref name="needle"/> in <paramref name="haystack"/> that start a
+    /// word — the character before the match must be missing or non-alphanumeric — rather than
+    /// merely appearing anywhere as a substring. Plain substring matching let a short command
+    /// name like <c>up</c> or <c>ps</c> match inside "set<b>up</b>", "back<b>up</b>", or
+    /// "ecli<b>ps</b>e", inflating unrelated pages ahead of the page that actually documents the
+    /// command.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately anchored at the *start* only, not both ends: requiring a boundary after the
+    /// match too would stop "disable" from matching "disables", or "build" from matching
+    /// "builds"/"building" — ordinary English inflections this selector needs to keep finding,
+    /// not noise to filter out. Anchoring the start alone already rules out the cases above,
+    /// since in each one the match begins mid-word, not after a break.
+    /// </remarks>
+    private static int CountWordStartOccurrences(string haystack, string needle)
     {
         var count = 0;
         var index = 0;
         while ((index = haystack.IndexOf(needle, index, StringComparison.OrdinalIgnoreCase)) >= 0)
         {
-            count++;
+            if (index == 0 || !char.IsLetterOrDigit(haystack[index - 1]))
+            {
+                count++;
+            }
+
             index += needle.Length;
         }
 

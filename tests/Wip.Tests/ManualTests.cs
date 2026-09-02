@@ -118,24 +118,6 @@ public class ManualTests
         Assert.True(File.Exists(Path.Combine(directory.Path, "wip-up.md")));
     }
 
-    [Fact]
-    public void IsReachableFindsAListeningHostAndRejectsAClosedPort()
-    {
-        using var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
-        listener.Start();
-        var port = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
-        try
-        {
-            Assert.True(WikiManual.IsReachable("127.0.0.1", port));
-        }
-        finally
-        {
-            listener.Stop();
-        }
-
-        Assert.False(WikiManual.IsReachable("127.0.0.1", 1));
-    }
-
     /// <summary>Reproduces issue #135's own repro question: "build" is the only ASCII keyword
     /// in it, and matching it against page names/content must still be enough to surface the
     /// page documenting `--no-cache`.</summary>
@@ -200,8 +182,41 @@ public class ManualTests
         var selected = ManualSelector.SelectRelevant("build", pages, maxCharacters: 20);
 
         var page = Assert.Single(selected);
-        Assert.Equal(20 + "\n[truncated by wip]".Length, page.Content.Length);
+        Assert.Equal(20, page.Content.Length);
         Assert.EndsWith("[truncated by wip]", page.Content);
+    }
+
+    /// <summary>The marker itself is 19 characters; a budget smaller than that must drop it
+    /// rather than hand back content longer than the budget it was supposed to enforce.</summary>
+    [Fact]
+    public void SelectRelevantOmitsTheMarkerWhenItWouldNotFitTheBudget()
+    {
+        var pages = new[] { new ManualPage("wip-build", "build " + new string('x', 100)) };
+
+        var selected = ManualSelector.SelectRelevant("build", pages, maxCharacters: 5);
+
+        var page = Assert.Single(selected);
+        Assert.Equal(5, page.Content.Length);
+        Assert.DoesNotContain("truncated", page.Content);
+    }
+
+    /// <summary>Regression for a real failure: substring matching let the two-letter command
+    /// keywords `up`/`ps` match inside unrelated words ("setup", "backup", "eclipse"), so a page
+    /// full of that prose could outrank the page that actually documents the command.</summary>
+    [Fact]
+    public void SelectRelevantDoesNotLetShortKeywordsMatchInsideLongerWords()
+    {
+        var pages = new[]
+        {
+            new ManualPage("wip-up", "# wip up\nStarts the configured stack."),
+            new ManualPage("Noise", string.Concat(Enumerable.Repeat(
+                "setup your backup before opening eclipse. ", 20))),
+        };
+
+        var selected = ManualSelector.SelectRelevant("up", pages, maxPages: 1);
+
+        var page = Assert.Single(selected);
+        Assert.Equal("wip-up", page.Name);
     }
 
     [Fact]
