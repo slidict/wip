@@ -250,7 +250,8 @@ internal sealed partial class CliContext
         return 0;
     }
 
-    internal int HelpAi(string? url, IReadOnlyList<string> question, bool allowRemoteAi = false)
+    internal int HelpAi(
+        string? url, IReadOnlyList<string> question, bool allowRemoteAi = false, bool noCache = false)
     {
         var baseUrl = LocalAiProvider.ResolveBaseUrl(url);
         var endpoint = LocalAiProvider.ValidateBaseUrl(baseUrl, allowRemoteAi);
@@ -273,9 +274,11 @@ internal sealed partial class CliContext
             throw new WipException("A question is required");
         }
 
+        var (manual, manualSource) = ResolveManual(asked, noCache);
+        Log.Info($"manual: {manualSource}");
         Log.Info($"asking {model} at {baseUrl}");
         var answer = new LocalAiProvider(baseUrl, model, allowInsecureRemoteHttp: allowRemoteAi)
-            .Generate(HelpAiPrompt(asked));
+            .Generate(HelpAiPrompt(asked, manual));
         Console.WriteLine(answer);
         return 0;
     }
@@ -307,6 +310,59 @@ internal sealed partial class CliContext
         }
     }
 
+    /// <summary>
+    /// Selects the wiki manual page(s) relevant to <paramref name="question"/> (see <see
+    /// cref="ManualSelector"/>), preferring an already-downloaded cache (<c>wip manual</c>) over
+    /// a live wiki fetch, and falling back to no manual context at all when neither is
+    /// available. A live-fetch failure is swallowed rather than thrown: <c>help --ai</c> worked
+    /// without the manual before this existed, and a flaky network is not a reason to break it
+    /// now. <paramref name="noCache"/> (<c>help --ai --no-cache</c>) skips a downloaded cache
+    /// even when one exists, for a question about a page that changed on the wiki since the
+    /// last <c>wip manual</c> run.
+    /// </summary>
+    /// <remarks>
+    /// No separate reachability preflight: a live fetch is simply attempted and its failure
+    /// caught. A preflight built on a raw TCP connect (as an earlier version of this did) gives
+    /// a false "unreachable" on a network that only permits HTTP through a proxy — the actual
+    /// fetch below goes through <see cref="HttpClient"/>, which is proxy-aware, so trying it
+    /// directly is both simpler and more accurate than probing first.
+    /// </remarks>
+    private static (string Excerpt, string Source) ResolveManual(string question, bool noCache = false)
+    {
+        IReadOnlyList<ManualPage> cached = noCache ? [] : WikiManual.LoadCache(WikiManual.DefaultCacheDirectory());
+        if (cached.Count > 0)
+        {
+            return (Join(ManualSelector.SelectRelevant(question, cached)), "cached");
+        }
+
+        try
+        {
+            var wiki = new WikiManual();
+            var candidates = ManualSelector.SelectCandidateNames(question, wiki.FetchPageNames());
+            var pages = candidates.Count > 0 ? wiki.FetchPages(candidates) : [];
+            return (Join(ManualSelector.SelectRelevant(question, pages)), "live");
+        }
+        catch (WipException)
+        {
+            return ("", "unavailable");
+        }
+    }
+
+    /// <summary>
+    /// <see cref="ManualSelector.SelectRelevant"/> bounds each page's own content to its
+    /// character budget, but the "### {name}" headings and "\n\n" separators added here are
+    /// extra, unbudgeted bytes on top of that — so the joined result is clamped to the same
+    /// budget again, rather than letting formatting overhead quietly push the final prompt
+    /// excerpt past what <c>maxCharacters</c> was meant to enforce.
+    /// </summary>
+    internal static string Join(IReadOnlyList<ManualPage> pages)
+    {
+        var joined = string.Join("\n\n", pages.Select(page => $"### {page.Name}\n{page.Content}"));
+        return joined.Length <= ManualSelector.DefaultMaxCharacters
+            ? joined
+            : joined[..ManualSelector.DefaultMaxCharacters];
+    }
+
     private static string ReadQuestion()
     {
         Console.Error.WriteLine(
@@ -322,7 +378,7 @@ internal sealed partial class CliContext
         return string.Join(System.Environment.NewLine, lines);
     }
 
-    private static string HelpAiPrompt(string question) => $$"""
+    private static string HelpAiPrompt(string question, string manual) => $$"""
         You answer questions about how to use the wip CLI, a developer-friendly wrapper around
         Microsoft WSLC. Answer only from the reference below; say plainly that it is not covered
         there rather than guessing.
@@ -330,10 +386,23 @@ internal sealed partial class CliContext
         <wip-help>
         {{Program.HelpText()}}
         </wip-help>
-
+        {{(string.IsNullOrEmpty(manual) ? "" : $"\n<wip-manual>\n{manual}\n</wip-manual>\n")}}
         Question:
         {{question}}
         """;
+
+    /// <summary>Downloads the whole wiki manual to <see
+    /// cref="WikiManual.DefaultCacheDirectory"/> so <c>wip help --ai</c> can select from it
+    /// offline instead of needing a live fetch per question. A network failure surfaces as
+    /// <see cref="WikiManual"/>'s own <see cref="WipException"/> — naming the page it was
+    /// fetching — rather than a separate, less specific preflight check here.</summary>
+    internal int ManualDownload()
+    {
+        var directory = WikiManual.DefaultCacheDirectory();
+        var count = new WikiManual().Download(directory);
+        Log.Info($"downloaded {count} manual page(s) to {directory}");
+        return 0;
+    }
 
     internal int Doctor(string? url = null)
     {
