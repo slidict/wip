@@ -32,11 +32,33 @@ public sealed class LocalAiProvider : IWipAiProvider
     /// together. Overridden only by tests, which cannot wait out the real deadline.</summary>
     internal TimeSpan RequestTimeout { get; init; } = GenerateTimeout;
 
-    public LocalAiProvider(string baseUrl, string model, HttpMessageHandler? handler = null)
+    public LocalAiProvider(
+        string baseUrl,
+        string model,
+        HttpMessageHandler? handler = null,
+        bool allowInsecureRemoteHttp = false)
     {
-        this.baseUrl = baseUrl;
+        this.baseUrl = ValidateBaseUrl(baseUrl, allowInsecureRemoteHttp).ToString().TrimEnd('/');
         this.model = model;
         this.handler = handler;
+    }
+
+    /// <summary>Validates an AI endpoint and enforces transport security away from loopback.</summary>
+    public static Uri ValidateBaseUrl(string baseUrl, bool allowInsecureRemoteHttp = false)
+    {
+        if (!Uri.TryCreate(baseUrl, UriKind.Absolute, out var uri) || string.IsNullOrEmpty(uri.Host) ||
+            (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+        {
+            throw new WipException("AI server URL must be an absolute HTTP or HTTPS URL");
+        }
+
+        if (!uri.IsLoopback && uri.Scheme == Uri.UriSchemeHttp && !allowInsecureRemoteHttp)
+        {
+            throw new WipException(
+                "Remote AI servers must use HTTPS (or require explicit --allow-remote-ai approval for insecure HTTP)");
+        }
+
+        return uri;
     }
 
     /// <summary>The base URL a default instance would use: an explicit value, then the
@@ -55,14 +77,14 @@ public sealed class LocalAiProvider : IWipAiProvider
     /// <c>wip init --ai</c> can report a missing server up front instead of only after the
     /// user has typed a whole request into a prompt that was never going anywhere.
     /// </summary>
-    public static bool IsAvailable(string? baseUrl = null)
+    public static bool IsAvailable(string? baseUrl = null, bool allowInsecureRemoteHttp = false)
     {
         Uri uri;
         try
         {
-            uri = new Uri(ResolveBaseUrl(baseUrl));
+            uri = ValidateBaseUrl(ResolveBaseUrl(baseUrl), allowInsecureRemoteHttp);
         }
-        catch (UriFormatException)
+        catch (WipException)
         {
             return false;
         }
@@ -89,6 +111,11 @@ public sealed class LocalAiProvider : IWipAiProvider
         $"No model configured, and the server has no model loaded either. Set {ModelEnvironmentVariable} " +
         "to a model name already pulled or loaded in your local AI server, e.g. WIP_AI_MODEL=llama3.1.";
 
+    public static string RedirectRefusedMessage(string baseUrl, Uri? location) =>
+        $"AI server at '{baseUrl}' answered with a redirect to " +
+        $"'{location?.ToString() ?? "an unspecified location"}'. wip does not follow redirects from " +
+        "an AI endpoint — point --url (or " + BaseUrlEnvironmentVariable + ") at the final URL instead.";
+
     public static string AmbiguousModelMessage(IReadOnlyList<string> models) =>
         $"No model configured, and the server has more than one loaded: {string.Join(", ", models)}. " +
         $"Set {ModelEnvironmentVariable} to the one to use, e.g. {ModelEnvironmentVariable}={models[0]}.";
@@ -99,12 +126,18 @@ public sealed class LocalAiProvider : IWipAiProvider
     /// reasonable answer — the common case for a single `ollama pull`. Embedding models are
     /// excluded since they cannot generate the chat completion wip needs.
     /// </summary>
-    public static string DiscoverModel(string baseUrl, HttpMessageHandler? handler = null) =>
-        DiscoverModel(baseUrl, handler, DiscoveryTimeout);
+    public static string DiscoverModel(
+        string baseUrl,
+        HttpMessageHandler? handler = null,
+        bool allowInsecureRemoteHttp = false)
+    {
+        baseUrl = ValidateBaseUrl(baseUrl, allowInsecureRemoteHttp).ToString().TrimEnd('/');
+        return DiscoverModel(baseUrl, handler, DiscoveryTimeout);
+    }
 
     internal static string DiscoverModel(string baseUrl, HttpMessageHandler? handler, TimeSpan timeout)
     {
-        using var client = handler is null ? new HttpClient() : new HttpClient(handler);
+        using var client = CreateClient(handler);
         client.Timeout = timeout;
         // ResponseHeadersRead stops client.Timeout once the headers are in, so the body reads
         // below need a deadline of their own or a server that stalls mid-body hangs wip forever.
@@ -133,6 +166,7 @@ public sealed class LocalAiProvider : IWipAiProvider
         {
             try
             {
+                RejectRedirect(response, baseUrl);
                 if (!response.IsSuccessStatusCode)
                 {
                     var detail = ReadErrorSnippetAsync(response.Content, deadline.Token).GetAwaiter().GetResult();
@@ -200,7 +234,7 @@ public sealed class LocalAiProvider : IWipAiProvider
 
     public string Generate(string prompt, CancellationToken cancellationToken = default)
     {
-        using var client = handler is null ? new HttpClient() : new HttpClient(handler);
+        using var client = CreateClient(handler);
         client.Timeout = RequestTimeout;
         // As in DiscoverModel: ResponseHeadersRead retires client.Timeout at the headers, so the
         // body reads below run under a linked source that keeps both the caller's cancellation
@@ -244,6 +278,7 @@ public sealed class LocalAiProvider : IWipAiProvider
         {
             try
             {
+                RejectRedirect(response, baseUrl);
                 if (!response.IsSuccessStatusCode)
                 {
                     var detail = ReadErrorSnippetAsync(response.Content, deadline.Token).GetAwaiter().GetResult();
@@ -258,6 +293,26 @@ public sealed class LocalAiProvider : IWipAiProvider
             {
                 throw new WipException($"Local AI server at '{baseUrl}' did not respond in time", exception);
             }
+        }
+    }
+
+    /// <summary>
+    /// The client every request goes through, with automatic redirects turned off.
+    /// <see cref="ValidateBaseUrl"/> only vets the URL wip was configured with, and 307/308
+    /// redirects preserve the method and body — so a loopback endpoint answering with one would
+    /// otherwise hand a whole prompt, project files included, to a host the user never approved.
+    /// </summary>
+    private static HttpClient CreateClient(HttpMessageHandler? handler) => handler is null
+        ? new HttpClient(new HttpClientHandler { AllowAutoRedirect = false })
+        : new HttpClient(handler);
+
+    /// <summary>Turns the redirect <see cref="CreateClient"/> declined to follow into an
+    /// explanation, rather than the bare status code the generic error would report.</summary>
+    private static void RejectRedirect(HttpResponseMessage response, string baseUrl)
+    {
+        if ((int)response.StatusCode is >= 300 and < 400)
+        {
+            throw new WipException(RedirectRefusedMessage(baseUrl, response.Headers.Location));
         }
     }
 

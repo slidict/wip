@@ -120,6 +120,182 @@ public class WipAiTests
         Assert.False(LocalAiProvider.IsAvailable("file:///tmp"));
     }
 
+    [Theory]
+    [InlineData("http://localhost:11434/v1")]
+    [InlineData("http://127.42.1.9:11434/v1")]
+    [InlineData("http://[::1]:11434/v1")]
+    public void ValidationAllowsLoopbackHttp(string url)
+    {
+        Assert.True(LocalAiProvider.ValidateBaseUrl(url).IsLoopback);
+    }
+
+    [Fact]
+    public void ValidationAllowsRemoteHttps()
+    {
+        var endpoint = LocalAiProvider.ValidateBaseUrl("https://ai.example.com/v1");
+
+        Assert.Equal(Uri.UriSchemeHttps, endpoint.Scheme);
+        Assert.False(endpoint.IsLoopback);
+    }
+
+    [Fact]
+    public void ValidationRejectsRemoteHttpUnlessExplicitlyApproved()
+    {
+        Assert.Throws<WipException>(() => LocalAiProvider.ValidateBaseUrl("http://ai.example.com/v1"));
+
+        var endpoint = LocalAiProvider.ValidateBaseUrl(
+            "http://ai.example.com/v1", allowInsecureRemoteHttp: true);
+        Assert.Equal(Uri.UriSchemeHttp, endpoint.Scheme);
+    }
+
+    [Theory]
+    [InlineData("file:///tmp/model")]
+    [InlineData("ftp://localhost/model")]
+    public void ValidationRejectsNonHttpSchemes(string url)
+    {
+        Assert.Throws<WipException>(() => LocalAiProvider.ValidateBaseUrl(url));
+    }
+
+    [Fact]
+    public void AnalyzerExcludesAnAllowListedFileContainingAPossibleSecret()
+    {
+        using var directory = new TemporaryDirectory();
+        File.WriteAllText(Path.Combine(directory.Path, "README.md"), "API_KEY=do-not-send-this");
+        File.WriteAllText(Path.Combine(directory.Path, "package.json"), "{\"name\":\"safe\"}");
+
+        var snapshot = new ProjectAnalyzer(directory.Path).Analyze();
+
+        var file = Assert.Single(snapshot.Files);
+        Assert.Equal("package.json", file.RelativePath);
+        Assert.DoesNotContain("do-not-send-this", snapshot.ToPromptText());
+    }
+
+    [Theory]
+    [InlineData("API_KEY = \"do-not-send-this\"")]
+    [InlineData("password : do-not-send-this")]
+    [InlineData("Secret\t= do-not-send-this")]
+    [InlineData("access_token:do-not-send-this")]
+    public void AnalyzerExcludesASecretAssignmentWrittenWithWhitespace(string line)
+    {
+        using var directory = new TemporaryDirectory();
+        File.WriteAllText(Path.Combine(directory.Path, "README.md"), $"# project\n{line}\n");
+        File.WriteAllText(Path.Combine(directory.Path, "package.json"), "{\"name\":\"safe\"}");
+
+        var snapshot = new ProjectAnalyzer(directory.Path).Analyze();
+
+        Assert.True(ProjectAnalyzer.ContainsPossibleSecret(line));
+        Assert.Equal("package.json", Assert.Single(snapshot.Files).RelativePath);
+        Assert.DoesNotContain("do-not-send-this", snapshot.ToPromptText());
+    }
+
+    /// <summary>
+    /// ValidateBaseUrl only vets the URL wip was configured with, and 307/308 replay the method
+    /// and body at the new location — so an endpoint that answers a prompt with a redirect could
+    /// otherwise hand the whole prompt to a host the user never approved.
+    /// </summary>
+    [Fact]
+    public void GenerateRefusesToFollowARedirectAwayFromTheApprovedEndpoint()
+    {
+        using var target = LoopbackServer.Serving("""{"choices":[{"message":{"content":"version: 1"}}]}""");
+        using var redirector = LoopbackServer.Redirecting(target.BaseUrl);
+        var provider = new LocalAiProvider($"{redirector.BaseUrl}/v1", "llama3.1");
+
+        var exception = Assert.Throws<WipException>(
+            () => provider.Generate("Run Rails", TestContext.Current.CancellationToken));
+
+        Assert.Contains("redirect", exception.Message);
+        Assert.Equal(0, target.Requests);
+    }
+
+    [Fact]
+    public void DiscoverModelRefusesToFollowARedirectAwayFromTheApprovedEndpoint()
+    {
+        using var target = LoopbackServer.Serving("""{"data":[{"id":"llama3.1"}]}""");
+        using var redirector = LoopbackServer.Redirecting(target.BaseUrl);
+
+        var exception = Assert.Throws<WipException>(
+            () => LocalAiProvider.DiscoverModel($"{redirector.BaseUrl}/v1"));
+
+        Assert.Contains("redirect", exception.Message);
+        Assert.Equal(0, target.Requests);
+    }
+
+    /// <summary>
+    /// A real loopback HTTP server, since the redirect behaviour under test belongs to the
+    /// HttpClient wip builds for itself — an injected <see cref="HttpMessageHandler"/> would
+    /// replace exactly the handler whose configuration is the thing being asserted.
+    /// </summary>
+    private sealed class LoopbackServer : IDisposable
+    {
+        private readonly System.Net.HttpListener listener;
+        private readonly Action<System.Net.HttpListenerContext> respond;
+        private int requests;
+
+        private LoopbackServer(Action<System.Net.HttpListenerContext> respond)
+        {
+            this.respond = respond;
+            BaseUrl = $"http://127.0.0.1:{FreeTcpPort()}";
+            listener = new System.Net.HttpListener();
+            listener.Prefixes.Add(BaseUrl + "/");
+            listener.Start();
+            _ = Task.Run(Serve);
+        }
+
+        internal string BaseUrl { get; }
+
+        /// <summary>How many requests actually arrived, so a test can assert a redirect target
+        /// was never contacted rather than only that the call failed.</summary>
+        internal int Requests => Volatile.Read(ref requests);
+
+        /// <summary>Answers everything with a body-preserving 307, standing in for an endpoint
+        /// that hands prompts on to somewhere else.</summary>
+        internal static LoopbackServer Redirecting(string location) => new(context =>
+        {
+            context.Response.StatusCode = 307;
+            context.Response.Headers["Location"] = location + context.Request.Url!.AbsolutePath;
+            context.Response.OutputStream.Close();
+        });
+
+        internal static LoopbackServer Serving(string responseBody) => new(context =>
+        {
+            var buffer = System.Text.Encoding.UTF8.GetBytes(responseBody);
+            context.Response.ContentType = "application/json";
+            context.Response.OutputStream.Write(buffer, 0, buffer.Length);
+            context.Response.OutputStream.Close();
+        });
+
+        public void Dispose() => listener.Close();
+
+        private void Serve()
+        {
+            while (listener.IsListening)
+            {
+                System.Net.HttpListenerContext context;
+                try
+                {
+                    context = listener.GetContext();
+                }
+                catch (Exception exception) when (
+                    exception is System.Net.HttpListenerException or ObjectDisposedException)
+                {
+                    return;
+                }
+
+                Interlocked.Increment(ref requests);
+                respond(context);
+            }
+        }
+
+        private static int FreeTcpPort()
+        {
+            var probe = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+            probe.Start();
+            var port = ((System.Net.IPEndPoint)probe.LocalEndpoint).Port;
+            probe.Stop();
+            return port;
+        }
+    }
+
     [Fact]
     public void GenerateSendsOpenAiCompatibleChatCompletionsRequest()
     {

@@ -1,9 +1,10 @@
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace Wip.Ai;
 
 /// <summary>Collects a small, allow-listed project snapshot suitable for an AI prompt.</summary>
-public sealed class ProjectAnalyzer
+public sealed partial class ProjectAnalyzer
 {
     public const int MaxFileCharacters = 64 * 1024;
     public const int MaxTotalCharacters = 256 * 1024;
@@ -18,6 +19,13 @@ public sealed class ProjectAnalyzer
     ];
 
     private readonly string directory;
+
+    /// <summary>Markers that identify a credential by its own shape, wherever they appear.</summary>
+    private static readonly string[] SecretMarkers =
+    [
+        "-----BEGIN PRIVATE KEY-----", "-----BEGIN RSA PRIVATE KEY-----", "AKIA",
+        "ghp_", "github_pat_", "sk-",
+    ];
 
     public ProjectAnalyzer(string? directory = null) =>
         this.directory = Path.GetFullPath(directory ?? Directory.GetCurrentDirectory());
@@ -37,12 +45,32 @@ public sealed class ProjectAnalyzer
 
             var remaining = Math.Min(MaxFileCharacters, MaxTotalCharacters - total);
             var content = ReadBounded(path, remaining);
+            if (ContainsPossibleSecret(content))
+            {
+                continue;
+            }
+
             total += content.Length;
             files.Add(new ProjectFile(name, content));
         }
 
         return new ProjectSnapshot(directory, files);
     }
+
+    /// <summary>Conservatively identifies files that should be excluded rather than rewritten.</summary>
+    public static bool ContainsPossibleSecret(string content) =>
+        SecretMarkers.Any(marker => content.Contains(marker, StringComparison.OrdinalIgnoreCase)) ||
+        SecretAssignment().IsMatch(content);
+
+    /// <summary>
+    /// Assignment-shaped credentials, matched with the whitespace real files actually contain:
+    /// <c>API_KEY = "..."</c> and <c>password : "..."</c> name a secret exactly as plainly as
+    /// <c>api_key=</c> does, so keying the check on the unspaced form alone would have let the
+    /// file straight into the prompt. The names stay deliberately broad and the whole file is
+    /// dropped on a match, since a false positive only costs the model some context.
+    /// </summary>
+    [GeneratedRegex(@"(api[_-]?key|secret|token|password|passwd)[ \t]*[:=]", RegexOptions.IgnoreCase)]
+    private static partial Regex SecretAssignment();
 
     private static string ReadBounded(string path, int limit)
     {
