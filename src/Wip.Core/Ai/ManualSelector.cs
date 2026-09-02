@@ -28,6 +28,7 @@ public static partial class ManualSelector
         "was", "were", "be", "been", "being", "do", "does", "did", "can", "could", "would",
         "should", "will", "shall", "to", "of", "in", "on", "at", "for", "and", "or", "but",
         "not", "no", "so", "if", "this", "that", "these", "those", "it", "its", "you", "your",
+        "my", "me", "we", "us",
     };
 
     /// <summary>
@@ -35,7 +36,9 @@ public static partial class ManualSelector
     /// rest of the sentence is in another language — e.g. "ビルドキャッシュ使わないでbuildする
     /// には" yields just <c>build</c>, which is already enough to find the right page. Matches
     /// hyphenated flag names like <c>no-cache</c> as one token, and drops common function words
-    /// (see <see cref="Stopwords"/>) that would otherwise swamp the real signal.
+    /// (see <see cref="Stopwords"/>) that would otherwise swamp the real signal. The 2-character
+    /// minimum matters on its own: `wip up` and `wip ps` are real commands, and a 3-character
+    /// floor would silently make them unfindable.
     /// </summary>
     public static IReadOnlyList<string> ExtractKeywords(string question) =>
         Keyword().Matches(question).Select(match => match.Value.ToLowerInvariant())
@@ -97,10 +100,11 @@ public static partial class ManualSelector
                 break;
             }
 
-            trimmed.Add(page.Content.Length <= budget
+            var fitted = page.Content.Length <= budget
                 ? page
-                : page with { Content = page.Content[..budget] + "\n[truncated by wip]" });
-            budget -= page.Content.Length;
+                : page with { Content = page.Content[..budget] + "\n[truncated by wip]" };
+            trimmed.Add(fitted);
+            budget -= fitted.Content.Length;
         }
 
         return trimmed;
@@ -125,6 +129,6 @@ public static partial class ManualSelector
         return count;
     }
 
-    [GeneratedRegex(@"[A-Za-z][A-Za-z0-9\-]{2,}")]
+    [GeneratedRegex(@"[A-Za-z][A-Za-z0-9\-]{1,}")]
     private static partial Regex Keyword();
 }

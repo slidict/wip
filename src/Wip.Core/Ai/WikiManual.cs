@@ -67,11 +67,29 @@ public sealed partial class WikiManual
             .ToList();
     }
 
-    /// <summary>Fetches <c>_Sidebar.md</c> and extracts every page name it links to.</summary>
+    /// <summary>Fetches <c>_Sidebar.md</c> and extracts every page name it links to. A link
+    /// target is trusted as a page name only after stripping any <c>#fragment</c>/<c>?query</c>
+    /// and confirming what's left is a plain slug — no <c>/</c> or <c>..</c> — since this value
+    /// later becomes both a URL segment and a cache filename (see <see cref="Download"/>), and
+    /// a wiki page's own content should never be able to steer either off course.</summary>
     public IReadOnlyList<string> FetchPageNames()
     {
         var sidebar = FetchRaw(SidebarPageName);
-        return SidebarLink().Matches(sidebar).Select(match => match.Groups[1].Value).Distinct().ToList();
+        return SidebarLink().Matches(sidebar).Select(match => match.Groups[1].Value)
+            .Select(SanitizePageName)
+            .Where(name => name is not null)
+            .Cast<string>()
+            .Distinct()
+            .ToList();
+    }
+
+    /// <summary>Strips a trailing <c>#fragment</c> or <c>?query</c> from a raw link target and
+    /// returns it only if what remains is a safe, flat slug; <c>null</c> otherwise.</summary>
+    private static string? SanitizePageName(string rawTarget)
+    {
+        var cut = rawTarget.IndexOfAny(['#', '?']);
+        var name = cut < 0 ? rawTarget : rawTarget[..cut];
+        return SafePageName().IsMatch(name) ? name : null;
     }
 
     /// <summary>Fetches each named page, silently skipping one that fails (a renamed or removed
@@ -113,7 +131,11 @@ public sealed partial class WikiManual
 
     private string FetchRaw(string pageName)
     {
-        using var client = handler is null ? new HttpClient() : new HttpClient(handler);
+        // disposeHandler: false — a caller-injected handler is reused across every page this
+        // instance fetches (FetchPages/Download call this in a loop); the default `true` would
+        // dispose *their* handler the first time this method's `using` tears the client down,
+        // breaking every fetch after the first.
+        using var client = handler is null ? new HttpClient() : new HttpClient(handler, disposeHandler: false);
         client.Timeout = TimeSpan.FromSeconds(10);
 
         HttpResponseMessage response;
@@ -143,4 +165,10 @@ public sealed partial class WikiManual
 
     [GeneratedRegex(@"\[[^\]]+\]\(([^)\s]+)\)")]
     private static partial Regex SidebarLink();
+
+    /// <summary>A flat wiki-page slug: letters, digits, <c>-</c>, <c>_</c>, and <c>.</c> only —
+    /// no <c>/</c>, so it can't traverse into a subdirectory of the cache, and no leading
+    /// <c>.</c> pair, so it can't be <c>..</c>.</summary>
+    [GeneratedRegex(@"^(?!\.\.)[A-Za-z0-9_.-]+$")]
+    private static partial Regex SafePageName();
 }

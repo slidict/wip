@@ -384,7 +384,8 @@ internal sealed partial class CliContext
     {
         if (!WikiManual.IsReachable())
         {
-            throw new WipException("Could not reach the wip wiki (github.com). Check your network connection.");
+            throw new WipException(
+                "Could not reach the wip wiki (raw.githubusercontent.com). Check your network connection.");
         }
 
         var directory = WikiManual.DefaultCacheDirectory();

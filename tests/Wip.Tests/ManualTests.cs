@@ -43,6 +43,49 @@ public class ManualTests
         Assert.Equal(["Home", "wip-build", "wip-up"], names);
     }
 
+    /// <summary>A link target becomes both a URL segment and a cache filename (see <see
+    /// cref="WikiManual.Download"/>), so a fragment/query suffix or a traversal-shaped target
+    /// must never survive into the returned name list.</summary>
+    [Fact]
+    public void FetchPageNamesStripsFragmentsAndRejectsUnsafeTargets()
+    {
+        var handler = new StubWikiHandler(new Dictionary<string, string>
+        {
+            ["_Sidebar"] = """
+                - [Build flags](wip-build#flags)
+                - [Search](wip-build?query=1)
+                - [Traversal](../../etc/passwd)
+                - [wip up](wip-up)
+                """,
+        });
+
+        var names = new WikiManual(handler).FetchPageNames();
+
+        Assert.Equal(["wip-build", "wip-up"], names);
+    }
+
+    /// <summary>
+    /// `HttpClient(handler)` disposes <paramref name="handler"/> by default once the client is
+    /// torn down; since <see cref="WikiManual.FetchPages"/> and <see cref="WikiManual.Download"/>
+    /// call <c>FetchRaw</c> in a loop on one injected handler, that default would break every
+    /// fetch after the first against a real (non-test-double) handler.
+    /// </summary>
+    [Fact]
+    public void FetchingMultiplePagesDoesNotDisposeAnInjectedHandler()
+    {
+        var handler = new DisposeTrackingWikiHandler(new Dictionary<string, string>
+        {
+            ["_Sidebar"] = "- [wip build](wip-build)\n- [wip up](wip-up)",
+            ["wip-build"] = "# wip build",
+            ["wip-up"] = "# wip up",
+        });
+
+        var wiki = new WikiManual(handler);
+        wiki.FetchPages(wiki.FetchPageNames());
+
+        Assert.False(handler.WasDisposed);
+    }
+
     [Fact]
     public void FetchPagesSkipsAPageThatFailsInsteadOfThrowing()
     {
@@ -180,7 +223,27 @@ public class ManualTests
         Assert.Empty(ManualSelector.SelectCandidateNames("これは英数字を含まない質問", ["wip-build"]));
     }
 
-    private sealed class StubWikiHandler(IReadOnlyDictionary<string, string> pagesByName) : HttpMessageHandler
+    /// <summary>
+    /// `up` and `ps` are real, two-letter wip commands. A 3-character keyword floor would make
+    /// them permanently unmatchable — this pins the 2-character minimum that fixed it.
+    /// </summary>
+    [Fact]
+    public void ExtractKeywordsIncludesTwoLetterCommandNames()
+    {
+        Assert.Equal(["up"], ManualSelector.ExtractKeywords("up"));
+        Assert.Equal(["ps"], ManualSelector.ExtractKeywords("ps"));
+    }
+
+    [Fact]
+    public void SelectCandidateNamesMatchesTwoLetterCommandNames()
+    {
+        var names = new[] { "wip-up", "wip-ps", "wip-build" };
+
+        Assert.Contains("wip-up", ManualSelector.SelectCandidateNames("how do I start it back up", names));
+        Assert.Contains("wip-ps", ManualSelector.SelectCandidateNames("wip ps command", names));
+    }
+
+    private class StubWikiHandler(IReadOnlyDictionary<string, string> pagesByName) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request, CancellationToken cancellationToken)
@@ -195,6 +258,18 @@ public class ManualTests
             {
                 Content = new StringContent(content),
             });
+        }
+    }
+
+    private sealed class DisposeTrackingWikiHandler(IReadOnlyDictionary<string, string> pagesByName)
+        : StubWikiHandler(pagesByName)
+    {
+        internal bool WasDisposed { get; private set; }
+
+        protected override void Dispose(bool disposing)
+        {
+            WasDisposed = true;
+            base.Dispose(disposing);
         }
     }
 
