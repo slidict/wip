@@ -20,12 +20,24 @@ public static partial class ManualSelector
     private const string TruncationMarker = "\n[truncated by wip]";
 
     /// <summary>
+    /// <see cref="SelectRelevant"/>'s default character budget, exposed so a caller that adds
+    /// its own formatting around the selected pages (headings, separators — see
+    /// <c>CliContext.Join</c>) can clamp the final, formatted result to the same limit rather
+    /// than letting that formatting overhead push it past what the budget was meant to enforce.
+    /// </summary>
+    public const int DefaultMaxCharacters = 12000;
+
+    /// <summary>
     /// Common English function words that carry no page-selection signal on their own. Left
     /// unfiltered, a word like "the" or "how" occurs so often in ordinary prose that it can
     /// outscore the one real keyword in the question, dragging in unrelated pages (and pushing
     /// the actually relevant page's content past the character budget) — the exact way an
     /// otherwise-working query like "how do I disable the build cache?" picked
     /// <c>Shadow-Build-Context</c> and <c>Registry-Authentication</c> ahead of the real answer.
+    /// Also includes "wip" itself: every single page in this manual is about wip, so — unlike
+    /// an ordinary word — it can never help distinguish one page from another, and only dilutes
+    /// whatever real signal a question also contains (e.g. "what does -d do on wip up" wants
+    /// `wip-up`, not whichever page happens to say "wip" the most).
     /// </summary>
     private static readonly HashSet<string> Stopwords = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -33,7 +45,7 @@ public static partial class ManualSelector
         "was", "were", "be", "been", "being", "do", "does", "did", "can", "could", "would",
         "should", "will", "shall", "to", "of", "in", "on", "at", "for", "and", "or", "but",
         "not", "no", "so", "if", "this", "that", "these", "those", "it", "its", "you", "your",
-        "my", "me", "we", "us",
+        "my", "me", "we", "us", "wip",
     };
 
     /// <summary>
@@ -43,7 +55,10 @@ public static partial class ManualSelector
     /// hyphenated flag names like <c>no-cache</c> as one token, and drops common function words
     /// (see <see cref="Stopwords"/>) that would otherwise swamp the real signal. The 2-character
     /// minimum matters on its own: `wip up` and `wip ps` are real commands, and a 3-character
-    /// floor would silently make them unfindable.
+    /// floor would silently make them unfindable. A single-letter short flag like <c>-d</c> or
+    /// <c>-w</c> is matched as its own token too — it can't clear that 2-character floor on
+    /// letters alone, so it needs the separate <c>-[A-Za-z]</c> alternative below rather than a
+    /// lowered general floor, which would otherwise turn every lone letter into a keyword.
     /// </summary>
     public static IReadOnlyList<string> ExtractKeywords(string question) =>
         Keyword().Matches(question).Select(match => match.Value.ToLowerInvariant())
@@ -80,7 +95,8 @@ public static partial class ManualSelector
     /// the result stays within a small model's context budget.
     /// </summary>
     public static IReadOnlyList<ManualPage> SelectRelevant(
-        string question, IReadOnlyList<ManualPage> pages, int maxPages = 3, int maxCharacters = 12000)
+        string question, IReadOnlyList<ManualPage> pages, int maxPages = 3,
+        int maxCharacters = DefaultMaxCharacters)
     {
         var keywords = ExtractKeywords(question);
         if (keywords.Count == 0)
@@ -147,19 +163,28 @@ public static partial class ManualSelector
     /// command.
     /// </summary>
     /// <remarks>
-    /// Deliberately anchored at the *start* only, not both ends: requiring a boundary after the
-    /// match too would stop "disable" from matching "disables", or "build" from matching
-    /// "builds"/"building" — ordinary English inflections this selector needs to keep finding,
-    /// not noise to filter out. Anchoring the start alone already rules out the cases above,
-    /// since in each one the match begins mid-word, not after a break.
+    /// Anchored at the *start* only for an ordinary word of 3+ characters — requiring a
+    /// boundary after the match too would stop "disable" from matching "disables", or "build"
+    /// from matching "builds"/"building", ordinary English inflections this selector needs to
+    /// keep finding. Two shapes are anchored at *both* ends instead, since neither has
+    /// inflections worth preserving and each has its own way of hiding inside an unrelated,
+    /// longer word as only a prefix: a short flag token (<paramref name="needle"/> starting
+    /// with <c>-</c>, e.g. <c>-d</c>, which would otherwise match inside "-download" or
+    /// "-debug"), and a 1-2 character command name (<c>up</c>, <c>ps</c>), which as a bare
+    /// prefix would otherwise match inside ordinary words like "<b>up</b>date" or
+    /// "<b>up</b>grade" that have nothing to do with the command.
     /// </remarks>
     private static int CountWordStartOccurrences(string haystack, string needle)
     {
+        var requireEndBoundary = needle[0] == '-' || needle.Length <= 2;
         var count = 0;
         var index = 0;
         while ((index = haystack.IndexOf(needle, index, StringComparison.OrdinalIgnoreCase)) >= 0)
         {
-            if (index == 0 || !char.IsLetterOrDigit(haystack[index - 1]))
+            var startsWord = index == 0 || !char.IsLetterOrDigit(haystack[index - 1]);
+            var end = index + needle.Length;
+            var endsWord = !requireEndBoundary || end == haystack.Length || !char.IsLetterOrDigit(haystack[end]);
+            if (startsWord && endsWord)
             {
                 count++;
             }
@@ -170,6 +195,6 @@ public static partial class ManualSelector
         return count;
     }
 
-    [GeneratedRegex(@"[A-Za-z][A-Za-z0-9\-]{1,}")]
+    [GeneratedRegex(@"-[A-Za-z](?![A-Za-z0-9-])|[A-Za-z][A-Za-z0-9\-]{1,}")]
     private static partial Regex Keyword();
 }

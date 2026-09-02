@@ -348,8 +348,20 @@ internal sealed partial class CliContext
         }
     }
 
-    private static string Join(IReadOnlyList<ManualPage> pages) =>
-        string.Join("\n\n", pages.Select(page => $"### {page.Name}\n{page.Content}"));
+    /// <summary>
+    /// <see cref="ManualSelector.SelectRelevant"/> bounds each page's own content to its
+    /// character budget, but the "### {name}" headings and "\n\n" separators added here are
+    /// extra, unbudgeted bytes on top of that — so the joined result is clamped to the same
+    /// budget again, rather than letting formatting overhead quietly push the final prompt
+    /// excerpt past what <c>maxCharacters</c> was meant to enforce.
+    /// </summary>
+    internal static string Join(IReadOnlyList<ManualPage> pages)
+    {
+        var joined = string.Join("\n\n", pages.Select(page => $"### {page.Name}\n{page.Content}"));
+        return joined.Length <= ManualSelector.DefaultMaxCharacters
+            ? joined
+            : joined[..ManualSelector.DefaultMaxCharacters];
+    }
 
     private static string ReadQuestion()
     {

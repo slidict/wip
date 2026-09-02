@@ -1,10 +1,12 @@
 using Wip.Ai;
+using Wip.Cli;
 
 namespace Wip.Tests;
 
-/// <summary>Covers <see cref="WikiManual"/> (reading/fetching the wiki manual) and <see
-/// cref="ManualSelector"/> (deciding which page(s) are relevant to a question) independently of
-/// <c>CliContext.HelpAi</c>, which wires the two together.</summary>
+/// <summary>Covers <see cref="WikiManual"/> (reading/fetching the wiki manual), <see
+/// cref="ManualSelector"/> (deciding which page(s) are relevant to a question), and
+/// <see cref="CliContext.Join"/> (formatting the selected pages into the prompt excerpt)
+/// independently of <c>CliContext.HelpAi</c>, which wires all three together.</summary>
 public class ManualTests
 {
     [Fact]
@@ -256,6 +258,84 @@ public class ManualTests
 
         Assert.Contains("wip-up", ManualSelector.SelectCandidateNames("how do I start it back up", names));
         Assert.Contains("wip-ps", ManualSelector.SelectCandidateNames("wip ps command", names));
+    }
+
+    /// <summary>Every page in this manual is about wip, so the word "wip" itself can never help
+    /// pick one page over another — it should never survive into the keyword list.</summary>
+    [Fact]
+    public void ExtractKeywordsTreatsWipItselfAsAStopword()
+    {
+        Assert.DoesNotContain("wip", ManualSelector.ExtractKeywords("what does -d do on wip up"));
+    }
+
+    /// <summary>
+    /// Regression for a real failure found testing against the live wiki: "what does -d do on
+    /// wip up" picked `wip-help` and two unrelated pages ahead of `wip-up` itself, because (a)
+    /// "wip" matched everywhere and (b) "up" matched as a bare prefix of ordinary words like
+    /// "up-to-date" content mentions elsewhere in the manual. Fixed by treating "wip" as a
+    /// stopword and requiring a full word match (not just a prefix) for 1-2 character keywords.
+    /// </summary>
+    [Fact]
+    public void SelectRelevantDoesNotLetAShortCommandMatchAsAPrefixOfALongerWord()
+    {
+        var pages = new[]
+        {
+            new ManualPage("wip-up", "# wip up\n`-d` runs the container detached."),
+            new ManualPage("Noise", string.Concat(Enumerable.Repeat(
+                "update, upgrade, uptime, upload. ", 20))),
+        };
+
+        var selected = ManualSelector.SelectRelevant("what does -d do on wip up", pages, maxPages: 1);
+
+        var page = Assert.Single(selected);
+        Assert.Equal("wip-up", page.Name);
+    }
+
+    /// <summary>A single-letter short flag can't clear the general 2-character keyword floor on
+    /// its own, so it needs the regex's separate `-[A-Za-z]` alternative.</summary>
+    [Fact]
+    public void ExtractKeywordsIncludesSingleLetterFlags()
+    {
+        Assert.Equal(["-d"], ManualSelector.ExtractKeywords("-d"));
+        Assert.Contains("-w", ManualSelector.ExtractKeywords("run with -w please"));
+    }
+
+    /// <summary>Regression: a short flag keyword is anchored at both ends, unlike an ordinary
+    /// word, so "-d" does not also match inside the unrelated "-download" or "-detach".</summary>
+    [Fact]
+    public void SelectRelevantDoesNotLetAShortFlagMatchInsideALongerFlag()
+    {
+        var pages = new[]
+        {
+            new ManualPage("wip-up", "# wip up\n`-d` runs the container detached."),
+            new ManualPage("Noise", string.Concat(Enumerable.Repeat(
+                "use -download or -detach for other tools. ", 20))),
+        };
+
+        var selected = ManualSelector.SelectRelevant("-d", pages, maxPages: 1);
+
+        var page = Assert.Single(selected);
+        Assert.Equal("wip-up", page.Name);
+    }
+
+    /// <summary>
+    /// <see cref="ManualSelector.SelectRelevant"/> bounds each page's own content, but
+    /// <see cref="CliContext.Join"/> adds a "### {name}" heading and "\n\n" separators on top —
+    /// unbudgeted bytes that must not let the final, formatted excerpt run past the same limit.
+    /// </summary>
+    [Fact]
+    public void JoinClampsTheFormattedExcerptToTheCharacterBudget()
+    {
+        var pages = new[]
+        {
+            new ManualPage("a-very-long-page-name-that-adds-heading-overhead",
+                new string('x', ManualSelector.DefaultMaxCharacters)),
+        };
+
+        var joined = CliContext.Join(pages);
+
+        Assert.True(joined.Length <= ManualSelector.DefaultMaxCharacters,
+            $"expected <= {ManualSelector.DefaultMaxCharacters} chars, got {joined.Length}");
     }
 
     private class StubWikiHandler(IReadOnlyDictionary<string, string> pagesByName) : HttpMessageHandler
