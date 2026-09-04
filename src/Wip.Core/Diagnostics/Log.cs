@@ -22,6 +22,8 @@ namespace Wip.Diagnostics;
 /// </remarks>
 public static class Log
 {
+    private const ushort EnglishPrimaryLanguageId = 0x09;
+    private const ushort JapanesePrimaryLanguageId = 0x11;
     private const string TagAccent = "\x1b[36m";
     private const string WarnAccent = "\x1b[33m";
     private const string ErrorAccent = "\x1b[31m";
@@ -32,21 +34,39 @@ public static class Log
 
     /// <summary>Writes "wip: warning: message" -- something the user should notice but that
     /// does not stop wip from continuing.</summary>
-    public static void Warn(string message) => Console.Error.WriteLine(FormatWarn(message, IsColorEnabled()));
+    public static void Warn(string message) => Console.Error.WriteLine(
+        FormatWarn(message, IsColorEnabled(), DisplayLanguage.CurrentPrimaryLanguageId()));
 
     /// <summary>Writes "wip: error: message" -- wip is about to stop, or a command it ran
     /// already failed.</summary>
-    public static void Error(string message) => Console.Error.WriteLine(FormatError(message, IsColorEnabled()));
+    public static void Error(string message) => Console.Error.WriteLine(
+        FormatError(message, IsColorEnabled(), DisplayLanguage.CurrentPrimaryLanguageId()));
 
     /// <summary>Pure formatting, kept apart from <see cref="IsColorEnabled"/> so the tag's shape
     /// is testable without a real console or environment variables.</summary>
     internal static string Format(string message, bool colorize) => FormatTagged(null, message, colorize);
 
     internal static string FormatWarn(string message, bool colorize) =>
-        FormatTagged(("warning", WarnAccent), message, colorize);
+        FormatWarn(message, colorize, EnglishPrimaryLanguageId);
+
+    internal static string FormatWarn(string message, bool colorize, ushort languageId) =>
+        FormatTagged((SeverityLabel(languageId, isError: false), WarnAccent), message, colorize);
 
     internal static string FormatError(string message, bool colorize) =>
-        FormatTagged(("error", ErrorAccent), message, colorize);
+        FormatError(message, colorize, EnglishPrimaryLanguageId);
+
+    internal static string FormatError(string message, bool colorize, ushort languageId) =>
+        FormatTagged((SeverityLabel(languageId, isError: true), ErrorAccent), message, colorize);
+
+    /// <summary>
+    /// Gets the translated severity label. English is deliberately the default branch so an
+    /// OS language for which wip has no translation never produces a missing or blank label.
+    /// </summary>
+    private static string SeverityLabel(ushort languageId, bool isError) => languageId switch
+    {
+        JapanesePrimaryLanguageId => isError ? "エラー" : "警告",
+        _ => isError ? "error" : "warning",
+    };
 
     private static string FormatTagged((string Label, string Accent)? severity, string message, bool colorize)
     {
