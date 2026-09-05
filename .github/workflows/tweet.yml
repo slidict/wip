@@ -126,13 +126,20 @@ jobs:
           )
           lines=("${all_lines[@]:0:3}")
           if [ "${#lines[@]}" -eq 0 ]; then
-            echo "::error::No feat/fix/perf commits found in $range to announce."
-            exit 1
+            # Not an error: a release with no feat/fix/perf commits at all has nothing to
+            # announce. Leaving the text output unset skips the post step below rather than
+            # failing the job.
+            echo "No feat/fix/perf commits found in $range; skipping the tweet." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
           fi
 
-          text="${lines[0]}"$'\n\n'"wip ${TAG} released 🚀"
-          for ((i = 1; i < ${#lines[@]}; i++)); do
-            text+=$'\n'"• ${lines[$i]}"
+          # "wip vX.Y.Z released" leads every line uniformly, rather than singling one out as
+          # a headline above it: that structure was designed for an AI-rewritten opening hook,
+          # but a raw commit subject in that spot reads as broken far more easily than one
+          # more bullet below the actual announcement does.
+          text="wip ${TAG} released 🚀"
+          for line in "${lines[@]}"; do
+            text+=$'\n'"• ${line}"
           done
           text+=$'\n\n'"$release_url"
 
@@ -169,7 +176,8 @@ jobs:
           env.TWITTER_CONSUMER_KEY != '' &&
           env.TWITTER_CONSUMER_SECRET != '' &&
           env.TWITTER_ACCESS_TOKEN != '' &&
-          env.TWITTER_ACCESS_TOKEN_SECRET != ''
+          env.TWITTER_ACCESS_TOKEN_SECRET != '' &&
+          steps.announcement.outputs.text != ''
         env:
           TWEET_TEXT: ${{ steps.announcement.outputs.text }}
         run: |
@@ -257,3 +265,13 @@ jobs:
             echo "   and TWITTER_ACCESS_TOKEN_SECRET on the \`twitter\` environment, so"
             echo "   required reviewers can gate each use."
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Explain a tweet skipped for having nothing to announce
+        if: >-
+          env.TWITTER_CONSUMER_KEY != '' &&
+          env.TWITTER_CONSUMER_SECRET != '' &&
+          env.TWITTER_ACCESS_TOKEN != '' &&
+          env.TWITTER_ACCESS_TOKEN_SECRET != '' &&
+          steps.announcement.outputs.text == ''
+        run: |
+          echo "No tweet was posted: this release had no feat/fix/perf commits to announce." >> "$GITHUB_STEP_SUMMARY"
