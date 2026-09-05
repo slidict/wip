@@ -993,9 +993,16 @@ internal sealed partial class CliContext
             return (false, null);
         }
 
-        var named = records.Where(record => RecordNames(record).Any()).ToList();
+        // Read once per record rather than once per question asked of it: both the "has a name
+        // at all" test and the match below want the same list, and the restart watch runs
+        // this on every tick.
+        var named = records
+            .Select(record => (Record: record, Names: RecordNames(record).ToList()))
+            .Where(entry => entry.Names.Count > 0)
+            .ToList();
+
         var match = named.Count > 0
-            ? named.FirstOrDefault(record => RecordNames(record).Contains(name))
+            ? named.FirstOrDefault(entry => entry.Names.Contains(name)).Record
             : records[0];
 
         if (match.ValueKind != JsonValueKind.Object)
