@@ -69,6 +69,19 @@ public class LogTests
     }
 
     [Fact]
+    public void UsesTheLabelWhenPassedAPrimaryLanguageId()
+    {
+        const ushort japanesePrimaryLanguageId = 0x11;
+
+        Assert.Equal(
+            "wip: 警告: this project is on the WSL filesystem",
+            Log.FormatWarn(
+                "this project is on the WSL filesystem",
+                colorize: false,
+                japanesePrimaryLanguageId));
+    }
+
+    [Fact]
     public void FallsBackToEnglishWhenTheDisplayLanguageIsNotSupported()
     {
         Assert.Equal(
