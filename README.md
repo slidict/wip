@@ -8,6 +8,8 @@
 
 Homepage: https://wslc-wip.slidict.com/ · **[Full documentation: wip Wiki](https://github.com/slidict/wip/wiki)**
 
+[![wip slide](https://slidict.io/slides/160/gif?v=1788619628)](https://slidict.io/slides/160)
+
 `wip` is an OSS CLI wrapper that brings a [`dip`](https://github.com/bibendi/dip)-like
 workflow to Microsoft WSLC. It collects a project's container, image, environment variables, and
 commands into a single `wip.yml`, and forwards them to `wslc.exe` / `wslc` as safe argument arrays
