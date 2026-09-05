@@ -99,8 +99,20 @@ jobs:
             echo "needed=false" >> "$GITHUB_OUTPUT"
             echo "$TAG matches the latest published release, $previous, which is complete with its artifacts; nothing to build." >> "$GITHUB_STEP_SUMMARY"
           else
-            draft_tag=$(gh release list --limit 100 --json tagName,isDraft,name \
-              --jq '[.[] | select(.isDraft and .name == "Unreleased")] | .[0].tagName // ""')
+            # Enumerate rather than take the first match: with more than one draft named
+            # "Unreleased" (the same race the attach job below guards against), silently
+            # picking one would make this check nondeterministic -- it could look at the
+            # wrong draft's assets and skip a rebuild that's actually still needed.
+            drafts=$(gh release list --limit 100 --json tagName,isDraft,name \
+              --jq '[.[] | select(.isDraft and .name == "Unreleased") | .tagName]')
+            draft_count=$(jq 'length' <<< "$drafts")
+
+            if [ "$draft_count" -gt 1 ]; then
+              echo "::error::$draft_count draft releases are named \"Unreleased\" ($(jq -r 'join(", ")' <<< "$drafts")); cannot tell which one to check for an existing build."
+              exit 1
+            fi
+
+            draft_tag=$(jq -r '.[0] // ""' <<< "$drafts")
 
             built=false
             if [ -n "$draft_tag" ]; then
