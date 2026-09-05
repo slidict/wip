@@ -120,6 +120,67 @@ function Assert-NoMatch($Result, [string] $Pattern, [string] $What) {
     }
 }
 
+# wslc's own container states, from microsoft/WSL's ContainerModel.h -- the same table
+# CliContext maps. `--format json` reported the number through 2.9.9 and docker's name for it
+# from 2.9.10; both are accepted here for the reason wip accepts both, which is that the
+# assertion is about the container's state and not about which release printed it.
+$script:WslcStateNumbers = @{ created = 1; running = 2; exited = 3; deleted = 4 }
+
+# The envelopes CliContext.ParseRecords accepts: an array, a lone object, or one object per
+# line. Read the same way here, because the point of asserting on this output is to read the
+# listing the way wip reads it.
+function Read-WslcRecords([string] $Json) {
+    if (-not $Json.Trim()) { return @() }
+
+    # The whole output first, which covers an array and a lone object in one step.
+    try { return @($Json | ConvertFrom-Json) } catch { }
+
+    # Several values in sequence are trailing data to ConvertFrom-Json, so line-delimited
+    # output only parses a line at a time.
+    $records = @()
+    foreach ($line in $Json -split "`n") {
+        if ($line.Trim()) {
+            try { $records += @($line | ConvertFrom-Json) } catch { }
+        }
+    }
+
+    return $records
+}
+
+# The names one record answers to: `Name` through 2.9.9, docker's `Names` -- comma-separated,
+# an optional leading slash -- from 2.9.10. The two spellings CliContext reads.
+function Get-RecordNames($Record) {
+    foreach ($field in 'Name', 'Names') {
+        $value = $Record.$field
+        if ($value -is [string] -and $value) {
+            foreach ($entry in $value -split ',') {
+                $trimmed = $entry.Trim().TrimStart('/')
+                if ($trimmed) { $trimmed }
+            }
+        }
+    }
+}
+
+function Assert-State($Result, [string] $Expected, [string] $What) {
+    $number = $script:WslcStateNumbers[$Expected]
+    if ($null -eq $number) { throw "no wslc state number for '$Expected'" }
+
+    # This container's record, not any record in the listing: `--filter name=` narrows without
+    # promising an exact hit, so app-worker's row must not answer for app's -- and matching
+    # the name and the state as two independent patterns over the whole output would let it.
+    $record = Read-WslcRecords $Result.Output |
+        Where-Object { (Get-RecordNames $_) -contains $script:Container } |
+        Select-Object -First 1
+    if (-not $record) {
+        throw "$What listed no record named $($script:Container): $($Result.Output.Trim())"
+    }
+
+    $state = $record.State
+    if ($state -ne $number -and "$state" -ne $Expected) {
+        throw "$What reported State '$state' for $($script:Container), expected $Expected ($number)"
+    }
+}
+
 # Runs whatever wslc can still tell us about the machine. Best effort by design: this is
 # reached when something has already failed, so a second failure here must not replace the
 # original one.
@@ -237,18 +298,24 @@ try {
     $up = Invoke-Wip @('up', '-d')
     Assert-Exit $up 0 "wip up -d"
 
-    # The probe wip's own status and create-vs-start decisions are built on, printed raw and
-    # before anything asserts. Not asserted itself -- it is here so the log carries the JSON
-    # shape those decisions have to parse, and it has to run ahead of the assertions or the
-    # first failure takes the log entry with it.
-    Write-Step "Diagnostic: the JSON probe wip reads (not asserted)"
-    Invoke-Wslc @('list', '--all', '--filter', "name=$($script:Container)", '--format', 'json') | Out-Null
-
     # wslc's own view first, state and all. It runs ahead of `wip ps` deliberately: if the
     # container really is not running, that is the container failing and this line says so,
     # and only once wslc has been made to agree does a disagreeing `wip ps` mean wip is wrong.
+    #
+    # It is the JSON probe that is asserted, not the table: State there is the field wip's own
+    # status and create-vs-start decisions parse, so this assertion covers what wip reads. The
+    # table's STATUS column is prose for a person -- 2.9.9 wrote "running Less than a second
+    # ago" and 2.9.10 writes docker's "Up Less than a second", which names no state at all --
+    # and a lifecycle assertion has no business resting on which phrasing is current.
+    Write-Step "wslc's own view of the container"
+    $probe = Invoke-Wslc @('list', '--all', '--filter', "name=$($script:Container)", '--format', 'json')
+    Assert-Exit $probe 0 "wslc list --format json after wip up"
+    Assert-State $probe 'running' "wslc list --format json after wip up"
+
+    # The table too, unasserted beyond the name: it is the view a person reading this log has,
+    # and it is where a renamed column or a dropped row shows up at a glance.
     $listed = Invoke-Wslc @('list', '--all')
-    Assert-Match $listed "(?m)^.*\b$($script:ContainerPattern)\b.*\brunning\b" "wslc list --all after wip up"
+    Assert-Match $listed $script:ContainerPattern "wslc list --all after wip up"
 
     # The state column, not just the name: `wip ps` exits 0 and prints the row whatever the
     # container's state is, so matching the name alone would pass on a row reading
