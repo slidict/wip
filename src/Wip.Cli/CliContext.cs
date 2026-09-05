@@ -823,6 +823,12 @@ internal sealed partial class CliContext
     /// which envelope it came in does not. Anything unparseable stays "no records" rather
     /// than an exception — a probe exists to answer a question, not to take the command down.
     /// </para>
+    /// <para>
+    /// The shape did change: 2.9.10 replaced that record with docker's, which spells the
+    /// fields differently. The envelope is still one of these three, so this method is
+    /// unaffected — see <see cref="RecordNames"/> and <see cref="ReadState"/> for the fields
+    /// themselves.
+    /// </para>
     /// </remarks>
     internal static IReadOnlyList<JsonElement> ParseRecords(string output)
     {
@@ -893,6 +899,81 @@ internal sealed partial class CliContext
         return true;
     }
 
+    private static readonly string[] NameFields = ["Name", "Names"];
+
+    /// <summary>
+    /// The names one listing record answers to.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// wslc 2.9.9 printed <c>"Name":"app"</c>. 2.9.10 moved the whole listing to docker's
+    /// shape, where the field is <c>Names</c> and holds a comma-separated list — one record
+    /// can answer to several names. Both are read here so a single wip binary keeps working
+    /// across that release boundary in either direction, and so the field name lives in one
+    /// place instead of at each of the three sites that used to spell it out.
+    /// </para>
+    /// <para>
+    /// A leading <c>/</c> is trimmed because that is how docker's own API writes a container
+    /// name, and wslc's compatibility layer is the reason this shape is here at all.
+    /// </para>
+    /// </remarks>
+    private static IEnumerable<string> RecordNames(JsonElement record)
+    {
+        foreach (var field in NameFields)
+        {
+            if (!record.TryGetProperty(field, out var value) || value.ValueKind != JsonValueKind.String)
+            {
+                continue;
+            }
+
+            foreach (var entry in (value.GetString() ?? "").Split(','))
+            {
+                var trimmed = entry.Trim().TrimStart('/');
+                if (trimmed.Length > 0)
+                {
+                    yield return trimmed;
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Reads <c>State</c> as wip's vocabulary — the numbers wslc's own enum uses.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 2.9.9 reported the number; 2.9.10 reports docker's name for the same thing
+    /// (<c>"State":"running"</c>). The names are mapped onto the numbers rather than the
+    /// other way round so every caller — <see cref="DecideContainerAction"/>,
+    /// <see cref="StatusLabel"/>, the restart watch — keeps reading one vocabulary and needs
+    /// no change of its own.
+    /// </para>
+    /// <para>
+    /// Only the four states wslc itself defines are mapped. Docker names with no wslc
+    /// equivalent (<c>paused</c>, <c>restarting</c>, <c>dead</c>) stay null, which is the
+    /// same "listed, state unknown" answer an unreadable state has always produced: the
+    /// conservative fallbacks those callers document are a better answer than a guess at
+    /// which wslc state a docker-only name is supposed to be.
+    /// </para>
+    /// </remarks>
+    private static int? ReadState(JsonElement state) => state.ValueKind switch
+    {
+        // The kind is checked before the read: TryGetInt32 only reports "no" for a number it
+        // cannot fit, and throws for a String or a Bool.
+        JsonValueKind.Number => state.TryGetInt32(out var reported) ? reported : (int?)null,
+        JsonValueKind.String => StateFromName(state.GetString()),
+        _ => null,
+    };
+
+    private static int? StateFromName(string? reported) => reported?.Trim().ToLowerInvariant() switch
+    {
+        "created" => (int?)WslcContainerStateCreated,
+        "running" => WslcContainerStateRunning,
+        "exited" => WslcContainerStateExited,
+        "deleted" => WslcContainerStateDeleted,
+        _ => null,
+    };
+
     /// <summary>
     /// Picks <paramref name="name"/>'s record out of a listing and reports whether it is
     /// there and what state it is in.
@@ -900,9 +981,9 @@ internal sealed partial class CliContext
     /// <remarks>
     /// The name is matched rather than the first record taken: <c>--filter name=</c> narrows
     /// the listing but does not promise a single exact hit, so <c>app</c> could otherwise be
-    /// answered with <c>app-worker</c>'s state. A listing whose records carry no <c>Name</c>
-    /// at all falls back to the first record, which keeps a future rename of that field from
-    /// turning every container into "not found".
+    /// answered with <c>app-worker</c>'s state. A listing whose records carry no name field
+    /// wip knows falls back to the first record, which keeps a future rename of that field
+    /// from turning every container into "not found".
     /// </remarks>
     internal static (bool Exists, int? State) ReadContainerEntry(string output, string name)
     {
@@ -912,12 +993,9 @@ internal sealed partial class CliContext
             return (false, null);
         }
 
-        var named = records.Where(record => record.TryGetProperty("Name", out _)).ToList();
+        var named = records.Where(record => RecordNames(record).Any()).ToList();
         var match = named.Count > 0
-            ? named.FirstOrDefault(record =>
-                record.TryGetProperty("Name", out var value) &&
-                value.ValueKind == JsonValueKind.String &&
-                value.GetString() == name)
+            ? named.FirstOrDefault(record => RecordNames(record).Contains(name))
             : records[0];
 
         if (match.ValueKind != JsonValueKind.Object)
@@ -925,24 +1003,15 @@ internal sealed partial class CliContext
             return (false, null);
         }
 
-        // The kind is checked before the read: TryGetInt32 only reports "no" for a number it
-        // cannot fit, and throws for a String or a Bool. So a wslc that ever reported State
-        // as "running" would take the command down here -- which is the opposite of what a
-        // watch loop needs, and what the old comment on this line wrongly assumed was
-        // already handled. An unreadable state leaves the container listed, state unknown.
-        return match.TryGetProperty("State", out var state) &&
-               state.ValueKind == JsonValueKind.Number &&
-               state.TryGetInt32(out var reported)
+        // An unreadable state leaves the container listed, state unknown.
+        return match.TryGetProperty("State", out var state) && ReadState(state) is { } reported
             ? (true, reported)
             : (true, null);
     }
 
     /// <summary>Whether a network listing names <paramref name="network"/>.</summary>
     internal static bool ListsNetwork(string output, string network) =>
-        ParseRecords(output).Any(record =>
-            record.TryGetProperty("Name", out var name) &&
-            name.ValueKind == JsonValueKind.String &&
-            name.GetString() == network);
+        ParseRecords(output).Any(record => RecordNames(record).Contains(network));
 
     private void EnsureNetwork()
     {

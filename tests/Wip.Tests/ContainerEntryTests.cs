@@ -10,8 +10,9 @@ namespace Wip.Tests;
 /// This layer had no tests at all, and that is exactly where the bug lived. StatusLabelTests
 /// and ContainerActionTests take <c>exists</c> and <c>state</c> as inputs, so they passed on
 /// a real machine where a running container was reported as "not found" — the parse handing
-/// them <c>(false, null)</c> was never in question. The samples below are copied from a real
-/// WSLC 2.9.9 run in the end-to-end job rather than written from the shape wip expected.
+/// them <c>(false, null)</c> was never in question. The samples below are copied from real
+/// WSLC runs in the end-to-end job -- 2.9.9 and the docker-shaped listing 2.9.10 replaced it
+/// with -- rather than written from the shape wip expected.
 /// </remarks>
 public class ContainerEntryTests
 {
@@ -85,15 +86,72 @@ public class ContainerEntryTests
     /// A listed container whose state wip cannot read is still listed: it exists, and the
     /// state falls through to "unknown" rather than making the container disappear.
     /// </summary>
+    /// <remarks>
+    /// The samples are states with no wslc equivalent, and a record carrying no state at all.
+    /// A docker state name wslc does report is read, not treated as unreadable — see
+    /// <see cref="ReadsTheDockerShapedListing"/>.
+    /// </remarks>
     [Fact]
     public void UnreadableStateStillCountsAsPresent()
     {
         Assert.Equal(
             (true, (int?)null),
-            CliContext.ReadContainerEntry("""{"Name":"wip-e2e-app","State":"running"}""", "wip-e2e-app"));
+            CliContext.ReadContainerEntry("""{"Name":"wip-e2e-app","State":"paused"}""", "wip-e2e-app"));
+        Assert.Equal(
+            (true, (int?)null),
+            CliContext.ReadContainerEntry("""{"Name":"wip-e2e-app","State":true}""", "wip-e2e-app"));
         Assert.Equal(
             (true, (int?)null),
             CliContext.ReadContainerEntry("""{"Name":"wip-e2e-app"}""", "wip-e2e-app"));
+    }
+
+    /// <summary>
+    /// What wslc 2.9.10 prints for the same command, copied from the end-to-end job: the
+    /// listing moved to docker's shape, so <c>Name</c> became <c>Names</c> and the numeric
+    /// <c>State</c> became docker's name for it.
+    /// </summary>
+    /// <remarks>
+    /// This is the regression the end-to-end job caught. Against 2.9.10 the parse read no
+    /// name (falling back to whichever record came first) and no state at all, so `wip ps`
+    /// called a running container "unknown", `wip up` tried to start one that was already
+    /// running, and a `restart:` policy never saw an exited container.
+    /// </remarks>
+    private const string DockerShapedObject =
+        """{"Command":"\"sleep 600\"","CreatedAt":"2026-09-05 01:09:48 +0000 UTC","HealthStatus":"","ID":"53054d746ba9","Image":"wip-e2e:latest","LocalVolumes":"0","Mounts":"","Names":"wip-e2e-app","Networks":"wip-e2e-net","Ports":"","RunningFor":"1 second ago","Size":"0B","State":"running","Status":"Up Less than a second"}""";
+
+    [Fact]
+    public void ReadsTheDockerShapedListing()
+    {
+        Assert.Equal((true, Running), CliContext.ReadContainerEntry(DockerShapedObject, "wip-e2e-app"));
+        Assert.Equal((false, (int?)null), CliContext.ReadContainerEntry(DockerShapedObject, "wip-e2e-app-worker"));
+    }
+
+    /// <summary>Every state name wslc has a state of its own for.</summary>
+    [Theory]
+    [InlineData("created", 1)]
+    [InlineData("running", 2)]
+    [InlineData("exited", 3)]
+    [InlineData("deleted", 4)]
+    public void ReadsDockerStateNames(string reported, int expected)
+    {
+        Assert.Equal(
+            (true, (int?)expected),
+            CliContext.ReadContainerEntry($$"""{"Names":"wip-e2e-app","State":"{{reported}}"}""", "wip-e2e-app"));
+    }
+
+    /// <summary>
+    /// docker writes several names for one container as a comma-separated list, and its API
+    /// spelling carries a leading slash. Either has to still name the container.
+    /// </summary>
+    [Fact]
+    public void ReadsOneOfSeveralNames()
+    {
+        Assert.Equal(
+            (true, Running),
+            CliContext.ReadContainerEntry("""{"Names":"other,wip-e2e-app","State":2}""", "wip-e2e-app"));
+        Assert.Equal(
+            (true, Running),
+            CliContext.ReadContainerEntry("""{"Names":"/wip-e2e-app","State":2}""", "wip-e2e-app"));
     }
 
     /// <summary>
@@ -114,5 +172,13 @@ public class ContainerEntryTests
         Assert.False(CliContext.ListsNetwork(listing, "wip-e2e"));
         Assert.True(CliContext.ListsNetwork("""{"Name":"wip-e2e-net"}""", "wip-e2e-net"));
         Assert.False(CliContext.ListsNetwork("", "wip-e2e-net"));
+    }
+
+    /// <summary>The network listing gets the same treatment: one spelling must not miss it.</summary>
+    [Fact]
+    public void NetworksAreMatchedUnderEitherFieldName()
+    {
+        Assert.True(CliContext.ListsNetwork("""{"Names":"wip-e2e-net"}""", "wip-e2e-net"));
+        Assert.False(CliContext.ListsNetwork("""{"Names":"wip-e2e-network"}""", "wip-e2e-net"));
     }
 }
