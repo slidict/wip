@@ -97,30 +97,20 @@ jobs:
 
           # Commit subjects for one Conventional Commit type, newest first, with the
           # prefix stripped, first letter capitalized, and long subjects clipped so a
-          # single line can't blow the tweet's character budget on its own. A commit whose
-          # changes are confined entirely to .github/ is skipped regardless of type: it's
-          # release or CI tooling, not anything a wip CLI user would notice, and Conventional
-          # Commit type alone can't tell the two apart (a workflow change is legitimately a
-          # "feat" from the repo's own point of view, just never the user's).
+          # single line can't blow the tweet's character budget on its own.
           pick_lines() {
-            local type="$1" sha subject files
-            while IFS= read -r sha; do
-              subject=$(git log -1 --format='%s' "$sha")
-              grep -Eqi "^${type}(\([^)]*\))?!?:[[:space:]]+" <<< "$subject" || continue
-
-              files=$(git diff-tree --no-commit-id --name-only -r "$sha")
-              if [ -n "$files" ] && ! grep -qvE '^\.github/' <<< "$files"; then
-                continue
-              fi
-
-              subject=$(sed -E "s/^${type}(\([^)]*\))?!?:[[:space:]]*//I; s/[[:space:].]+\$//" <<< "$subject")
-              [ -z "$subject" ] && continue
-              subject="${subject^}"
-              if [ "${#subject}" -gt 60 ]; then
-                subject="${subject:0:59}…"
-              fi
-              printf '%s\n' "$subject"
-            done < <(git log "$range" --format='%H')
+            local type="$1" subject
+            git log "$range" --format='%s' \
+              | grep -Ei "^${type}(\([^)]*\))?!?:[[:space:]]+" \
+              | sed -E "s/^${type}(\([^)]*\))?!?:[[:space:]]*//I; s/[[:space:].]+\$//" \
+              | while IFS= read -r subject; do
+                  [ -z "$subject" ] && continue
+                  subject="${subject^}"
+                  if [ "${#subject}" -gt 60 ]; then
+                    subject="${subject:0:59}…"
+                  fi
+                  printf '%s\n' "$subject"
+                done
           }
 
           # feat before fix before perf so the most user-visible change leads the post;
@@ -136,10 +126,10 @@ jobs:
           )
           lines=("${all_lines[@]:0:3}")
           if [ "${#lines[@]}" -eq 0 ]; then
-            # Not an error: a release can legitimately be entirely release/CI tooling (as
-            # v2.5.2 was), with nothing a wip CLI user would care about to announce. Leaving
-            # the text output unset skips the post step below rather than failing the job.
-            echo "No feat/fix/perf commits outside .github/ found in $range; skipping the tweet." >> "$GITHUB_STEP_SUMMARY"
+            # Not an error: a release with no feat/fix/perf commits at all has nothing to
+            # announce. Leaving the text output unset skips the post step below rather than
+            # failing the job.
+            echo "No feat/fix/perf commits found in $range; skipping the tweet." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
 
@@ -280,4 +270,4 @@ jobs:
           env.TWITTER_ACCESS_TOKEN_SECRET != '' &&
           steps.announcement.outputs.text == ''
         run: |
-          echo "No tweet was posted: every feat/fix/perf commit in this release was confined to .github/ (release or CI tooling), with nothing a wip CLI user would notice." >> "$GITHUB_STEP_SUMMARY"
+          echo "No tweet was posted: this release had no feat/fix/perf commits to announce." >> "$GITHUB_STEP_SUMMARY"
