@@ -126,15 +126,58 @@ function Assert-NoMatch($Result, [string] $Pattern, [string] $What) {
 # assertion is about the container's state and not about which release printed it.
 $script:WslcStateNumbers = @{ created = 1; running = 2; exited = 3; deleted = 4 }
 
+# The envelopes CliContext.ParseRecords accepts: an array, a lone object, or one object per
+# line. Read the same way here, because the point of asserting on this output is to read the
+# listing the way wip reads it.
+function Read-WslcRecords([string] $Json) {
+    if (-not $Json.Trim()) { return @() }
+
+    # The whole output first, which covers an array and a lone object in one step.
+    try { return @($Json | ConvertFrom-Json) } catch { }
+
+    # Several values in sequence are trailing data to ConvertFrom-Json, so line-delimited
+    # output only parses a line at a time.
+    $records = @()
+    foreach ($line in $Json -split "`n") {
+        if ($line.Trim()) {
+            try { $records += @($line | ConvertFrom-Json) } catch { }
+        }
+    }
+
+    return $records
+}
+
+# The names one record answers to: `Name` through 2.9.9, docker's `Names` -- comma-separated,
+# an optional leading slash -- from 2.9.10. The two spellings CliContext reads.
+function Get-RecordNames($Record) {
+    foreach ($field in 'Name', 'Names') {
+        $value = $Record.$field
+        if ($value -is [string] -and $value) {
+            foreach ($entry in $value -split ',') {
+                $trimmed = $entry.Trim().TrimStart('/')
+                if ($trimmed) { $trimmed }
+            }
+        }
+    }
+}
+
 function Assert-State($Result, [string] $Expected, [string] $What) {
     $number = $script:WslcStateNumbers[$Expected]
     if ($null -eq $number) { throw "no wslc state number for '$Expected'" }
 
-    # Anchored on the field so a state name appearing anywhere else in the record -- in an
-    # image tag, a container name -- cannot answer for it.
-    $pattern = '"State"\s*:\s*(?:' + $number + '|"' + $Expected + '")'
-    if ($Result.Output -notmatch $pattern) {
-        throw "$What did not report State $Expected ($number): $($Result.Output.Trim())"
+    # This container's record, not any record in the listing: `--filter name=` narrows without
+    # promising an exact hit, so app-worker's row must not answer for app's -- and matching
+    # the name and the state as two independent patterns over the whole output would let it.
+    $record = Read-WslcRecords $Result.Output |
+        Where-Object { (Get-RecordNames $_) -contains $script:Container } |
+        Select-Object -First 1
+    if (-not $record) {
+        throw "$What listed no record named $($script:Container): $($Result.Output.Trim())"
+    }
+
+    $state = $record.State
+    if ($state -ne $number -and "$state" -ne $Expected) {
+        throw "$What reported State '$state' for $($script:Container), expected $Expected ($number)"
     }
 }
 
@@ -267,7 +310,6 @@ try {
     Write-Step "wslc's own view of the container"
     $probe = Invoke-Wslc @('list', '--all', '--filter', "name=$($script:Container)", '--format', 'json')
     Assert-Exit $probe 0 "wslc list --format json after wip up"
-    Assert-Match $probe $script:ContainerPattern "wslc list --format json after wip up"
     Assert-State $probe 'running' "wslc list --format json after wip up"
 
     # The table too, unasserted beyond the name: it is the view a person reading this log has,
