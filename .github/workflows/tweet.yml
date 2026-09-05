@@ -56,7 +56,14 @@ jobs:
       TAG: ${{ inputs.tag }}
 
     steps:
+      # Skipped alongside every other step when credentials are missing, so a run that
+      # can only end in "skipped tweet" doesn't pay for a full-history checkout.
       - name: Check out repository
+        if: >-
+          env.TWITTER_CONSUMER_KEY != '' &&
+          env.TWITTER_CONSUMER_SECRET != '' &&
+          env.TWITTER_ACCESS_TOKEN != '' &&
+          env.TWITTER_ACCESS_TOKEN_SECRET != ''
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
@@ -84,8 +91,9 @@ jobs:
           # over the limit can make jq receive SIGPIPE and abort the whole step.
           release_notes=$(jq -r '(.body // "")[0:12000]' <<< "$release")
 
-          previous=$(gh release list --repo "$GITHUB_REPOSITORY" --exclude-drafts --limit 100 \
-            --json tagName --jq "[.[] | select(.tagName != \"$TAG\")][0].tagName // \"\"")
+          # Derived from tag ancestry, not release creation date: a workflow_dispatch
+          # re-announcing an older $TAG must not pick a release published after it.
+          previous=$(git describe --tags --abbrev=0 "$TAG^" 2>/dev/null || true)
           if [ -n "$previous" ]; then
             range="$previous..$TAG"
           else
