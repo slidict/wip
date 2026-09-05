@@ -22,6 +22,7 @@ namespace Wip.Diagnostics;
 /// </remarks>
 public static class Log
 {
+    private const ushort PrimaryLanguageMask = 0x3FF;
     private const ushort EnglishPrimaryLanguageId = 0x09;
     private const ushort JapanesePrimaryLanguageId = 0x11;
     private const string TagAccent = "\x1b[36m";
@@ -61,8 +62,11 @@ public static class Log
     /// <summary>
     /// Gets the translated severity label. English is deliberately the default branch so an
     /// OS language for which wip has no translation never produces a missing or blank label.
+    /// Accept both a complete Windows LANGID and an already-extracted primary language ID so
+    /// this pure formatting path has the same semantics as <see cref="DisplayLanguage"/>.
     /// </summary>
-    private static string SeverityLabel(ushort languageId, bool isError) => languageId switch
+    private static string SeverityLabel(ushort languageId, bool isError) =>
+        (languageId & PrimaryLanguageMask) switch
     {
         JapanesePrimaryLanguageId => isError ? "エラー" : "警告",
         _ => isError ? "error" : "warning",
