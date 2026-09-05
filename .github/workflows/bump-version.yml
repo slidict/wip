@@ -97,4 +97,4 @@ jobs:
             --base "${GITHUB_REF_NAME}" \
             --head "bump-version-v${NEXT}" \
             --title "chore: bump version to v${NEXT}" \
-            --body "Bump wip version to v${NEXT}. Merging this publishes v${NEXT}: the release workflow reads the version from Directory.Build.props, creates the tag, and updates the Scoop manifest after uploading the release archive."
+            --body "Bump wip version to v${NEXT}. Merging this builds v${NEXT} and opens a pull request updating the Scoop manifest with its verified digest. Merging *that* pull request is what actually publishes the release, submits it to WinGet, and posts the announcement to X."
