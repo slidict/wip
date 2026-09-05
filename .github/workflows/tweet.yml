@@ -133,9 +133,13 @@ jobs:
             exit 0
           fi
 
-          text="${lines[0]}"$'\n\n'"wip ${TAG} released 🚀"
-          for ((i = 1; i < ${#lines[@]}; i++)); do
-            text+=$'\n'"• ${lines[$i]}"
+          # "wip vX.Y.Z released" leads every line uniformly, rather than singling one out as
+          # a headline above it: that structure was designed for an AI-rewritten opening hook,
+          # but a raw commit subject in that spot reads as broken far more easily than one
+          # more bullet below the actual announcement does.
+          text="wip ${TAG} released 🚀"
+          for line in "${lines[@]}"; do
+            text+=$'\n'"• ${line}"
           done
           text+=$'\n\n'"$release_url"
 
