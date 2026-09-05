@@ -80,7 +80,9 @@ jobs:
 
           release=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body,url)
           release_url=$(jq -r .url <<< "$release")
-          release_notes=$(jq -r .body <<< "$release" | head -c 12000)
+          # Truncate in jq instead of piping into `head`: with pipefail, a release body
+          # over the limit can make jq receive SIGPIPE and abort the whole step.
+          release_notes=$(jq -r '(.body // "")[0:12000]' <<< "$release")
 
           previous=$(gh release list --repo "$GITHUB_REPOSITORY" --exclude-drafts --limit 100 \
             --json tagName --jq "[.[] | select(.tagName != \"$TAG\")][0].tagName // \"\"")
