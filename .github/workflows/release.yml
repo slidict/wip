@@ -260,8 +260,9 @@ jobs:
   # passing `.github/release-drafter.yml` is normalised to backslashes too, and then joined a
   # second time. Running from Linux is the fix.
   #
-  # Attaches to the draft and proposes the Scoop manifest update, but does not publish -- see
-  # the top-of-file note on why that waits for the Scoop manifest PR to be merged.
+  # Only attaches build artifacts to the draft. Proposing the Scoop manifest update is a
+  # separate job below, so that it can be retried on its own on a later run -- see that job's
+  # comment for why attaching and proposing can't safely stay one step apart in the same job.
   attach:
     name: Attach build to the draft release
     needs: [check, build]
@@ -269,12 +270,10 @@ jobs:
 
     permissions:
       contents: write
-      # The Scoop update is proposed as a pull request.
-      pull-requests: write
 
     steps:
-      # No checkout: the artifacts come from the build job, and the Scoop manifest update
-      # below does its own checkout once it actually needs the working tree.
+      # No checkout: the artifacts come from the build job, and this job only talks to the
+      # GitHub Releases API.
       - name: Download build artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
@@ -315,9 +314,36 @@ jobs:
           gh release upload "$draft_tag" dist/*.zip dist/SHA256SUMS \
             --repo "$GITHUB_REPOSITORY" --clobber
 
+  # Separate from attach so a Scoop PR that failed to get created (or updated) is retried on
+  # every later push, not just the one that happened to build the release: check's own
+  # idempotency treats a version already attached to the draft as done, so build and attach
+  # are both skipped on every push after the first, and a job gated on attach succeeding
+  # would never run again if this step were the one that failed. The digest is read back from
+  # the draft release's own uploaded assets rather than from a local file for the same
+  # reason -- a workflow artifact only exists on the run that produced it, but the draft's
+  # assets persist across runs.
+  propose-scoop:
+    name: Propose Scoop manifest update
+    needs: [check, attach]
+    # attach only runs on the push that builds a version; it's "skipped" (not a failure) on
+    # every push after that, once check's idempotency check finds the version already
+    # attached -- and that is exactly the case this job exists to retry, so it must not be
+    # treated as a reason to skip.
+    if: |
+      always() &&
+      needs.check.result == 'success' &&
+      (needs.attach.result == 'success' || needs.attach.result == 'skipped')
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+      # The Scoop update is proposed as a pull request.
+      pull-requests: write
+
+    steps:
       # A Scoop manifest must contain the archive's digest, not a checksum-file URL. Main may
       # be protected, so the workflow must not try to push the generated commit directly.
-      - name: Check out repository for Scoop manifest update
+      - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.ref_name }}
@@ -332,13 +358,39 @@ jobs:
           set -euo pipefail
           archive="wip-${VERSION}-win-x64.zip"
 
+          drafts=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            | jq -s '[.[][] | select(.draft and .name == "Unreleased") | .tag_name]')
+          draft_count=$(jq 'length' <<< "$drafts")
+
+          if [ "$draft_count" -gt 1 ]; then
+            echo "::error::$draft_count draft releases are named \"Unreleased\" ($(jq -r 'join(", ")' <<< "$drafts")); cannot tell which one holds $TAG's assets."
+            exit 1
+          fi
+
+          draft_tag=$(jq -r '.[0] // ""' <<< "$drafts")
+          if [ -z "$draft_tag" ]; then
+            echo "No Unreleased draft yet; nothing to propose for $TAG." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          assets=$(gh release view "$draft_tag" --json assets --jq '[.assets[].name]')
+          has_archive=$(jq -r --arg n "$archive" 'any(.[]; . == $n)' <<< "$assets")
+          has_checksums=$(jq -r 'any(.[]; . == "SHA256SUMS")' <<< "$assets")
+          if [ "$has_archive" != "true" ] || [ "$has_checksums" != "true" ]; then
+            echo "$draft_tag draft does not have $TAG's archive and checksums attached yet; nothing to propose." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
           # SHA256SUMS is written by PowerShell on a Windows runner, so its filename field can
-          # retain a carriage return when awk reads the CRLF-terminated line on Linux. Read it
-          # from this job's own artifact download rather than the draft release: the release
-          # isn't published yet at this point, so there is nothing more authoritative to fetch.
-          digest=$(awk -v archive="$archive" '{ sub(/\r$/, "", $2); if ($2 == archive) print tolower($1) }' dist/SHA256SUMS)
+          # retain a carriage return when awk reads the CRLF-terminated line on Linux.
+          rm -rf scoop-release
+          mkdir scoop-release
+          gh release download "$draft_tag" --repo "$GITHUB_REPOSITORY" \
+            --pattern SHA256SUMS --dir scoop-release --clobber
+
+          digest=$(awk -v archive="$archive" '{ sub(/\r$/, "", $2); if ($2 == archive) print tolower($1) }' scoop-release/SHA256SUMS)
           if ! [[ "$digest" =~ ^[0-9a-f]{64}$ ]]; then
-            echo "::error::dist/SHA256SUMS has no valid digest for $archive"
+            echo "::error::SHA256SUMS has no valid digest for $archive"
             exit 1
           fi
 
