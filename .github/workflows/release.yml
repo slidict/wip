@@ -97,9 +97,9 @@ jobs:
             fi
 
             echo "needed=false" >> "$GITHUB_OUTPUT"
-            echo "Directory.Build.props has not changed since $previous, which is published with its artifacts; nothing to build." >> "$GITHUB_STEP_SUMMARY"
+            echo "$TAG matches the latest published release, $previous, which is complete with its artifacts; nothing to build." >> "$GITHUB_STEP_SUMMARY"
           else
-            draft_tag=$(gh release list --json tagName,isDraft,name \
+            draft_tag=$(gh release list --limit 100 --json tagName,isDraft,name \
               --jq '[.[] | select(.isDraft and .name == "Unreleased")] | .[0].tagName // ""')
 
             built=false
@@ -438,8 +438,24 @@ jobs:
             exit 1
           fi
 
-          published=$(gh release list --exclude-drafts --json tagName \
-            | jq -r --arg t "$TAG" 'any(.[]; .tagName == $t)')
+          # Looked up by tag directly rather than via `gh release list`, which defaults to the
+          # 30 most recent releases: paging could miss $TAG once the repository accumulates
+          # more releases than that, wrongly reporting an old, already-published version as
+          # not published and sending it back through publish/WinGet/tweet on a stale tag.
+          set +e
+          view=$(gh release view "$TAG" --json isDraft 2>&1)
+          view_status=$?
+          set -e
+
+          if [ "$view_status" -eq 0 ]; then
+            is_draft=$(jq -r '.isDraft' <<< "$view")
+            published=$([ "$is_draft" == "false" ] && echo true || echo false)
+          elif grep -qi "release not found" <<< "$view"; then
+            published=false
+          else
+            echo "::error::Could not look up release $TAG: $view"
+            exit 1
+          fi
 
           if [ "$published" == "true" ]; then
             echo "needed=false" >> "$GITHUB_OUTPUT"
@@ -480,7 +496,10 @@ jobs:
   winget:
     name: Submit to WinGet
     needs: [check-finalize, publish]
-    if: needs.check-finalize.outputs.needed == 'true'
+    # A custom `if:` replaces the default implicit success() check, so it has to ask for it
+    # explicitly too -- otherwise a failed publish wouldn't stop this from submitting a release
+    # that was never actually made public.
+    if: needs.check-finalize.outputs.needed == 'true' && needs.publish.result == 'success'
     uses: ./.github/workflows/winget.yml
     with:
       tag: ${{ needs.check-finalize.outputs.tag }}
@@ -494,7 +513,8 @@ jobs:
   tweet:
     name: Tweet the release
     needs: [check-finalize, publish]
-    if: needs.check-finalize.outputs.needed == 'true'
+    # See the same note on the winget job above: a custom `if:` needs its own success check.
+    if: needs.check-finalize.outputs.needed == 'true' && needs.publish.result == 'success'
     permissions:
       contents: read
     uses: ./.github/workflows/tweet.yml
