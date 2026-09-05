@@ -5,8 +5,8 @@ namespace Wip.Platform;
 /// <summary>Whether Windows' own UI language is English.</summary>
 /// <remarks>
 /// wip builds with <c>InvariantGlobalization</c> (see <c>Directory.Build.props</c>) —
-/// deliberately, since that is exactly what keeps wip's own strings simple to hold
-/// culture-invariant (see <see cref="Diagnostics.Log"/>) — but the same setting also means
+/// deliberately, since that keeps most of wip's own strings culture-invariant — but the
+/// same setting also means
 /// <c>CultureInfo.CurrentUICulture</c> never reflects the real OS language: every culture
 /// collapses to the invariant one under it. Reading the language straight from Win32 instead
 /// (<c>GetUserDefaultUILanguage</c>, the same LANGID <c>FormatMessage</c> itself consults to
@@ -22,9 +22,17 @@ public static partial class DisplayLanguage
     private const ushort PrimaryLanguageMask = 0x3FF;
     private const ushort EnglishPrimaryLanguageId = 0x09;
 
-    public static bool IsEnglish() => IsEnglish(CurrentUiLanguageId());
+    public static bool IsEnglish() => IsEnglish(CurrentPrimaryLanguageId());
 
     internal static bool IsEnglish(ushort languageId) => (languageId & PrimaryLanguageMask) == EnglishPrimaryLanguageId;
+
+    /// <summary>
+    /// Returns the primary language identifier for the current Windows UI language. On other
+    /// platforms, where wip does not query a platform-specific display language, English is
+    /// used as the stable default.
+    /// </summary>
+    internal static ushort CurrentPrimaryLanguageId() =>
+        (ushort)(CurrentUiLanguageId() & PrimaryLanguageMask);
 
     private static ushort CurrentUiLanguageId() =>
         OperatingSystem.IsWindows() ? GetUserDefaultUILanguage() : EnglishPrimaryLanguageId;
