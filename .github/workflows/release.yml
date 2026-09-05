@@ -362,11 +362,8 @@ jobs:
   tweet:
     name: Tweet the release
     needs: [check, publish]
-    # Reusable workflows cannot elevate the caller's token. Grant model access only
-    # to this handoff rather than to every job in the release workflow.
     permissions:
       contents: read
-      models: read
     uses: ./.github/workflows/tweet.yml
     with:
       tag: ${{ needs.check.outputs.tag }}
