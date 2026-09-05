@@ -103,8 +103,12 @@ jobs:
             # "Unreleased" (the same race the attach job below guards against), silently
             # picking one would make this check nondeterministic -- it could look at the
             # wrong draft's assets and skip a rebuild that's actually still needed.
-            drafts=$(gh release list --limit 100 --json tagName,isDraft,name \
-              --jq '[.[] | select(.isDraft and .name == "Unreleased") | .tagName]')
+            # --paginate rather than a fixed --limit: every page is fetched, so a draft
+            # doesn't go unseen once the repository accumulates enough releases to push it
+            # past a fixed page size. --paginate emits one array per page and cannot be
+            # combined with --jq, so the pages are slurped into one array here and filtered.
+            drafts=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+              | jq -s '[.[][] | select(.draft and .name == "Unreleased") | .tag_name]')
             draft_count=$(jq 'length' <<< "$drafts")
 
             if [ "$draft_count" -gt 1 ]; then
@@ -289,10 +293,12 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          # This job intentionally has no checkout, so gh cannot infer the repository from
-          # a local .git directory. Address it explicitly for every `gh release` command.
-          drafts=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --json tagName,name,isDraft \
-            --jq '[.[] | select(.isDraft and .name == "Unreleased") | .tagName]')
+          # --paginate rather than a fixed --limit: every page is fetched, so a draft doesn't
+          # go unseen once the repository accumulates enough releases to push it past a fixed
+          # page size. --paginate emits one array per page and cannot be combined with --jq,
+          # so the pages are slurped into one array here and filtered.
+          drafts=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            | jq -s '[.[][] | select(.draft and .name == "Unreleased") | .tag_name]')
           count=$(echo "$drafts" | jq 'length')
 
           if [ "$count" -eq 0 ]; then
