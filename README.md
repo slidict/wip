@@ -94,7 +94,10 @@ flowchart TD
 ```
 
 - **`mode: container`** — no `compose.yml` involved; wip drives `wslc` directly for one
-  container plus its `dependencies:`.
+  container plus its `dependencies:`. It is the WSLC-native, low-level mode: for single-container
+  projects it keeps the setup simple, makes WSLC-specific features easy to use, and exposes new
+  WSLC capabilities without waiting for Compose support. Because it bypasses Compose and maps
+  clearly to `wslc container`, problems are also easier to trace and debug.
 - **`mode: compose-native`** — wip parses `compose.yml` itself and drives `wslc` the same way
   `mode: container` does, one service at a time. See
   [Compose Native Mode](https://github.com/slidict/wip/wiki/Compose-Native-Mode).
