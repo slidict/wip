@@ -1,0 +1,5 @@
+services:
+  app:
+    image: ruby:4
+    environment:
+      FROM_HOST:

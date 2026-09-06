@@ -1,0 +1,7 @@
+services:
+  app:
+    image: postgres:16
+    volumes:
+      - "pgdata:/var/lib/postgresql/data"
+      - "./conf:/etc/app:ro"
+      - "/srv/shared:/mnt/shared"

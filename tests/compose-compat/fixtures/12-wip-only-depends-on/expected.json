@@ -1,0 +1,82 @@
+{
+  "fixture": "12-wip-only-depends-on",
+  "wip": {
+    "status": "ok",
+    "model": {
+      "project": "dependson",
+      "network": "dependson",
+      "port_binding_default": "wslc-session-default",
+      "start_order": [
+        "db",
+        "web"
+      ],
+      "services_excluded_by_profiles": [],
+      "services": {
+        "db": {
+          "container_name": "db",
+          "image": "postgres:16",
+          "command_argv": [],
+          "environment": [],
+          "working_dir": null,
+          "mounts": [],
+          "ports": [],
+          "network_aliases": [
+            "db"
+          ],
+          "build": null,
+          "healthcheck": null,
+          "restart": "no"
+        },
+        "web": {
+          "container_name": "web",
+          "image": "ruby:4",
+          "command_argv": [],
+          "environment": [],
+          "working_dir": null,
+          "mounts": [],
+          "ports": [],
+          "network_aliases": [
+            "web"
+          ],
+          "build": null,
+          "healthcheck": null,
+          "restart": "no"
+        }
+      }
+    }
+  },
+  "upstream": {
+    "status": "error",
+    "message": "the 'depends_on' property is not supported"
+  },
+  "wip_invocation": {
+    "network_create": [
+      "wslc.exe",
+      "network",
+      "create",
+      "dependson"
+    ],
+    "services": {
+      "db": [
+        "wslc.exe",
+        "run",
+        "--name",
+        "db",
+        "--network",
+        "dependson",
+        "-d",
+        "postgres:16"
+      ],
+      "web": [
+        "wslc.exe",
+        "run",
+        "--name",
+        "web",
+        "--network",
+        "dependson",
+        "-d",
+        "ruby:4"
+      ]
+    }
+  }
+}

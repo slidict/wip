@@ -1,0 +1,43 @@
+{
+  "fixture": "04-environment-passthrough",
+  "wip": {
+    "status": "error",
+    "message": "<FIXTURE>/compose.yml: services.app.environment.FROM_HOST must have a value (host environment pass-through is not supported)"
+  },
+  "upstream": {
+    "status": "ok",
+    "model": {
+      "project": "compose",
+      "network": "compose_default",
+      "port_binding_default": "127.0.0.1",
+      "start_order": [
+        "app"
+      ],
+      "services": {
+        "app": {
+          "container_name": "app",
+          "image": "ruby:4",
+          "command_argv": [],
+          "environment": [
+            "FROM_HOST="
+          ],
+          "working_dir": null,
+          "mounts": [],
+          "ports": [],
+          "network_aliases": [
+            "app"
+          ]
+        }
+      }
+    }
+  },
+  "wip_invocation": {
+    "network_create": [
+      "wslc.exe",
+      "network",
+      "create",
+      "envpass"
+    ],
+    "error": "<FIXTURE>/compose.yml: services.app.environment.FROM_HOST must have a value (host environment pass-through is not supported)"
+  }
+}

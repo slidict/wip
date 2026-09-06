@@ -1,0 +1,146 @@
+{
+  "fixture": "09-multi-service-network",
+  "wip": {
+    "status": "ok",
+    "model": {
+      "project": "09-multi-service-network",
+      "network": "09-multi-service-network",
+      "port_binding_default": "wslc-session-default",
+      "start_order": [
+        "web",
+        "db"
+      ],
+      "services_excluded_by_profiles": [],
+      "services": {
+        "web": {
+          "container_name": "web",
+          "image": "ruby:4",
+          "command_argv": [
+            "bin/rails",
+            "server"
+          ],
+          "environment": [],
+          "working_dir": null,
+          "mounts": [],
+          "ports": [
+            {
+              "host_ip": null,
+              "host_port": "3000",
+              "container_port": "3000",
+              "protocol": "tcp"
+            }
+          ],
+          "network_aliases": [
+            "web"
+          ],
+          "build": null,
+          "healthcheck": null,
+          "restart": "no"
+        },
+        "db": {
+          "container_name": "db",
+          "image": "postgres:16",
+          "command_argv": [],
+          "environment": [
+            "POSTGRES_PASSWORD=secret"
+          ],
+          "working_dir": null,
+          "mounts": [],
+          "ports": [],
+          "network_aliases": [
+            "db"
+          ],
+          "build": null,
+          "healthcheck": null,
+          "restart": "no"
+        }
+      }
+    }
+  },
+  "upstream": {
+    "status": "ok",
+    "model": {
+      "project": "compose",
+      "network": "compose_default",
+      "port_binding_default": "127.0.0.1",
+      "start_order": [
+        "web",
+        "db"
+      ],
+      "services": {
+        "web": {
+          "container_name": "web",
+          "image": "ruby:4",
+          "command_argv": [
+            "bin/rails",
+            "server"
+          ],
+          "environment": [],
+          "working_dir": null,
+          "mounts": [],
+          "ports": [
+            {
+              "host_ip": null,
+              "host_port": "3000",
+              "container_port": "3000",
+              "protocol": "tcp"
+            }
+          ],
+          "network_aliases": [
+            "web"
+          ]
+        },
+        "db": {
+          "container_name": "db",
+          "image": "postgres:16",
+          "command_argv": [],
+          "environment": [
+            "POSTGRES_PASSWORD=secret"
+          ],
+          "working_dir": null,
+          "mounts": [],
+          "ports": [],
+          "network_aliases": [
+            "db"
+          ]
+        }
+      }
+    }
+  },
+  "wip_invocation": {
+    "network_create": [
+      "wslc.exe",
+      "network",
+      "create",
+      "09-multi-service-network"
+    ],
+    "services": {
+      "web": [
+        "wslc.exe",
+        "run",
+        "--name",
+        "web",
+        "--network",
+        "09-multi-service-network",
+        "-d",
+        "-p",
+        "3000:3000",
+        "ruby:4",
+        "bin/rails",
+        "server"
+      ],
+      "db": [
+        "wslc.exe",
+        "run",
+        "--name",
+        "db",
+        "--network",
+        "09-multi-service-network",
+        "-d",
+        "-e",
+        "POSTGRES_PASSWORD=secret",
+        "postgres:16"
+      ]
+    }
+  }
+}

@@ -1,0 +1,11 @@
+services:
+  app:
+    image: ruby:4
+    command: ["ruby", "-v"]
+    environment:
+      RAILS_ENV: development
+    working_dir: /app
+    volumes:
+      - ".:/app"
+    ports:
+      - "3000:3000"

@@ -40,6 +40,14 @@ If a change makes one of those expectations fail, that is a behaviour change: ei
 bug, or it is deliberate and the expectation should be updated in the same commit with a note
 saying why. See [tests/golden/README.md](tests/golden/README.md).
 
+A second corpus, [tests/compose-compat](tests/compose-compat/README.md), reads one set of
+Compose fixtures twice — as `mode: compose-native` resolves them, and as Microsoft's
+`wslc compose` would — and records every difference between the two, so that
+`tests/compose-compat/differences.md` always says what still stands between wip and the
+official implementation. Matching upstream is not the pass condition there; leaving a
+difference *unrecorded* is. If you touch anything under `src/Wip.Core/Compose`, read that
+file first.
+
 ## Commit messages
 
 This project uses [Conventional Commits](https://www.conventionalcommits.org/).

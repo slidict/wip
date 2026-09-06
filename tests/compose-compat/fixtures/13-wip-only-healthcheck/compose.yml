@@ -1,0 +1,9 @@
+services:
+  db:
+    image: postgres:16
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 5
+      start_period: 1s

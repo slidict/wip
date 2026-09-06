@@ -1,0 +1,68 @@
+{
+  "fixture": "11-wip-only-build",
+  "wip": {
+    "status": "ok",
+    "model": {
+      "project": "buildonly",
+      "network": "buildonly",
+      "port_binding_default": "wslc-session-default",
+      "start_order": [
+        "app"
+      ],
+      "services_excluded_by_profiles": [],
+      "services": {
+        "app": {
+          "container_name": "app",
+          "image": "wip-compose-app:latest",
+          "command_argv": [
+            "bin/rails",
+            "server"
+          ],
+          "environment": [],
+          "working_dir": null,
+          "mounts": [],
+          "ports": [],
+          "network_aliases": [
+            "app"
+          ],
+          "build": {
+            "context": "<FIXTURE>",
+            "dockerfile": "Dockerfile.dev",
+            "args": {
+              "RUBY_VERSION": "4.0"
+            },
+            "tag": "wip-compose-app:latest"
+          },
+          "healthcheck": null,
+          "restart": "no"
+        }
+      }
+    }
+  },
+  "upstream": {
+    "status": "error",
+    "message": "the 'build' property is not supported"
+  },
+  "wip_invocation": {
+    "network_create": [
+      "wslc.exe",
+      "network",
+      "create",
+      "buildonly"
+    ],
+    "services": {
+      "app": [
+        "wslc.exe",
+        "run",
+        "--name",
+        "app",
+        "--network",
+        "buildonly",
+        "-d",
+        "wip-compose-app:latest",
+        "bin/rails",
+        "server"
+      ]
+    }
+  }
+}

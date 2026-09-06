@@ -1,0 +1,214 @@
+{
+  "$comment": [
+    "Per-fixture, per-feature record of where wip's mode: compose-native and Microsoft's",
+    "wslc compose stand relative to each other. Statuses are checked by",
+    "Wip.Tests.ComposeUpstreamCompatTests; see tests/compose-compat/README.md for what each",
+    "one asserts and how to update this file when upstream moves."
+  ],
+  "fixtures": {
+    "01-basic-service": {
+      "description": "The whole upstream-supported surface in one service: image, exec-form command, environment, working_dir, one bind mount, one published port.",
+      "features": {
+        "image": {
+          "status": "compatible",
+          "note": "Both take image: verbatim as the container image reference."
+        },
+        "command": {
+          "status": "compatible",
+          "note": "Exec form (a YAML list) reaches the container as the same argv on both sides. wip round-trips it through Shellwords join/split; upstream passes the list through."
+        },
+        "environment": {
+          "status": "compatible",
+          "note": "A mapping becomes the same ordered KEY=VALUE list on both sides."
+        },
+        "working_dir": {
+          "status": "compatible",
+          "note": "An absolute path is taken as written on both sides (wip as `-w`, upstream as SetWorkingDirectory)."
+        },
+        "ports": {
+          "status": "compatible",
+          "note": "Plain host:container resolves to the same tcp mapping on both sides."
+        },
+        "container_name": {
+          "status": "compatible",
+          "note": "With no container_name:, both name the container after the service."
+        },
+        "service_name": {
+          "status": "compatible",
+          "note": "Both key services off the services: mapping in declaration order."
+        },
+        "service_alias": {
+          "status": "compatible",
+          "note": "Both resolve the service name on the project network. wip relies on wslc registering the container's --name; upstream calls AddPrimaryNetworkAlias explicitly."
+        },
+        "volumes": {
+          "status": "known-difference",
+          "note": "A relative bind source resolves against a different directory: upstream against compose.yml's own directory (Compose Specification behaviour), wip against wip's process directory, because wip forwards the spec string to `wslc run -v` and GetFullPathNameW resolves it there. Upstream is right; this is a wip bug to fix before migration, not something to record and keep."
+        },
+        "network": {
+          "status": "known-difference",
+          "note": "Both derive a per-project network, differently and both incorrectly. Compose names it <project>_default with <project> from the project directory: wip uses the bare project name with no _default suffix, upstream appends _default but derives <project> from the compose file's stem, which its own source marks 'TODO: Implement this properly'. Adopt neither spelling; converge on the Specification's."
+        },
+        "port_binding_default": {
+          "status": "known-difference",
+          "note": "Where an unqualified published port lands. Upstream hardcodes 127.0.0.1 in CreateComposeContainers; wip forwards to `wslc run -p`, which uses the session's configured binding address. Not a compose.yml-level difference — it decides whether a published port is reachable off-box, so it is tracked separately from `ports`."
+        }
+      }
+    },
+    "02-command-shell-form": {
+      "description": "Shell-form (scalar) command with a quoted argument — the one place the two argv models visibly disagree.",
+      "features": {
+        "command": {
+          "status": "known-difference",
+          "note": "wip applies POSIX word splitting, so `-b \"0.0.0.0\"` reaches the container as 0.0.0.0. Upstream splits the scalar on single spaces and keeps the quotes as literal characters, giving \"0.0.0.0\"; its source marks this 'TODO: Implement proper parsing'. wip matches the Compose Specification here — do not follow upstream while the TODO stands."
+        }
+      }
+    },
+    "03-environment-list-form": {
+      "description": "environment: written as a KEY=VALUE list rather than a mapping.",
+      "features": {
+        "environment": {
+          "status": "compatible",
+          "note": "Both accept the list form and produce the same entries in the same order."
+        }
+      }
+    },
+    "04-environment-passthrough": {
+      "description": "A mapping entry with no value — the Compose Specification's 'take this variable from the host'.",
+      "features": {
+        "environment": {
+          "status": "known-difference",
+          "note": "Neither implements the Specification. Upstream turns `FROM_HOST:` into FROM_HOST= — an empty value, silently. wip refuses the file and says host pass-through is unsupported. Failing loudly is the better of the two, so keep wip's behaviour until one of them implements pass-through properly."
+        }
+      }
+    },
+    "05-container-name": {
+      "description": "container_name:, which the Compose Specification defines and wip does not accept.",
+      "features": {
+        "container_name": {
+          "status": "known-difference",
+          "note": "Upstream honours container_name: (Specification behaviour); wip rejects the key outright. This is a real wip gap and the direction of travel is towards upstream — supporting the key is a prerequisite for migrating a project that uses it."
+        },
+        "service_alias": {
+          "status": "known-difference",
+          "note": "Upstream aliases the *container* name, so container_name: silently renames the network alias too. The Specification aliases the service name and leaves it alone when container_name: is set, which is what makes `db:5432` keep working. Do not adopt upstream's coupling; fix wip's container_name gap without it."
+        }
+      }
+    },
+    "06-upstream-name-key": {
+      "description": "A service-level `name:` key — an upstream extension with no Compose Specification counterpart.",
+      "features": {
+        "container_name": {
+          "status": "known-difference",
+          "note": "Upstream accepts `name:` as a synonym for container_name:, and prefers it when both are set. The Compose Specification has no service-level `name:` (it is the top-level project name), so wip's rejection is correct. Track it so a compose.yml written against the POC is recognised, but do not implement it."
+        }
+      }
+    },
+    "07-volume-forms": {
+      "description": "The three short-syntax volume shapes: a named volume, a relative bind with :ro, and a driveless absolute bind.",
+      "features": {
+        "volumes": {
+          "status": "known-difference",
+          "note": "Named volume and read-only flag agree. Bind sources do not: upstream anchors a relative source at compose.yml's directory and a driveless /srv path at the compose file's drive, while wip forwards the raw token for wslc to resolve against wip's own directory and drive. Same fix as 01-basic-service — resolve bind sources against compose.yml before forwarding."
+        }
+      }
+    },
+    "08-ports-extended": {
+      "description": "Port forms the Compose Specification defines beyond plain host:container — a bind address, /udp, a range, and a container-only port.",
+      "features": {
+        "ports": {
+          "status": "upstream-unsupported",
+          "note": "`wslc compose` rejects the whole file on the first of these: its parser takes exactly one colon, digits only, and no protocol suffix. wip forwards to `wslc run -p`, whose own parser accepts all four. wip is ahead of upstream and matches the Specification — do not narrow it. The reverse gap is 0:8080, which upstream's compose parser accepts as ephemeral and `wslc run -p` rejects."
+        }
+      }
+    },
+    "09-multi-service-network": {
+      "description": "Two services with no explicit project name — service-to-service naming and the default network.",
+      "features": {
+        "service_name": {
+          "status": "compatible",
+          "note": "Both enumerate the services in declaration order."
+        },
+        "service_alias": {
+          "status": "compatible",
+          "note": "Each service resolves under its own name, so `postgres://db/...` works the same on both sides."
+        },
+        "image": {
+          "status": "compatible",
+          "note": "Both resolve each service's image independently."
+        },
+        "ports": {
+          "status": "compatible",
+          "note": "Only the service that declares ports: publishes any."
+        },
+        "network": {
+          "status": "known-difference",
+          "note": "With no compose.project, wip names the network after the wip.yml directory and upstream after the compose file's stem — so the same project gets a different network name on each. Same underlying issue as 01-basic-service, shown here without a project: override to make the defaults visible."
+        }
+      }
+    },
+    "10-working-dir-relative": {
+      "description": "A relative working_dir:, which upstream validates and wip does not.",
+      "features": {
+        "working_dir": {
+          "status": "known-difference",
+          "note": "Upstream refuses a working_dir: that is not an absolute Linux path — a deliberate validation, not a gap. wip passes it through to `wslc run -w`. Upstream's check is the better behaviour and is safe for wip to adopt."
+        }
+      }
+    },
+    "11-wip-only-build": {
+      "description": "build: with context, dockerfile and args.",
+      "features": {
+        "build": {
+          "status": "wip-only",
+          "note": "Upstream rejects build: as an unsupported property; it can only run pre-built images. wip stages the context and builds a wip-compose-<service>:latest tag. Migration cannot start for a project with build: until upstream implements it."
+        }
+      }
+    },
+    "12-wip-only-depends-on": {
+      "description": "depends_on: — start ordering between services.",
+      "features": {
+        "depends_on": {
+          "status": "wip-only",
+          "note": "Upstream rejects depends_on: and starts services in file order. wip topologically sorts them, so db comes up before web here. Tracked through the resolved start order rather than the raw key, because the order is the observable part."
+        }
+      }
+    },
+    "13-wip-only-healthcheck": {
+      "description": "healthcheck: with the full set of timing fields.",
+      "features": {
+        "healthcheck": {
+          "status": "wip-only",
+          "note": "Upstream rejects healthcheck:. wip normalizes it and `wip up` blocks on it before starting dependents."
+        }
+      }
+    },
+    "14-wip-only-restart": {
+      "description": "restart: policy.",
+      "features": {
+        "restart": {
+          "status": "wip-only",
+          "note": "Upstream rejects restart:. wip reads the policy and supervises the container against it."
+        }
+      }
+    },
+    "15-wip-only-profiles": {
+      "description": "profiles: gating a service out of the default set.",
+      "features": {
+        "profiles": {
+          "status": "wip-only",
+          "note": "Upstream rejects profiles:. wip excludes a profile-gated service from the ones it starts — seeder here — since it has no --profile flag to activate one."
+        }
+      }
+    },
+    "16-wip-only-interpolation": {
+      "description": "${VAR} interpolation from a project .env file.",
+      "features": {
+        "interpolation": {
+          "status": "wip-only",
+          "note": "Upstream does no interpolation at all: ${WIP_COMPAT_WORKDIR} reaches its working_dir: validation literally and the file is refused. wip substitutes from .env and the shell environment before parsing, so image, working_dir and environment all resolve. Note that wip also merges .env into the container's own environment, which the Specification does not do — worth revisiting separately."
+        }
+      }
+    }
+  }
+}

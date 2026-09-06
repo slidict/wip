@@ -1,0 +1,41 @@
+{
+  "fixture": "05-container-name",
+  "wip": {
+    "status": "error",
+    "message": "<FIXTURE>/compose.yml: services.app has unsupported key(s): container_name"
+  },
+  "upstream": {
+    "status": "ok",
+    "model": {
+      "project": "compose",
+      "network": "compose_default",
+      "port_binding_default": "127.0.0.1",
+      "start_order": [
+        "app"
+      ],
+      "services": {
+        "app": {
+          "container_name": "custom-app",
+          "image": "ruby:4",
+          "command_argv": [],
+          "environment": [],
+          "working_dir": null,
+          "mounts": [],
+          "ports": [],
+          "network_aliases": [
+            "custom-app"
+          ]
+        }
+      }
+    }
+  },
+  "wip_invocation": {
+    "network_create": [
+      "wslc.exe",
+      "network",
+      "create",
+      "cname"
+    ],
+    "error": "<FIXTURE>/compose.yml: services.app has unsupported key(s): container_name"
+  }
+}

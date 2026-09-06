@@ -1,0 +1,56 @@
+{
+  "fixture": "14-wip-only-restart",
+  "wip": {
+    "status": "ok",
+    "model": {
+      "project": "restart",
+      "network": "restart",
+      "port_binding_default": "wslc-session-default",
+      "start_order": [
+        "app"
+      ],
+      "services_excluded_by_profiles": [],
+      "services": {
+        "app": {
+          "container_name": "app",
+          "image": "ruby:4",
+          "command_argv": [],
+          "environment": [],
+          "working_dir": null,
+          "mounts": [],
+          "ports": [],
+          "network_aliases": [
+            "app"
+          ],
+          "build": null,
+          "healthcheck": null,
+          "restart": "unless-stopped"
+        }
+      }
+    }
+  },
+  "upstream": {
+    "status": "error",
+    "message": "the 'restart' property is not supported"
+  },
+  "wip_invocation": {
+    "network_create": [
+      "wslc.exe",
+      "network",
+      "create",
+      "restart"
+    ],
+    "services": {
+      "app": [
+        "wslc.exe",
+        "run",
+        "--name",
+        "app",
+        "--network",
+        "restart",
+        "-d",
+        "ruby:4"
+      ]
+    }
+  }
+}

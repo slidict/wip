@@ -1,0 +1,4 @@
+services:
+  app:
+    image: ruby:4
+    command: bundle exec rails server -b "0.0.0.0"

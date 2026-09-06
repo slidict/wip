@@ -9,10 +9,18 @@ namespace Wip.Compose;
 /// directly, in place of an external compose-for-wslc binary.
 /// </summary>
 /// <remarks>
+/// <para>
 /// This exists only because wslc has no native Compose support yet (tracked upstream in
 /// microsoft/WSL#40948). Delete this file — and its hooks in Config, the CLI, Doctor, and
 /// Initializer — once wslc ships that support, or a compose-for-wslc tool reliably supports
 /// <c>run</c>.
+/// </para>
+/// <para>
+/// tests/compose-compat tracks how far off that is: it reads one set of fixtures both the way
+/// this class does and the way microsoft/WSL's <c>feature/compose</c> branch would, and records
+/// every difference between the two. Read tests/compose-compat/differences.md before changing
+/// anything here.
+/// </para>
 /// </remarks>
 public sealed class ComposeFile
 {

@@ -1,0 +1,6 @@
+services:
+  app:
+    image: ruby:4
+    environment:
+      - RAILS_ENV=development
+      - DATABASE_URL=postgres://db/app

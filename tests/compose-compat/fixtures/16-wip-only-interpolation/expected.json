@@ -1,0 +1,68 @@
+{
+  "fixture": "16-wip-only-interpolation",
+  "wip": {
+    "status": "ok",
+    "model": {
+      "project": "interpolation",
+      "network": "interpolation",
+      "port_binding_default": "wslc-session-default",
+      "start_order": [
+        "app"
+      ],
+      "services_excluded_by_profiles": [],
+      "services": {
+        "app": {
+          "container_name": "app",
+          "image": "ruby:4.0",
+          "command_argv": [],
+          "environment": [
+            "WIP_COMPAT_RUBY_VERSION=4.0",
+            "WIP_COMPAT_WORKDIR=/app",
+            "RAILS_ENV=development"
+          ],
+          "working_dir": "/app",
+          "mounts": [],
+          "ports": [],
+          "network_aliases": [
+            "app"
+          ],
+          "build": null,
+          "healthcheck": null,
+          "restart": "no"
+        }
+      }
+    }
+  },
+  "upstream": {
+    "status": "error",
+    "message": "the working directory for service 'app' must be an absolute Linux path"
+  },
+  "wip_invocation": {
+    "network_create": [
+      "wslc.exe",
+      "network",
+      "create",
+      "interpolation"
+    ],
+    "services": {
+      "app": [
+        "wslc.exe",
+        "run",
+        "--name",
+        "app",
+        "--network",
+        "interpolation",
+        "-d",
+        "-w",
+        "/app",
+        "-e",
+        "WIP_COMPAT_RUBY_VERSION=4.0",
+        "-e",
+        "WIP_COMPAT_WORKDIR=/app",
+        "-e",
+        "RAILS_ENV=development",
+        "ruby:4.0"
+      ]
+    }
+  }
+}

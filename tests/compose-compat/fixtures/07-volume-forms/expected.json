@@ -1,0 +1,127 @@
+{
+  "fixture": "07-volume-forms",
+  "wip": {
+    "status": "ok",
+    "model": {
+      "project": "volforms",
+      "network": "volforms",
+      "port_binding_default": "wslc-session-default",
+      "start_order": [
+        "app"
+      ],
+      "services_excluded_by_profiles": [],
+      "services": {
+        "app": {
+          "container_name": "app",
+          "image": "postgres:16",
+          "command_argv": [],
+          "environment": [],
+          "working_dir": null,
+          "mounts": [
+            {
+              "type": "volume",
+              "source": "pgdata",
+              "source_base": null,
+              "target": "/var/lib/postgresql/data",
+              "read_only": false
+            },
+            {
+              "type": "bind",
+              "source": "./conf",
+              "source_base": "process-cwd",
+              "target": "/etc/app",
+              "read_only": true
+            },
+            {
+              "type": "bind",
+              "source": "/srv/shared",
+              "source_base": "process-cwd-drive",
+              "target": "/mnt/shared",
+              "read_only": false
+            }
+          ],
+          "ports": [],
+          "network_aliases": [
+            "app"
+          ],
+          "build": null,
+          "healthcheck": null,
+          "restart": "no"
+        }
+      }
+    }
+  },
+  "upstream": {
+    "status": "ok",
+    "model": {
+      "project": "compose",
+      "network": "compose_default",
+      "port_binding_default": "127.0.0.1",
+      "start_order": [
+        "app"
+      ],
+      "services": {
+        "app": {
+          "container_name": "app",
+          "image": "postgres:16",
+          "command_argv": [],
+          "environment": [],
+          "working_dir": null,
+          "mounts": [
+            {
+              "type": "volume",
+              "source": "pgdata",
+              "source_base": null,
+              "target": "/var/lib/postgresql/data",
+              "read_only": false
+            },
+            {
+              "type": "bind",
+              "source": "<FIXTURE>/conf",
+              "source_base": "compose-file-dir",
+              "target": "/etc/app",
+              "read_only": true
+            },
+            {
+              "type": "bind",
+              "source": "<DRIVE>/srv/shared",
+              "source_base": "compose-file-drive",
+              "target": "/mnt/shared",
+              "read_only": false
+            }
+          ],
+          "ports": [],
+          "network_aliases": [
+            "app"
+          ]
+        }
+      }
+    }
+  },
+  "wip_invocation": {
+    "network_create": [
+      "wslc.exe",
+      "network",
+      "create",
+      "volforms"
+    ],
+    "services": {
+      "app": [
+        "wslc.exe",
+        "run",
+        "--name",
+        "app",
+        "--network",
+        "volforms",
+        "-d",
+        "-v",
+        "pgdata:/var/lib/postgresql/data",
+        "-v",
+        "./conf:/etc/app:ro",
+        "-v",
+        "/srv/shared:/mnt/shared",
+        "postgres:16"
+      ]
+    }
+  }
+}

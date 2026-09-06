@@ -1,0 +1,8 @@
+services:
+  app:
+    image: ruby:4
+  seeder:
+    image: alpine:3.20
+    command: ["sh", "-c", "echo seeding"]
+    profiles:
+      - tools

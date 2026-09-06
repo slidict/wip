@@ -1,0 +1,97 @@
+{
+  "fixture": "02-command-shell-form",
+  "wip": {
+    "status": "ok",
+    "model": {
+      "project": "cmdshell",
+      "network": "cmdshell",
+      "port_binding_default": "wslc-session-default",
+      "start_order": [
+        "app"
+      ],
+      "services_excluded_by_profiles": [],
+      "services": {
+        "app": {
+          "container_name": "app",
+          "image": "ruby:4",
+          "command_argv": [
+            "bundle",
+            "exec",
+            "rails",
+            "server",
+            "-b",
+            "0.0.0.0"
+          ],
+          "environment": [],
+          "working_dir": null,
+          "mounts": [],
+          "ports": [],
+          "network_aliases": [
+            "app"
+          ],
+          "build": null,
+          "healthcheck": null,
+          "restart": "no"
+        }
+      }
+    }
+  },
+  "upstream": {
+    "status": "ok",
+    "model": {
+      "project": "compose",
+      "network": "compose_default",
+      "port_binding_default": "127.0.0.1",
+      "start_order": [
+        "app"
+      ],
+      "services": {
+        "app": {
+          "container_name": "app",
+          "image": "ruby:4",
+          "command_argv": [
+            "bundle",
+            "exec",
+            "rails",
+            "server",
+            "-b",
+            "\"0.0.0.0\""
+          ],
+          "environment": [],
+          "working_dir": null,
+          "mounts": [],
+          "ports": [],
+          "network_aliases": [
+            "app"
+          ]
+        }
+      }
+    }
+  },
+  "wip_invocation": {
+    "network_create": [
+      "wslc.exe",
+      "network",
+      "create",
+      "cmdshell"
+    ],
+    "services": {
+      "app": [
+        "wslc.exe",
+        "run",
+        "--name",
+        "app",
+        "--network",
+        "cmdshell",
+        "-d",
+        "ruby:4",
+        "bundle",
+        "exec",
+        "rails",
+        "server",
+        "-b",
+        "0.0.0.0"
+      ]
+    }
+  }
+}

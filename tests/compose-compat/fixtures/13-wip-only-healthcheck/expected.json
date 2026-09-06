@@ -1,0 +1,66 @@
+{
+  "fixture": "13-wip-only-healthcheck",
+  "wip": {
+    "status": "ok",
+    "model": {
+      "project": "healthcheck",
+      "network": "healthcheck",
+      "port_binding_default": "wslc-session-default",
+      "start_order": [
+        "db"
+      ],
+      "services_excluded_by_profiles": [],
+      "services": {
+        "db": {
+          "container_name": "db",
+          "image": "postgres:16",
+          "command_argv": [],
+          "environment": [],
+          "working_dir": null,
+          "mounts": [],
+          "ports": [],
+          "network_aliases": [
+            "db"
+          ],
+          "build": null,
+          "healthcheck": {
+            "test": [
+              "pg_isready",
+              "-U",
+              "postgres"
+            ],
+            "interval": 2,
+            "timeout": 3,
+            "retries": 5,
+            "start_period": 1
+          },
+          "restart": "no"
+        }
+      }
+    }
+  },
+  "upstream": {
+    "status": "error",
+    "message": "the 'healthcheck' property is not supported"
+  },
+  "wip_invocation": {
+    "network_create": [
+      "wslc.exe",
+      "network",
+      "create",
+      "healthcheck"
+    ],
+    "services": {
+      "db": [
+        "wslc.exe",
+        "run",
+        "--name",
+        "db",
+        "--network",
+        "healthcheck",
+        "-d",
+        "postgres:16"
+      ]
+    }
+  }
+}

@@ -1,0 +1,7 @@
+services:
+  web:
+    image: ruby:4
+    depends_on:
+      - db
+  db:
+    image: postgres:16

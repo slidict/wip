@@ -1,0 +1,4 @@
+services:
+  app:
+    name: wslc-named-app
+    image: ruby:4

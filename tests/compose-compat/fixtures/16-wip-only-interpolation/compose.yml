@@ -1,0 +1,6 @@
+services:
+  app:
+    image: "ruby:${WIP_COMPAT_RUBY_VERSION:-4}"
+    working_dir: "${WIP_COMPAT_WORKDIR}"
+    environment:
+      RAILS_ENV: "${WIP_COMPAT_RAILS_ENV:-development}"

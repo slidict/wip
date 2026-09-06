@@ -1,0 +1,58 @@
+{
+  "fixture": "10-working-dir-relative",
+  "wip": {
+    "status": "ok",
+    "model": {
+      "project": "wdrel",
+      "network": "wdrel",
+      "port_binding_default": "wslc-session-default",
+      "start_order": [
+        "app"
+      ],
+      "services_excluded_by_profiles": [],
+      "services": {
+        "app": {
+          "container_name": "app",
+          "image": "ruby:4",
+          "command_argv": [],
+          "environment": [],
+          "working_dir": "app",
+          "mounts": [],
+          "ports": [],
+          "network_aliases": [
+            "app"
+          ],
+          "build": null,
+          "healthcheck": null,
+          "restart": "no"
+        }
+      }
+    }
+  },
+  "upstream": {
+    "status": "error",
+    "message": "the working directory for service 'app' must be an absolute Linux path"
+  },
+  "wip_invocation": {
+    "network_create": [
+      "wslc.exe",
+      "network",
+      "create",
+      "wdrel"
+    ],
+    "services": {
+      "app": [
+        "wslc.exe",
+        "run",
+        "--name",
+        "app",
+        "--network",
+        "wdrel",
+        "-d",
+        "-w",
+        "app",
+        "ruby:4"
+      ]
+    }
+  }
+}

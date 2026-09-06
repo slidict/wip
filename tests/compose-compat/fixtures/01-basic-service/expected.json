@@ -1,0 +1,127 @@
+{
+  "fixture": "01-basic-service",
+  "wip": {
+    "status": "ok",
+    "model": {
+      "project": "basic",
+      "network": "basic",
+      "port_binding_default": "wslc-session-default",
+      "start_order": [
+        "app"
+      ],
+      "services_excluded_by_profiles": [],
+      "services": {
+        "app": {
+          "container_name": "app",
+          "image": "ruby:4",
+          "command_argv": [
+            "ruby",
+            "-v"
+          ],
+          "environment": [
+            "RAILS_ENV=development"
+          ],
+          "working_dir": "/app",
+          "mounts": [
+            {
+              "type": "bind",
+              "source": ".",
+              "source_base": "process-cwd",
+              "target": "/app",
+              "read_only": false
+            }
+          ],
+          "ports": [
+            {
+              "host_ip": null,
+              "host_port": "3000",
+              "container_port": "3000",
+              "protocol": "tcp"
+            }
+          ],
+          "network_aliases": [
+            "app"
+          ],
+          "build": null,
+          "healthcheck": null,
+          "restart": "no"
+        }
+      }
+    }
+  },
+  "upstream": {
+    "status": "ok",
+    "model": {
+      "project": "compose",
+      "network": "compose_default",
+      "port_binding_default": "127.0.0.1",
+      "start_order": [
+        "app"
+      ],
+      "services": {
+        "app": {
+          "container_name": "app",
+          "image": "ruby:4",
+          "command_argv": [
+            "ruby",
+            "-v"
+          ],
+          "environment": [
+            "RAILS_ENV=development"
+          ],
+          "working_dir": "/app",
+          "mounts": [
+            {
+              "type": "bind",
+              "source": "<FIXTURE>",
+              "source_base": "compose-file-dir",
+              "target": "/app",
+              "read_only": false
+            }
+          ],
+          "ports": [
+            {
+              "host_ip": null,
+              "host_port": "3000",
+              "container_port": "3000",
+              "protocol": "tcp"
+            }
+          ],
+          "network_aliases": [
+            "app"
+          ]
+        }
+      }
+    }
+  },
+  "wip_invocation": {
+    "network_create": [
+      "wslc.exe",
+      "network",
+      "create",
+      "basic"
+    ],
+    "services": {
+      "app": [
+        "wslc.exe",
+        "run",
+        "--name",
+        "app",
+        "--network",
+        "basic",
+        "-d",
+        "-w",
+        "/app",
+        "-e",
+        "RAILS_ENV=development",
+        "-p",
+        "3000:3000",
+        "-v",
+        ".:/app",
+        "ruby:4",
+        "ruby",
+        "-v"
+      ]
+    }
+  }
+}
