@@ -50,7 +50,7 @@ public sealed class CommandBuilder
             command.Add("-it");
         }
 
-        command.AddRange(Options(values, includeContainer: true, includePublish: false));
+        command.AddRange(Options(values, includeContainer: true, includePublish: false, includeEntrypoint: false));
         command.AddRange(arguments);
         return command;
     }
@@ -295,6 +295,7 @@ public sealed class CommandBuilder
         OrderedDictionary<string, object?> values,
         bool includeContainer = false,
         bool includePublish = true,
+        bool includeEntrypoint = true,
         bool sync = true)
     {
         var result = new List<string>();
@@ -309,6 +310,12 @@ public sealed class CommandBuilder
         {
             result.Add("-u");
             result.Add(user);
+        }
+
+        if (includeEntrypoint && RubyValue.Presence(values.GetValueOrDefault("entrypoint")) is { } entrypoint)
+        {
+            result.Add("--entrypoint");
+            result.Add(entrypoint);
         }
 
         foreach (var (key, value) in MergedEnvironment(values))
