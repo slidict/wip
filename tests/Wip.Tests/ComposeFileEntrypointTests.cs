@@ -35,9 +35,16 @@ public class ComposeFileEntrypointTests
             """, allowAliases: false), Path.Combine(directory.Path, "wip.yml"));
         var builder = new CommandBuilder("wslc.exe", config, new FakeEnvironment());
 
+        var expectedEntrypoint = Shellwords.Split(expected);
+        var expectedCommand = new List<string>
+        {
+            "wslc.exe", "run", "--name", "app", "--network", directory.Name, "-d", "--entrypoint",
+            expectedEntrypoint[0], "myapp:dev",
+        };
+        expectedCommand.AddRange(expectedEntrypoint.Skip(1));
+        expectedCommand.Add("serve");
         Assert.Equal(
-            ["wslc.exe", "run", "--name", "app", "--network", directory.Name, "-d", "--entrypoint", expected,
-                "myapp:dev", "serve"],
+            expectedCommand,
             builder.Up(detach: true));
     }
 
