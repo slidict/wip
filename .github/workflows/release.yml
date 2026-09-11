@@ -368,9 +368,14 @@ jobs:
           tag_view=$(gh release view "$TAG" --json isDraft 2>&1)
           tag_view_status=$?
           set -e
-          if [ "$tag_view_status" -eq 0 ] && [ "$(jq -r '.isDraft' <<< "$tag_view")" == "false" ]; then
-            echo "$TAG is already published; nothing to propose." >> "$GITHUB_STEP_SUMMARY"
-            exit 0
+          if [ "$tag_view_status" -eq 0 ]; then
+            if [ "$(jq -r '.isDraft' <<< "$tag_view")" == "false" ]; then
+              echo "$TAG is already published; nothing to propose." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+          elif ! grep -qi "release not found" <<< "$tag_view"; then
+            echo "::error::Could not look up release $TAG: $tag_view"
+            exit 1
           fi
 
           drafts=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
