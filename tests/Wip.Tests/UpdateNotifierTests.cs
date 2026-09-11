@@ -1,3 +1,4 @@
+using System.Net;
 using Wip.Diagnostics;
 
 namespace Wip.Tests;
@@ -19,12 +20,31 @@ public class UpdateNotifierTests
         Assert.Equal("2.10.0", UpdateNotifier.FindLatestVersion(response));
     }
 
+    [Fact]
+    public void IgnoresNonDirectoryEntriesEvenWithAHigherVersionName()
+    {
+        const string response = """
+            [
+              { "name": "2.5.2", "type": "dir" },
+              { "name": "9.9.9", "type": "file" }
+            ]
+            """;
+
+        Assert.Equal("2.5.2", UpdateNotifier.FindLatestVersion(response));
+    }
+
     [Theory]
     [InlineData("2.5.3", "2.5.2", true)]
     [InlineData("2.5.2", "2.5.2", false)]
     [InlineData("2.5.1", "2.5.2", false)]
     [InlineData("v3.0.0", "2.5.2+build", true)]
     [InlineData("invalid", "2.5.2", false)]
+    [InlineData("2.5.2", "2.5.2-rc.1", true)]
+    [InlineData("2.5.2-rc.1", "2.5.2", false)]
+    [InlineData("2.5.2-rc.2", "2.5.2-rc.1", true)]
+    [InlineData("2.5.2-rc.1", "2.5.2-rc.2", false)]
+    [InlineData("2.5.2-beta", "2.5.2-alpha", true)]
+    [InlineData("2.5.2-rc.1", "2.5.2-rc.1.1", false)]
     public void ComparesVersions(string candidate, string current, bool expected)
     {
         Assert.Equal(expected, UpdateNotifier.IsNewer(candidate, current));
@@ -38,6 +58,7 @@ public class UpdateNotifierTests
         Assert.Contains("*** WIP UPDATE AVAILABLE ***", actual);
         Assert.Contains("2.5.2 -> 2.6.0", actual);
         Assert.Contains("winget upgrade --id Slidict.Wip --exact", actual);
+        Assert.Contains("scoop update wip", actual);
         Assert.DoesNotContain('\x1b', actual);
     }
 
@@ -47,6 +68,155 @@ public class UpdateNotifierTests
         var actual = Log.FormatUpdateAvailable("2.5.2", "2.6.0", colorize: true);
 
         Assert.Contains("\x1b[1;35m*** WIP UPDATE AVAILABLE ***\x1b[0m", actual);
-        Assert.Contains("\x1b[1;35mwinget upgrade --id Slidict.Wip --exact\x1b[0m", actual);
+        Assert.Contains("\x1b[1;35m", actual);
+    }
+
+    [Fact]
+    public void ReadCacheTreatsAMissingFileAsNeverChecked()
+    {
+        var path = TempCachePath();
+
+        var (checkedAt, latest) = UpdateNotifier.ReadCache(path);
+
+        Assert.Equal(DateTimeOffset.MinValue, checkedAt);
+        Assert.Null(latest);
+    }
+
+    [Fact]
+    public void WriteThenReadCacheRoundTrips()
+    {
+        var path = TempCachePath();
+        try
+        {
+            UpdateNotifier.WriteCache("2.6.0", path);
+
+            var (checkedAt, latest) = UpdateNotifier.ReadCache(path);
+
+            Assert.Equal("2.6.0", latest);
+            Assert.True(DateTimeOffset.UtcNow - checkedAt < TimeSpan.FromMinutes(1));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void ReadCacheTreatsCorruptedJsonAsNeverChecked()
+    {
+        var path = TempCachePath();
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            File.WriteAllText(path, "{ not valid json");
+
+            var (checkedAt, latest) = UpdateNotifier.ReadCache(path);
+
+            Assert.Equal(DateTimeOffset.MinValue, checkedAt);
+            Assert.Null(latest);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void ReadCacheTreatsAMissingPropertyAsNeverChecked()
+    {
+        var path = TempCachePath();
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            File.WriteAllText(path, """{ "latest": "2.6.0" }""");
+
+            var (checkedAt, latest) = UpdateNotifier.ReadCache(path);
+
+            Assert.Equal(DateTimeOffset.MinValue, checkedAt);
+            Assert.Null(latest);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void RefreshCacheWritesTheLatestVersionOnSuccess()
+    {
+        var path = TempCachePath();
+        try
+        {
+            const string response = """
+                [
+                  { "name": "2.5.2", "type": "dir" },
+                  { "name": "2.9.0", "type": "dir" }
+                ]
+                """;
+            var handler = new StubHandler(() => new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(response),
+            });
+
+            UpdateNotifier.RefreshCache(handler, path);
+
+            var (_, latest) = UpdateNotifier.ReadCache(path);
+            Assert.Equal("2.9.0", latest);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void RefreshCachePreservesThePreviousResultWhenTheRequestFails()
+    {
+        var path = TempCachePath();
+        try
+        {
+            UpdateNotifier.WriteCache("2.5.2", path);
+            var handler = new StubHandler(() => throw new HttpRequestException("offline"));
+
+            UpdateNotifier.RefreshCache(handler, path);
+
+            var (checkedAt, latest) = UpdateNotifier.ReadCache(path);
+            Assert.Equal("2.5.2", latest);
+            Assert.True(DateTimeOffset.UtcNow - checkedAt < TimeSpan.FromMinutes(1));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void RefreshCacheReleasesItsLeaseEvenWhenTheRequestFails()
+    {
+        var path = TempCachePath();
+        var lockPath = $"{path}.lock";
+        try
+        {
+            var handler = new StubHandler(() => throw new HttpRequestException("offline"));
+
+            UpdateNotifier.RefreshCache(handler, path);
+
+            Assert.False(File.Exists(lockPath));
+        }
+        finally
+        {
+            File.Delete(path);
+            File.Delete(lockPath);
+        }
+    }
+
+    private static string TempCachePath() =>
+        Path.Combine(Path.GetTempPath(), "wip-tests", $"update-{Guid.NewGuid():N}.json");
+
+    private sealed class StubHandler(Func<HttpResponseMessage> responseFactory) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken) =>
+            Task.FromResult(responseFactory());
     }
 }

@@ -225,8 +225,9 @@ winget install Slidict.Wip
 
 At the start of each invocation, wip checks a locally cached WinGet version and refreshes stale
 data in a detached background process. If a newer version is available it prints a highlighted
-notice and the exact `winget upgrade` command. The check is advisory: it never waits for the
-network, and errors never change the requested command or its exit code.
+notice naming WinGet, Scoop, and manual-install update steps, since wip has no way to tell which
+one you installed with. The check is advisory: it never waits for the network, and errors never
+change the requested command or its exit code.
 
 From source: `dotnet publish src/Wip.Cli/Wip.Cli.csproj -c Release -r win-x64`. This links
 with **MSVC** (Native AOT), so the .NET SDK alone stops with `Platform linker not found` —

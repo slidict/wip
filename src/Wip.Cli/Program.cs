@@ -9,7 +9,7 @@ internal static class Program
 {
     internal static int Main(string[] args)
     {
-        if (args is [UpdateNotifier.RefreshArgument])
+        if (UpdateNotifier.IsRefreshHelperInvocation)
         {
             UpdateNotifier.RefreshCache();
             return 0;

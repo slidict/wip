@@ -54,14 +54,15 @@ public static class Log
     internal static string FormatUpdateAvailable(string current, string latest, bool colorize)
     {
         var heading = "*** WIP UPDATE AVAILABLE ***";
-        var command = "winget upgrade --id Slidict.Wip --exact";
+        var guidance = "Update with WinGet (winget upgrade --id Slidict.Wip --exact), "
+            + "Scoop (scoop update wip), or your manual install's usual steps.";
         if (colorize)
         {
             heading = $"{UpdateAccent}{heading}{Reset}";
-            command = $"{UpdateAccent}{command}{Reset}";
+            guidance = $"{UpdateAccent}{guidance}{Reset}";
         }
 
-        return $"\n{heading}\n  {current} -> {latest}\n  Run: {command}\n";
+        return $"\n{heading}\n  {current} -> {latest}\n  {guidance}\n";
     }
 
     /// <summary>Pure formatting, kept apart from <see cref="IsColorEnabled"/> so the tag's shape
