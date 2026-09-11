@@ -9,6 +9,16 @@ internal static class Program
 {
     internal static int Main(string[] args)
     {
+        if (UpdateNotifier.IsRefreshHelperInvocation)
+        {
+            UpdateNotifier.RefreshCache();
+            return 0;
+        }
+
+        // Reading the cache and starting a detached refresh perform no network I/O here, so
+        // update discovery cannot hold up the command the user actually requested.
+        UpdateNotifier.NotifyIfAvailable();
+
         var root = BuildRoot();
 
         // System.CommandLine installs its own top-level handler that prints a raw stack
