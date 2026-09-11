@@ -9,6 +9,10 @@ internal static class Program
 {
     internal static int Main(string[] args)
     {
+        // This is advisory and deliberately runs before parsing or executing the requested
+        // command. UpdateNotifier contains all failure handling so it cannot affect behavior.
+        UpdateNotifier.NotifyIfAvailable();
+
         var root = BuildRoot();
 
         // System.CommandLine installs its own top-level handler that prints a raw stack

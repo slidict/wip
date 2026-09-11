@@ -28,6 +28,7 @@ public static class Log
     private const string TagAccent = "\x1b[36m";
     private const string WarnAccent = "\x1b[33m";
     private const string ErrorAccent = "\x1b[31m";
+    private const string UpdateAccent = "\x1b[1;35m";
     private const string Reset = "\x1b[0m";
 
     /// <summary>Writes "wip: message" to stderr, tinting the tag when the terminal supports it.</summary>
@@ -42,6 +43,26 @@ public static class Log
     /// already failed.</summary>
     public static void Error(string message) => Console.Error.WriteLine(
         FormatError(message, IsColorEnabled(), DisplayLanguage.CurrentPrimaryLanguageId()));
+
+    /// <summary>Writes a deliberately prominent, non-fatal update recommendation.</summary>
+    internal static void UpdateAvailable(string current, string latest)
+    {
+        var colorize = IsColorEnabled();
+        Console.Error.WriteLine(FormatUpdateAvailable(current, latest, colorize));
+    }
+
+    internal static string FormatUpdateAvailable(string current, string latest, bool colorize)
+    {
+        var heading = "*** WIP UPDATE AVAILABLE ***";
+        var command = "winget upgrade --id Slidict.Wip --exact";
+        if (colorize)
+        {
+            heading = $"{UpdateAccent}{heading}{Reset}";
+            command = $"{UpdateAccent}{command}{Reset}";
+        }
+
+        return $"\n{heading}\n  {current} -> {latest}\n  Run: {command}\n";
+    }
 
     /// <summary>Pure formatting, kept apart from <see cref="IsColorEnabled"/> so the tag's shape
     /// is testable without a real console or environment variables.</summary>

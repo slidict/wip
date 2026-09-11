@@ -217,14 +217,16 @@ Alternatively, install it manually: download and extract `wip-<version>-win-x64.
 [Releases](https://github.com/slidict/wip/releases), then add the directory holding `wip.exe`
 to your PATH.
 
-**WinGet is on the way.** The manifest has been submitted as
-[microsoft/winget-pkgs#418285](https://github.com/microsoft/winget-pkgs/pull/418285) and is
-waiting on review — new packages are reviewed by hand, so it takes a few days. Once it merges,
-this is all it takes:
+Or install it from WinGet:
 
 ```powershell
 winget install Slidict.Wip
 ```
+
+At the start of each invocation, wip makes a short, best-effort check against the versions
+published in WinGet. If a newer one is available it prints a highlighted notice and the exact
+`winget upgrade` command. The check is advisory: network errors and timeouts are ignored and never
+change the requested command or its exit code.
 
 From source: `dotnet publish src/Wip.Cli/Wip.Cli.csproj -c Release -r win-x64`. This links
 with **MSVC** (Native AOT), so the .NET SDK alone stops with `Platform linker not found` —
