@@ -142,6 +142,28 @@ public class ComposeFileEntrypointTests
     }
 
     [Fact]
+    public void ExplicitNullEntrypointInARawDependencyLeavesTheImageEntrypointUntouched()
+    {
+        // Compose normalization never produces this (an omitted entrypoint: is left out of
+        // the mapping entirely, never set to null), but a raw wip.yml dependencies: entry can
+        // write "entrypoint:" (YAML null) directly, and that must mean the same as omitting it
+        // -- not the explicit-empty-string "clear the image's entrypoint" case.
+        var config = new Config(YamlLoader.LoadText("""
+            version: 1
+            mode: container
+            container: app
+            dependencies:
+              app:
+                image: myapp:dev
+                entrypoint:
+                command: serve
+            """, allowAliases: false));
+        var builder = new CommandBuilder("wslc.exe", config, new FakeEnvironment());
+
+        Assert.DoesNotContain("--entrypoint", builder.Up());
+    }
+
+    [Fact]
     public void EntrypointIsNotPassedToExec()
     {
         using var directory = new TemporaryDirectory();

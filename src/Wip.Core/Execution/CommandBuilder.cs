@@ -370,14 +370,15 @@ public sealed class CommandBuilder
     }
 
     /// <summary>
-    /// Null when <c>entrypoint:</c> is absent entirely, so the image's own entrypoint is left
-    /// untouched. Present with an empty <see cref="EntrypointOverride.Executable"/> for an
-    /// explicit <c>entrypoint: ""</c>/<c>entrypoint: []</c>, which clears it via
-    /// <c>--entrypoint ""</c> instead.
+    /// Null when <c>entrypoint:</c> is absent, or present but <c>null</c> (a raw wip.yml
+    /// dependency entry can write that explicitly; Compose normalization never does) -- either
+    /// way the image's own entrypoint is left untouched. Present with an empty
+    /// <see cref="EntrypointOverride.Executable"/> for an explicit <c>entrypoint: ""</c>/
+    /// <c>entrypoint: []</c>, which clears it via <c>--entrypoint ""</c> instead.
     /// </summary>
     private static EntrypointOverride? Entrypoint(OrderedDictionary<string, object?> values)
     {
-        if (!values.TryGetValue("entrypoint", out var raw))
+        if (!values.TryGetValue("entrypoint", out var raw) || raw is null)
         {
             return null;
         }
