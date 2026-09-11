@@ -12,11 +12,6 @@ public static class UpdateNotifier
         "https://api.github.com/repos/microsoft/winget-pkgs/contents/manifests/s/Slidict/Wip?per_page=100";
     private static readonly TimeSpan RefreshInterval = TimeSpan.FromHours(24);
 
-    // Generous relative to the 3-second HTTP timeout below: if the helper crashed or was killed
-    // before it could delete its lease, a later invocation reclaims it instead of update checks
-    // going silent forever.
-    private static readonly TimeSpan RefreshLeaseTimeout = TimeSpan.FromSeconds(30);
-
     /// <summary>
     /// True when this process was launched by <see cref="StartRefreshProcess"/> to run
     /// <see cref="RefreshCache()"/> and exit, rather than a normal wip invocation. Gated by an
@@ -51,29 +46,65 @@ public static class UpdateNotifier
     /// <summary>Executed only by the hidden detached helper process.</summary>
     public static void RefreshCache() => RefreshCache(handler: null, CachePath());
 
+    /// <summary>
+    /// Holds an exclusive OS-level lock on the lease file for as long as the refresh takes.
+    /// Concurrent wip invocations against the same stale cache can each spawn a helper, but only
+    /// the one that wins the lock actually calls GitHub; the rest see the lock already taken and
+    /// exit immediately. Unlike a lease file whose mere existence is the marker, a held lock
+    /// needs no staleness timeout: if this process crashes, Windows releases the lock the moment
+    /// it exits, so a later invocation acquires it right away instead of waiting out a timeout.
+    /// </summary>
     internal static void RefreshCache(HttpMessageHandler? handler, string cachePath)
     {
+        var lockPath = LockPath(cachePath);
+        FileStream lease;
         try
         {
-            using var client = CreateClient(handler);
-            var latest = FindLatestVersion(client.GetStringAsync(ManifestUrl).GetAwaiter().GetResult());
-            WriteCache(latest, cachePath);
+            Directory.CreateDirectory(Path.GetDirectoryName(lockPath)!);
+            lease = new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.Write, FileShare.None);
         }
-        catch (Exception)
+        catch (IOException)
         {
-            // Record the attempt to avoid slowing every invocation when the machine is offline.
+            // Either another refresh is already in flight for this cache, or the lock
+            // directory couldn't be created/opened (e.g. an unwritable LocalApplicationData).
+            // RefreshCache() is called directly by the detached helper process with nothing
+            // above it to catch this, so it has to be swallowed here to stay advisory.
+            return;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return;
+        }
+
+        using (lease)
+        {
+            // Winning the lock only means no refresh is in flight right now; a different
+            // helper could have already refreshed and released it between when this one was
+            // spawned and when it got the lock. Re-check freshness before spending another
+            // GitHub request on a cache that is no longer stale.
+            if (DateTimeOffset.UtcNow - ReadCache(cachePath).CheckedAt < RefreshInterval)
+            {
+                return;
+            }
+
             try
             {
-                WriteCache(ReadCache(cachePath).Latest, cachePath);
+                using var client = CreateClient(handler);
+                var latest = FindLatestVersion(client.GetStringAsync(ManifestUrl).GetAwaiter().GetResult());
+                WriteCache(latest, cachePath);
             }
             catch (Exception)
             {
-                // The cache itself may be unavailable; there is nothing advisory code can do.
+                // Record the attempt to avoid slowing every invocation when the machine is offline.
+                try
+                {
+                    WriteCache(ReadCache(cachePath).Latest, cachePath);
+                }
+                catch (Exception)
+                {
+                    // The cache itself may be unavailable; there is nothing advisory code can do.
+                }
             }
-        }
-        finally
-        {
-            TryDelete(LockPath(cachePath));
         }
     }
 
@@ -85,7 +116,10 @@ public static class UpdateNotifier
             return null;
         }
 
-        Version? latest = null;
+        // Compared pairwise with IsNewer (full SemVer precedence, prerelease included) rather
+        // than by parsed Version alone, so the winner does not depend on manifest entry order:
+        // a release must beat a same-numbered prerelease regardless of which one is enumerated
+        // first.
         string? latestText = null;
         foreach (var item in document.RootElement.EnumerateArray())
         {
@@ -93,14 +127,15 @@ public static class UpdateNotifier
                 typeProperty.GetString() != "dir" ||
                 !item.TryGetProperty("name", out var nameProperty) ||
                 nameProperty.GetString() is not { } name ||
-                !TryParseVersion(name, out var version, out _) ||
-                latest is not null && version <= latest)
+                !TryParseVersion(name, out _, out _))
             {
                 continue;
             }
 
-            latest = version;
-            latestText = name;
+            if (latestText is null || IsNewer(name, latestText))
+            {
+                latestText = name;
+            }
         }
         return latestText;
     }
@@ -153,11 +188,19 @@ public static class UpdateNotifier
 
     private static int CompareIdentifier(string candidate, string current)
     {
-        var candidateIsNumeric = candidate.Length > 0 && candidate.All(char.IsAsciiDigit);
-        var currentIsNumeric = current.Length > 0 && current.All(char.IsAsciiDigit);
+        // TryParseVersion already rejected any identifier that is an invalid mix (a leading-zero
+        // digit run isn't valid as either SemVer identifier kind), so a plain "all digits" check
+        // is enough to know both sides are valid numeric identifiers here.
+        var candidateIsNumeric = candidate.All(char.IsAsciiDigit);
+        var currentIsNumeric = current.All(char.IsAsciiDigit);
         if (candidateIsNumeric && currentIsNumeric)
         {
-            return long.Parse(candidate).CompareTo(long.Parse(current));
+            // SemVer numeric identifiers have no length limit, so comparing them as integers
+            // could overflow; a longer run of digits is always the larger number, and
+            // same-length digit strings order the same numerically and lexically.
+            return candidate.Length != current.Length
+                ? candidate.Length.CompareTo(current.Length)
+                : string.CompareOrdinal(candidate, current);
         }
 
         return candidateIsNumeric != currentIsNumeric
@@ -177,7 +220,15 @@ public static class UpdateNotifier
         var prereleaseSuffix = normalized.IndexOf('-');
         if (prereleaseSuffix >= 0)
         {
-            prerelease = normalized[(prereleaseSuffix + 1)..];
+            var candidate = normalized[(prereleaseSuffix + 1)..];
+            if (!IsValidPrerelease(candidate))
+            {
+                version = null!;
+                prerelease = null;
+                return false;
+            }
+
+            prerelease = candidate;
             normalized = normalized[..prereleaseSuffix];
         }
         else
@@ -186,6 +237,25 @@ public static class UpdateNotifier
         }
 
         return Version.TryParse(normalized, out version!);
+    }
+
+    /// <summary>Every dot-separated identifier must be non-empty and match SemVer's grammar: a
+    /// numeric identifier (digits only, no leading zero unless it's just "0") or an alphanumeric
+    /// one (letters, digits and hyphens, with at least one non-digit). A digit run with a
+    /// leading zero, like "01", matches neither and is rejected outright rather than assigned to
+    /// either kind.</summary>
+    private static bool IsValidPrerelease(string prerelease) =>
+        prerelease.Length > 0 && prerelease.Split('.').All(IsValidPrereleaseIdentifier);
+
+    private static bool IsValidPrereleaseIdentifier(string identifier)
+    {
+        if (identifier.Length == 0 || !identifier.All(c => char.IsAsciiLetterOrDigit(c) || c == '-'))
+        {
+            return false;
+        }
+
+        var isNumeric = identifier.All(char.IsAsciiDigit);
+        return !isNumeric || identifier.Length == 1 || identifier[0] != '0';
     }
 
     internal static (DateTimeOffset CheckedAt, string? Latest) ReadCache(string cachePath)
@@ -237,12 +307,6 @@ public static class UpdateNotifier
             return;
         }
 
-        var lockPath = TryAcquireRefreshLease(LockPath(CachePath()));
-        if (lockPath is null)
-        {
-            return;
-        }
-
         var start = new ProcessStartInfo(executable) { UseShellExecute = false, CreateNoWindow = true };
 
         // Under `dotnet run`/`dotnet path/to/wip.dll`, ProcessPath is the dotnet host itself, not
@@ -257,69 +321,10 @@ public static class UpdateNotifier
         }
 
         start.EnvironmentVariables[RefreshHelperEnvironmentVariable] = "1";
-        try
-        {
-            Process.Start(start)?.Dispose();
-        }
-        catch (Exception)
-        {
-            TryDelete(lockPath);
-        }
-    }
 
-    /// <summary>
-    /// Atomically claims the right to refresh, so concurrent wip invocations against the same
-    /// stale cache don't each spawn a helper and burn through GitHub's unauthenticated rate
-    /// limit. Returns the lease path on success, so it can be released if the helper never
-    /// starts.
-    /// </summary>
-    private static string? TryAcquireRefreshLease(string lockPath)
-    {
-        Directory.CreateDirectory(Path.GetDirectoryName(lockPath)!);
-        if (TryCreateLease(lockPath))
-        {
-            return lockPath;
-        }
-
-        try
-        {
-            if (DateTime.UtcNow - File.GetLastWriteTimeUtc(lockPath) <= RefreshLeaseTimeout)
-            {
-                return null;
-            }
-        }
-        catch (Exception)
-        {
-            return null;
-        }
-
-        TryDelete(lockPath);
-        return TryCreateLease(lockPath) ? lockPath : null;
-    }
-
-    private static bool TryCreateLease(string lockPath)
-    {
-        try
-        {
-            using var stream = new FileStream(lockPath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
-            return true;
-        }
-        catch (IOException)
-        {
-            return false;
-        }
-    }
-
-    private static void TryDelete(string path)
-    {
-        try
-        {
-            File.Delete(path);
-        }
-        catch (Exception)
-        {
-            // Best-effort cleanup; a leftover lease simply expires after RefreshLeaseTimeout.
-        }
+        // RefreshCache() itself claims the cross-process lock (see its remarks), so a redundant
+        // helper spawned here for the same stale cache just loses that race and exits at once.
+        Process.Start(start)?.Dispose();
     }
 
     private static HttpClient CreateClient(HttpMessageHandler? handler)
