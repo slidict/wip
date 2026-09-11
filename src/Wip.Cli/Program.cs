@@ -9,8 +9,14 @@ internal static class Program
 {
     internal static int Main(string[] args)
     {
-        // This is advisory and deliberately runs before parsing or executing the requested
-        // command. UpdateNotifier contains all failure handling so it cannot affect behavior.
+        if (args is [UpdateNotifier.RefreshArgument])
+        {
+            UpdateNotifier.RefreshCache();
+            return 0;
+        }
+
+        // Reading the cache and starting a detached refresh perform no network I/O here, so
+        // update discovery cannot hold up the command the user actually requested.
         UpdateNotifier.NotifyIfAvailable();
 
         var root = BuildRoot();
