@@ -8,10 +8,11 @@ all welcome.
 ```bash
 git clone https://github.com/slidict/wip.git
 cd wip
-dotnet build wip.slnx
+dotnet build wip.slnx --configuration Release
 ```
 
-Requires the .NET 10 SDK.
+Development requires the **.NET 10 SDK**. Shared build settings, including the target framework,
+warnings policy, and project version, live in [`Directory.Build.props`](Directory.Build.props).
 
 `wip` itself talks to `wslc.exe`/`wslc`, but the test suite doesn't require WSLC — the
 resolution, build, and execution layers are all swappable, so you can develop and test on any
@@ -20,14 +21,16 @@ platform.
 ## Running checks locally
 
 ```bash
-dotnet test tests/Wip.Tests/Wip.Tests.csproj                            # unit + parity tests
-dotnet build wip.slnx                                                   # warnings are errors
-dotnet publish src/Wip.Cli/Wip.Cli.csproj -c Release -r linux-x64       # AOT analysis
+dotnet build wip.slnx --configuration Release
+dotnet test tests/Wip.Tests/Wip.Tests.csproj --configuration Release --no-build
+dotnet publish src/Wip.Cli/Wip.Cli.csproj --configuration Release --runtime win-x64 --output artifacts/win-x64
 ```
 
-All three must pass before a PR is merged. CI runs the tests on Windows and Linux, and does the
-publish on Windows — that last step is the only one that reports trim and reflection problems,
-so it is worth running locally before touching anything that loads YAML or JSON.
+These match the main CI build, unit/parity test, and Native AOT publish commands. CI runs the
+first two on Windows and Linux, and publishes the actual distribution target, `win-x64`, on
+Windows. Native AOT publishing may require the platform toolchain, but it is worth running
+before submitting changes that affect YAML or JSON loading because it reports trim and
+reflection problems that the managed test host cannot.
 
 There is a fourth check, which runs in CI rather than locally: [`tests/e2e`](tests/e2e/README.md)
 drives the published `wip.exe` through the whole lifecycle against real WSLC containers. It
@@ -65,15 +68,16 @@ Maintenance), so an accurate type matters even for small changes.
 - **minor** — new commands or features (`feat`)
 - **major** — breaking changes
 
-Maintainers bump the version (`lib/wip/version.rb`) via the "Bump Version" GitHub Actions
-workflow; you don't need to bump it yourself in a PR.
+[`Directory.Build.props`](Directory.Build.props) is the single source of truth for the version.
+Maintainers update it via the "Bump Version" GitHub Actions workflow; you don't need to bump it
+yourself in a PR.
 
 ## Pull requests
 
-1. Fork and branch from `main`.
-2. Make your change, with tests for new behavior.
-3. Run the checks above and make sure they're clean.
-4. Open a PR with a summary of what changed and why, and how you verified it.
+1. Fork the repository and create a branch from `main`.
+2. Make your focused change, adding tests for new behavior.
+3. Run the applicable checks above.
+4. Open a PR describing what changed, why, and how you tested it.
 
 Small, focused PRs are easier to review than large ones — if a change grows a second unrelated
 concern, consider splitting it.
