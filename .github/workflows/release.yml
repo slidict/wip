@@ -358,6 +358,26 @@ jobs:
           set -euo pipefail
           archive="wip-${VERSION}-win-x64.zip"
 
+          # This job and "publish" both run on the push that merges this very job's own Scoop
+          # PR: check's idempotency marks the version already built, so build/attach are
+          # skipped but this job still runs to retry a failed proposal -- while check-finalize
+          # sees the merge and lets publish convert/retag that same "Unreleased" draft at the
+          # same time. There is nothing left to propose once $TAG is out, so check that first
+          # and skip straight past the now-gone draft instead of racing publish for it.
+          set +e
+          tag_view=$(gh release view "$TAG" --json isDraft 2>&1)
+          tag_view_status=$?
+          set -e
+          if [ "$tag_view_status" -eq 0 ]; then
+            if [ "$(jq -r '.isDraft' <<< "$tag_view")" == "false" ]; then
+              echo "$TAG is already published; nothing to propose." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+          elif ! grep -qi "release not found" <<< "$tag_view"; then
+            echo "::error::Could not look up release $TAG: $tag_view"
+            exit 1
+          fi
+
           drafts=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
             | jq -s '[.[][] | select(.draft and .name == "Unreleased") | .tag_name]')
           draft_count=$(jq 'length' <<< "$drafts")
@@ -373,7 +393,23 @@ jobs:
             exit 0
           fi
 
-          assets=$(gh release view "$draft_tag" --json assets --jq '[.assets[].name]')
+          # publish can still win the race in the gap between the listing above and this
+          # lookup, turning $draft_tag into a release that no longer exists under that name.
+          # That is the same benign "someone else just published it" case as the early check
+          # above, not a real failure, so it gets the same treatment rather than failing the job.
+          set +e
+          assets_json=$(gh release view "$draft_tag" --json assets 2>&1)
+          assets_status=$?
+          set -e
+          if [ "$assets_status" -ne 0 ]; then
+            if grep -qi "release not found" <<< "$assets_json"; then
+              echo "$draft_tag was published concurrently; nothing to propose for $TAG." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            echo "::error::Could not look up $draft_tag: $assets_json"
+            exit 1
+          fi
+          assets=$(jq -r '[.assets[].name]' <<< "$assets_json")
           has_archive=$(jq -r --arg n "$archive" 'any(.[]; . == $n)' <<< "$assets")
           has_checksums=$(jq -r 'any(.[]; . == "SHA256SUMS")' <<< "$assets")
           if [ "$has_archive" != "true" ] || [ "$has_checksums" != "true" ]; then
@@ -385,8 +421,19 @@ jobs:
           # retain a carriage return when awk reads the CRLF-terminated line on Linux.
           rm -rf scoop-release
           mkdir scoop-release
-          gh release download "$draft_tag" --repo "$GITHUB_REPOSITORY" \
-            --pattern SHA256SUMS --dir scoop-release --clobber
+          set +e
+          download_output=$(gh release download "$draft_tag" --repo "$GITHUB_REPOSITORY" \
+            --pattern SHA256SUMS --dir scoop-release --clobber 2>&1)
+          download_status=$?
+          set -e
+          if [ "$download_status" -ne 0 ]; then
+            if grep -qi "release not found" <<< "$download_output"; then
+              echo "$draft_tag was published concurrently; nothing to propose for $TAG." >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            echo "::error::Could not download SHA256SUMS from $draft_tag: $download_output"
+            exit 1
+          fi
 
           digest=$(awk -v archive="$archive" '{ sub(/\r$/, "", $2); if ($2 == archive) print tolower($1) }' scoop-release/SHA256SUMS)
           if ! [[ "$digest" =~ ^[0-9a-f]{64}$ ]]; then
