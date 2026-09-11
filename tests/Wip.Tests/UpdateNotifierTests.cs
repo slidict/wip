@@ -33,6 +33,26 @@ public class UpdateNotifierTests
         Assert.Equal("2.5.2", UpdateNotifier.FindLatestVersion(response));
     }
 
+    [Fact]
+    public void PicksAReleaseOverASamePrereleaseRegardlessOfManifestOrder()
+    {
+        const string prereleaseFirst = """
+            [
+              { "name": "2.5.2-rc.1", "type": "dir" },
+              { "name": "2.5.2", "type": "dir" }
+            ]
+            """;
+        const string releaseFirst = """
+            [
+              { "name": "2.5.2", "type": "dir" },
+              { "name": "2.5.2-rc.1", "type": "dir" }
+            ]
+            """;
+
+        Assert.Equal("2.5.2", UpdateNotifier.FindLatestVersion(prereleaseFirst));
+        Assert.Equal("2.5.2", UpdateNotifier.FindLatestVersion(releaseFirst));
+    }
+
     [Theory]
     [InlineData("2.5.3", "2.5.2", true)]
     [InlineData("2.5.2", "2.5.2", false)]
@@ -45,6 +65,8 @@ public class UpdateNotifierTests
     [InlineData("2.5.2-rc.1", "2.5.2-rc.2", false)]
     [InlineData("2.5.2-beta", "2.5.2-alpha", true)]
     [InlineData("2.5.2-rc.1", "2.5.2-rc.1.1", false)]
+    [InlineData("2.5.2-rc.99999999999999999999", "2.5.2-rc.1", true)]
+    [InlineData("2.5.2-rc.99999999999999999999", "2.5.2-rc.99999999999999999998", true)]
     public void ComparesVersions(string candidate, string current, bool expected)
     {
         Assert.Equal(expected, UpdateNotifier.IsNewer(candidate, current));
@@ -191,7 +213,7 @@ public class UpdateNotifierTests
     }
 
     [Fact]
-    public void RefreshCacheReleasesItsLeaseEvenWhenTheRequestFails()
+    public void RefreshCacheReleasesItsLockEvenWhenTheRequestFails()
     {
         var path = TempCachePath();
         var lockPath = $"{path}.lock";
@@ -201,7 +223,38 @@ public class UpdateNotifierTests
 
             UpdateNotifier.RefreshCache(handler, path);
 
-            Assert.False(File.Exists(lockPath));
+            // Throws if the lock is still held, failing the test.
+            using var stream = new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.Write, FileShare.None);
+        }
+        finally
+        {
+            File.Delete(path);
+            File.Delete(lockPath);
+        }
+    }
+
+    [Fact]
+    public void RefreshCacheSkipsTheRequestWhenAnotherRefreshHoldsTheLock()
+    {
+        var path = TempCachePath();
+        var lockPath = $"{path}.lock";
+        Directory.CreateDirectory(Path.GetDirectoryName(lockPath)!);
+        try
+        {
+            using (new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.Write, FileShare.None))
+            {
+                var requested = false;
+                var handler = new StubHandler(() =>
+                {
+                    requested = true;
+                    return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("[]") };
+                });
+
+                UpdateNotifier.RefreshCache(handler, path);
+
+                Assert.False(requested);
+                Assert.False(File.Exists(path));
+            }
         }
         finally
         {

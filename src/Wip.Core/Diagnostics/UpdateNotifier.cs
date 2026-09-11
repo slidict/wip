@@ -12,11 +12,6 @@ public static class UpdateNotifier
         "https://api.github.com/repos/microsoft/winget-pkgs/contents/manifests/s/Slidict/Wip?per_page=100";
     private static readonly TimeSpan RefreshInterval = TimeSpan.FromHours(24);
 
-    // Generous relative to the 3-second HTTP timeout below: if the helper crashed or was killed
-    // before it could delete its lease, a later invocation reclaims it instead of update checks
-    // going silent forever.
-    private static readonly TimeSpan RefreshLeaseTimeout = TimeSpan.FromSeconds(30);
-
     /// <summary>
     /// True when this process was launched by <see cref="StartRefreshProcess"/> to run
     /// <see cref="RefreshCache()"/> and exit, rather than a normal wip invocation. Gated by an
@@ -51,29 +46,50 @@ public static class UpdateNotifier
     /// <summary>Executed only by the hidden detached helper process.</summary>
     public static void RefreshCache() => RefreshCache(handler: null, CachePath());
 
+    /// <summary>
+    /// Holds an exclusive OS-level lock on the lease file for as long as the refresh takes.
+    /// Concurrent wip invocations against the same stale cache can each spawn a helper, but only
+    /// the one that wins the lock actually calls GitHub; the rest see the lock already taken and
+    /// exit immediately. Unlike a lease file whose mere existence is the marker, a held lock
+    /// needs no staleness timeout: if this process crashes, Windows releases the lock the moment
+    /// it exits, so a later invocation acquires it right away instead of waiting out a timeout.
+    /// </summary>
     internal static void RefreshCache(HttpMessageHandler? handler, string cachePath)
     {
+        var lockPath = LockPath(cachePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(lockPath)!);
+
+        FileStream lease;
         try
         {
-            using var client = CreateClient(handler);
-            var latest = FindLatestVersion(client.GetStringAsync(ManifestUrl).GetAwaiter().GetResult());
-            WriteCache(latest, cachePath);
+            lease = new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.Write, FileShare.None);
         }
-        catch (Exception)
+        catch (IOException)
         {
-            // Record the attempt to avoid slowing every invocation when the machine is offline.
+            // Another refresh is already in flight for this cache.
+            return;
+        }
+
+        using (lease)
+        {
             try
             {
-                WriteCache(ReadCache(cachePath).Latest, cachePath);
+                using var client = CreateClient(handler);
+                var latest = FindLatestVersion(client.GetStringAsync(ManifestUrl).GetAwaiter().GetResult());
+                WriteCache(latest, cachePath);
             }
             catch (Exception)
             {
-                // The cache itself may be unavailable; there is nothing advisory code can do.
+                // Record the attempt to avoid slowing every invocation when the machine is offline.
+                try
+                {
+                    WriteCache(ReadCache(cachePath).Latest, cachePath);
+                }
+                catch (Exception)
+                {
+                    // The cache itself may be unavailable; there is nothing advisory code can do.
+                }
             }
-        }
-        finally
-        {
-            TryDelete(LockPath(cachePath));
         }
     }
 
@@ -85,7 +101,10 @@ public static class UpdateNotifier
             return null;
         }
 
-        Version? latest = null;
+        // Compared pairwise with IsNewer (full SemVer precedence, prerelease included) rather
+        // than by parsed Version alone, so the winner does not depend on manifest entry order:
+        // a release must beat a same-numbered prerelease regardless of which one is enumerated
+        // first.
         string? latestText = null;
         foreach (var item in document.RootElement.EnumerateArray())
         {
@@ -93,14 +112,15 @@ public static class UpdateNotifier
                 typeProperty.GetString() != "dir" ||
                 !item.TryGetProperty("name", out var nameProperty) ||
                 nameProperty.GetString() is not { } name ||
-                !TryParseVersion(name, out var version, out _) ||
-                latest is not null && version <= latest)
+                !TryParseVersion(name, out _, out _))
             {
                 continue;
             }
 
-            latest = version;
-            latestText = name;
+            if (latestText is null || IsNewer(name, latestText))
+            {
+                latestText = name;
+            }
         }
         return latestText;
     }
@@ -157,7 +177,13 @@ public static class UpdateNotifier
         var currentIsNumeric = current.Length > 0 && current.All(char.IsAsciiDigit);
         if (candidateIsNumeric && currentIsNumeric)
         {
-            return long.Parse(candidate).CompareTo(long.Parse(current));
+            // SemVer numeric identifiers have no length limit, so comparing them as integers
+            // could overflow; a longer run of digits is always the larger number (neither ever
+            // has a leading zero, since that itself is invalid per the spec), and same-length
+            // digit strings order the same numerically and lexically.
+            return candidate.Length != current.Length
+                ? candidate.Length.CompareTo(current.Length)
+                : string.CompareOrdinal(candidate, current);
         }
 
         return candidateIsNumeric != currentIsNumeric
@@ -237,12 +263,6 @@ public static class UpdateNotifier
             return;
         }
 
-        var lockPath = TryAcquireRefreshLease(LockPath(CachePath()));
-        if (lockPath is null)
-        {
-            return;
-        }
-
         var start = new ProcessStartInfo(executable) { UseShellExecute = false, CreateNoWindow = true };
 
         // Under `dotnet run`/`dotnet path/to/wip.dll`, ProcessPath is the dotnet host itself, not
@@ -257,69 +277,10 @@ public static class UpdateNotifier
         }
 
         start.EnvironmentVariables[RefreshHelperEnvironmentVariable] = "1";
-        try
-        {
-            Process.Start(start)?.Dispose();
-        }
-        catch (Exception)
-        {
-            TryDelete(lockPath);
-        }
-    }
 
-    /// <summary>
-    /// Atomically claims the right to refresh, so concurrent wip invocations against the same
-    /// stale cache don't each spawn a helper and burn through GitHub's unauthenticated rate
-    /// limit. Returns the lease path on success, so it can be released if the helper never
-    /// starts.
-    /// </summary>
-    private static string? TryAcquireRefreshLease(string lockPath)
-    {
-        Directory.CreateDirectory(Path.GetDirectoryName(lockPath)!);
-        if (TryCreateLease(lockPath))
-        {
-            return lockPath;
-        }
-
-        try
-        {
-            if (DateTime.UtcNow - File.GetLastWriteTimeUtc(lockPath) <= RefreshLeaseTimeout)
-            {
-                return null;
-            }
-        }
-        catch (Exception)
-        {
-            return null;
-        }
-
-        TryDelete(lockPath);
-        return TryCreateLease(lockPath) ? lockPath : null;
-    }
-
-    private static bool TryCreateLease(string lockPath)
-    {
-        try
-        {
-            using var stream = new FileStream(lockPath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
-            return true;
-        }
-        catch (IOException)
-        {
-            return false;
-        }
-    }
-
-    private static void TryDelete(string path)
-    {
-        try
-        {
-            File.Delete(path);
-        }
-        catch (Exception)
-        {
-            // Best-effort cleanup; a leftover lease simply expires after RefreshLeaseTimeout.
-        }
+        // RefreshCache() itself claims the cross-process lock (see its remarks), so a redundant
+        // helper spawned here for the same stale cache just loses that race and exits at once.
+        Process.Start(start)?.Dispose();
     }
 
     private static HttpClient CreateClient(HttpMessageHandler? handler)
