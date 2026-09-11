@@ -72,6 +72,15 @@ public static class UpdateNotifier
 
         using (lease)
         {
+            // Winning the lock only means no refresh is in flight right now; a different
+            // helper could have already refreshed and released it between when this one was
+            // spawned and when it got the lock. Re-check freshness before spending another
+            // GitHub request on a cache that is no longer stale.
+            if (DateTimeOffset.UtcNow - ReadCache(cachePath).CheckedAt < RefreshInterval)
+            {
+                return;
+            }
+
             try
             {
                 using var client = CreateClient(handler);
@@ -173,14 +182,15 @@ public static class UpdateNotifier
 
     private static int CompareIdentifier(string candidate, string current)
     {
-        var candidateIsNumeric = candidate.Length > 0 && candidate.All(char.IsAsciiDigit);
-        var currentIsNumeric = current.Length > 0 && current.All(char.IsAsciiDigit);
+        var candidateIsNumeric = IsValidNumericIdentifier(candidate);
+        var currentIsNumeric = IsValidNumericIdentifier(current);
         if (candidateIsNumeric && currentIsNumeric)
         {
             // SemVer numeric identifiers have no length limit, so comparing them as integers
-            // could overflow; a longer run of digits is always the larger number (neither ever
-            // has a leading zero, since that itself is invalid per the spec), and same-length
-            // digit strings order the same numerically and lexically.
+            // could overflow; a longer run of digits is always the larger number, and
+            // same-length digit strings order the same numerically and lexically. Leading
+            // zeroes (rejected by IsValidNumericIdentifier below) would otherwise break the
+            // length comparison: "00" is not shorter than "0" despite being numerically equal.
             return candidate.Length != current.Length
                 ? candidate.Length.CompareTo(current.Length)
                 : string.CompareOrdinal(candidate, current);
@@ -190,6 +200,12 @@ public static class UpdateNotifier
             ? candidateIsNumeric ? -1 : 1
             : string.CompareOrdinal(candidate, current);
     }
+
+    /// <summary>SemVer numeric identifiers disallow leading zeroes, so "0" is numeric but
+    /// "00"/"01" are not -- comparing them as numbers would treat those as equal or misordered.
+    /// A digit run rejected here still compares fine as plain text via CompareOrdinal above.</summary>
+    private static bool IsValidNumericIdentifier(string value) =>
+        value.Length > 0 && value.All(char.IsAsciiDigit) && (value.Length == 1 || value[0] != '0');
 
     private static bool TryParseVersion(string value, out Version version, out string? prerelease)
     {

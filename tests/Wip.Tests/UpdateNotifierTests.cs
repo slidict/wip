@@ -67,6 +67,8 @@ public class UpdateNotifierTests
     [InlineData("2.5.2-rc.1", "2.5.2-rc.1.1", false)]
     [InlineData("2.5.2-rc.99999999999999999999", "2.5.2-rc.1", true)]
     [InlineData("2.5.2-rc.99999999999999999999", "2.5.2-rc.99999999999999999998", true)]
+    [InlineData("2.5.2-rc.01", "2.5.2-rc.1", true)]
+    [InlineData("2.5.2-rc.1", "2.5.2-rc.01", false)]
     public void ComparesVersions(string candidate, string current, bool expected)
     {
         Assert.Equal(expected, UpdateNotifier.IsNewer(candidate, current));
@@ -197,7 +199,7 @@ public class UpdateNotifierTests
         var path = TempCachePath();
         try
         {
-            UpdateNotifier.WriteCache("2.5.2", path);
+            WriteStaleCache(path, "2.5.2");
             var handler = new StubHandler(() => throw new HttpRequestException("offline"));
 
             UpdateNotifier.RefreshCache(handler, path);
@@ -205,6 +207,36 @@ public class UpdateNotifierTests
             var (checkedAt, latest) = UpdateNotifier.ReadCache(path);
             Assert.Equal("2.5.2", latest);
             Assert.True(DateTimeOffset.UtcNow - checkedAt < TimeSpan.FromMinutes(1));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void RefreshCacheSkipsARedundantRequestWhenTheCacheIsAlreadyFresh()
+    {
+        var path = TempCachePath();
+        try
+        {
+            // Simulates a different helper having already refreshed the cache between when
+            // this one was spawned and when it won the lock: nothing here holds the lock, but
+            // the cache itself is already fresh, so RefreshCache's own double-check should
+            // skip the network call entirely.
+            UpdateNotifier.WriteCache("2.5.2", path);
+            var requested = false;
+            var handler = new StubHandler(() =>
+            {
+                requested = true;
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("[]") };
+            });
+
+            UpdateNotifier.RefreshCache(handler, path);
+
+            Assert.False(requested);
+            var (_, latest) = UpdateNotifier.ReadCache(path);
+            Assert.Equal("2.5.2", latest);
         }
         finally
         {
@@ -265,6 +297,14 @@ public class UpdateNotifierTests
 
     private static string TempCachePath() =>
         Path.Combine(Path.GetTempPath(), "wip-tests", $"update-{Guid.NewGuid():N}.json");
+
+    private static void WriteStaleCache(string path, string? latest)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var checkedAt = DateTimeOffset.UtcNow - TimeSpan.FromDays(2);
+        var latestJson = latest is null ? "null" : $"\"{latest}\"";
+        File.WriteAllText(path, $$"""{"checkedAt":"{{checkedAt:O}}","latest":{{latestJson}}}""");
+    }
 
     private sealed class StubHandler(Func<HttpResponseMessage> responseFactory) : HttpMessageHandler
     {
