@@ -175,7 +175,7 @@ public sealed class ComposeFile
         return new Service(
             image,
             build,
-            NormalizeCommand(mapping.GetValueOrDefault("entrypoint")),
+            NormalizeEntrypoint(mapping.GetValueOrDefault("entrypoint")),
             NormalizeCommand(mapping.GetValueOrDefault("command")),
             NormalizeKeyValues(name, mapping.GetValueOrDefault("environment"), "environment"),
             NormalizeList(name, mapping.GetValueOrDefault("ports"), "ports", ListHint),
@@ -199,6 +199,24 @@ public sealed class ComposeFile
         return list is null
             ? RubyValue.Presence(value)
             : Shellwords.Join(list.Select(RubyValue.ToStringValue)).Presence();
+    }
+
+    /// <summary>
+    /// Unlike <see cref="NormalizeCommand"/>, an explicit <c>entrypoint: ""</c> or
+    /// <c>entrypoint: []</c> must survive as an intentional "clear the image's entrypoint"
+    /// instruction (an empty string), distinct from omitting <c>entrypoint:</c> entirely
+    /// (null): <see cref="Execution.CommandBuilder"/> emits <c>--entrypoint ""</c> only for
+    /// the former, and leaves the image's own entrypoint untouched for the latter.
+    /// </summary>
+    private static string? NormalizeEntrypoint(object? value)
+    {
+        if (value is null)
+        {
+            return null;
+        }
+
+        var list = RubyValue.AsSequence(value);
+        return list is null ? RubyValue.ToStringValue(value) : Shellwords.Join(list.Select(RubyValue.ToStringValue));
     }
 
     private OrderedDictionary<string, object?>? NormalizeBuild(string name, object? value)
