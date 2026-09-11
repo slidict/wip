@@ -57,16 +57,22 @@ public static class UpdateNotifier
     internal static void RefreshCache(HttpMessageHandler? handler, string cachePath)
     {
         var lockPath = LockPath(cachePath);
-        Directory.CreateDirectory(Path.GetDirectoryName(lockPath)!);
-
         FileStream lease;
         try
         {
+            Directory.CreateDirectory(Path.GetDirectoryName(lockPath)!);
             lease = new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.Write, FileShare.None);
         }
         catch (IOException)
         {
-            // Another refresh is already in flight for this cache.
+            // Either another refresh is already in flight for this cache, or the lock
+            // directory couldn't be created/opened (e.g. an unwritable LocalApplicationData).
+            // RefreshCache() is called directly by the detached helper process with nothing
+            // above it to catch this, so it has to be swallowed here to stay advisory.
+            return;
+        }
+        catch (UnauthorizedAccessException)
+        {
             return;
         }
 
@@ -182,15 +188,16 @@ public static class UpdateNotifier
 
     private static int CompareIdentifier(string candidate, string current)
     {
-        var candidateIsNumeric = IsValidNumericIdentifier(candidate);
-        var currentIsNumeric = IsValidNumericIdentifier(current);
+        // TryParseVersion already rejected any identifier that is an invalid mix (a leading-zero
+        // digit run isn't valid as either SemVer identifier kind), so a plain "all digits" check
+        // is enough to know both sides are valid numeric identifiers here.
+        var candidateIsNumeric = candidate.All(char.IsAsciiDigit);
+        var currentIsNumeric = current.All(char.IsAsciiDigit);
         if (candidateIsNumeric && currentIsNumeric)
         {
             // SemVer numeric identifiers have no length limit, so comparing them as integers
             // could overflow; a longer run of digits is always the larger number, and
-            // same-length digit strings order the same numerically and lexically. Leading
-            // zeroes (rejected by IsValidNumericIdentifier below) would otherwise break the
-            // length comparison: "00" is not shorter than "0" despite being numerically equal.
+            // same-length digit strings order the same numerically and lexically.
             return candidate.Length != current.Length
                 ? candidate.Length.CompareTo(current.Length)
                 : string.CompareOrdinal(candidate, current);
@@ -200,12 +207,6 @@ public static class UpdateNotifier
             ? candidateIsNumeric ? -1 : 1
             : string.CompareOrdinal(candidate, current);
     }
-
-    /// <summary>SemVer numeric identifiers disallow leading zeroes, so "0" is numeric but
-    /// "00"/"01" are not -- comparing them as numbers would treat those as equal or misordered.
-    /// A digit run rejected here still compares fine as plain text via CompareOrdinal above.</summary>
-    private static bool IsValidNumericIdentifier(string value) =>
-        value.Length > 0 && value.All(char.IsAsciiDigit) && (value.Length == 1 || value[0] != '0');
 
     private static bool TryParseVersion(string value, out Version version, out string? prerelease)
     {
@@ -219,7 +220,15 @@ public static class UpdateNotifier
         var prereleaseSuffix = normalized.IndexOf('-');
         if (prereleaseSuffix >= 0)
         {
-            prerelease = normalized[(prereleaseSuffix + 1)..];
+            var candidate = normalized[(prereleaseSuffix + 1)..];
+            if (!IsValidPrerelease(candidate))
+            {
+                version = null!;
+                prerelease = null;
+                return false;
+            }
+
+            prerelease = candidate;
             normalized = normalized[..prereleaseSuffix];
         }
         else
@@ -228,6 +237,25 @@ public static class UpdateNotifier
         }
 
         return Version.TryParse(normalized, out version!);
+    }
+
+    /// <summary>Every dot-separated identifier must be non-empty and match SemVer's grammar: a
+    /// numeric identifier (digits only, no leading zero unless it's just "0") or an alphanumeric
+    /// one (letters, digits and hyphens, with at least one non-digit). A digit run with a
+    /// leading zero, like "01", matches neither and is rejected outright rather than assigned to
+    /// either kind.</summary>
+    private static bool IsValidPrerelease(string prerelease) =>
+        prerelease.Length > 0 && prerelease.Split('.').All(IsValidPrereleaseIdentifier);
+
+    private static bool IsValidPrereleaseIdentifier(string identifier)
+    {
+        if (identifier.Length == 0 || !identifier.All(c => char.IsAsciiLetterOrDigit(c) || c == '-'))
+        {
+            return false;
+        }
+
+        var isNumeric = identifier.All(char.IsAsciiDigit);
+        return !isNumeric || identifier.Length == 1 || identifier[0] != '0';
     }
 
     internal static (DateTimeOffset CheckedAt, string? Latest) ReadCache(string cachePath)

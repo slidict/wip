@@ -53,6 +53,22 @@ public class UpdateNotifierTests
         Assert.Equal("2.5.2", UpdateNotifier.FindLatestVersion(releaseFirst));
     }
 
+    [Fact]
+    public void SkipsDirectoriesWithAMalformedPrereleaseTag()
+    {
+        const string response = """
+            [
+              { "name": "2.5.2-rc.01", "type": "dir" },
+              { "name": "2.4.9", "type": "dir" }
+            ]
+            """;
+
+        // "01" is not a valid SemVer identifier (a numeric identifier can't have a leading
+        // zero, and an alphanumeric one needs a non-digit character), so the whole directory
+        // name is rejected rather than winning by some fallback ordering.
+        Assert.Equal("2.4.9", UpdateNotifier.FindLatestVersion(response));
+    }
+
     [Theory]
     [InlineData("2.5.3", "2.5.2", true)]
     [InlineData("2.5.2", "2.5.2", false)]
@@ -67,7 +83,7 @@ public class UpdateNotifierTests
     [InlineData("2.5.2-rc.1", "2.5.2-rc.1.1", false)]
     [InlineData("2.5.2-rc.99999999999999999999", "2.5.2-rc.1", true)]
     [InlineData("2.5.2-rc.99999999999999999999", "2.5.2-rc.99999999999999999998", true)]
-    [InlineData("2.5.2-rc.01", "2.5.2-rc.1", true)]
+    [InlineData("2.5.2-rc.01", "2.5.2-rc.1", false)]
     [InlineData("2.5.2-rc.1", "2.5.2-rc.01", false)]
     public void ComparesVersions(string candidate, string current, bool expected)
     {
@@ -262,6 +278,34 @@ public class UpdateNotifierTests
         {
             File.Delete(path);
             File.Delete(lockPath);
+        }
+    }
+
+    [Fact]
+    public void RefreshCacheSwallowsAFailureToCreateTheLockDirectory()
+    {
+        // A file where the lock's parent directory needs to be makes Directory.CreateDirectory
+        // throw IOException, the same shape an unwritable LocalApplicationData would produce.
+        // RefreshCache() runs directly inside the detached helper process with nothing above it
+        // to catch this, so it must not escape here either.
+        var blocker = TempCachePath();
+        Directory.CreateDirectory(Path.GetDirectoryName(blocker)!);
+        File.WriteAllText(blocker, "not a directory");
+        var cachePath = Path.Combine(blocker, "update.json");
+        try
+        {
+            var handler = new StubHandler(() => new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("[]"),
+            });
+
+            var exception = Record.Exception(() => UpdateNotifier.RefreshCache(handler, cachePath));
+
+            Assert.Null(exception);
+        }
+        finally
+        {
+            File.Delete(blocker);
         }
     }
 
