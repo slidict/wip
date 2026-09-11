@@ -49,6 +49,121 @@ public class ComposeFileEntrypointTests
     }
 
     [Fact]
+    public void ExecFormEntrypointWithoutCommandLeavesTheImageCmdIntact()
+    {
+        using var directory = new TemporaryDirectory();
+        var composePath = Path.Combine(directory.Path, "compose.yml");
+        File.WriteAllText(composePath, """
+            services:
+              app:
+                image: myapp:dev
+                entrypoint: ["/usr/local/bin/start", "--verbose"]
+            """);
+
+        var config = new Config(YamlLoader.LoadText($$"""
+            mode: compose-native
+            compose:
+              file: {{composePath}}
+              service: app
+            """, allowAliases: false), Path.Combine(directory.Path, "wip.yml"));
+        var builder = new CommandBuilder("wslc.exe", config, new FakeEnvironment());
+
+        // No command: means no argv, so wslc (like Docker) must fall back to the image's own
+        // CMD for the new entrypoint's arguments -- "--verbose" must not be spliced in here,
+        // or it would occupy that slot and suppress the image's CMD.
+        Assert.Equal(
+            [
+                "wslc.exe", "run", "--name", "app", "--network", directory.Name, "-d",
+                "--entrypoint", "/usr/local/bin/start", "myapp:dev",
+            ],
+            builder.Up(detach: true));
+    }
+
+    [Theory]
+    [InlineData("entrypoint: \"\"")]
+    [InlineData("entrypoint: []")]
+    public void ExplicitEmptyEntrypointClearsTheImageEntrypoint(string entrypointYaml)
+    {
+        using var directory = new TemporaryDirectory();
+        var composePath = Path.Combine(directory.Path, "compose.yml");
+        File.WriteAllText(composePath, $$"""
+            services:
+              app:
+                image: myapp:dev
+                {{entrypointYaml}}
+                command: serve
+            """);
+
+        var compose = ComposeFile.Load(composePath);
+        var app = (OrderedDictionary<string, object?>)compose.ToDependenciesMapping()["app"]!;
+        Assert.Equal("", app["entrypoint"]);
+
+        var config = new Config(YamlLoader.LoadText($$"""
+            mode: compose-native
+            compose:
+              file: {{composePath}}
+              service: app
+            """, allowAliases: false), Path.Combine(directory.Path, "wip.yml"));
+        var builder = new CommandBuilder("wslc.exe", config, new FakeEnvironment());
+
+        Assert.Equal(
+            [
+                "wslc.exe", "run", "--name", "app", "--network", directory.Name, "-d",
+                "--entrypoint", "", "myapp:dev", "serve",
+            ],
+            builder.Up(detach: true));
+    }
+
+    [Fact]
+    public void OmittedEntrypointLeavesTheImageEntrypointUntouched()
+    {
+        using var directory = new TemporaryDirectory();
+        var composePath = Path.Combine(directory.Path, "compose.yml");
+        File.WriteAllText(composePath, """
+            services:
+              app:
+                image: myapp:dev
+                command: serve
+            """);
+
+        var compose = ComposeFile.Load(composePath);
+        var app = (OrderedDictionary<string, object?>)compose.ToDependenciesMapping()["app"]!;
+        Assert.False(app.ContainsKey("entrypoint"));
+
+        var config = new Config(YamlLoader.LoadText($$"""
+            mode: compose-native
+            compose:
+              file: {{composePath}}
+              service: app
+            """, allowAliases: false), Path.Combine(directory.Path, "wip.yml"));
+        var builder = new CommandBuilder("wslc.exe", config, new FakeEnvironment());
+
+        Assert.DoesNotContain("--entrypoint", builder.Up(detach: true));
+    }
+
+    [Fact]
+    public void ExplicitNullEntrypointInARawDependencyLeavesTheImageEntrypointUntouched()
+    {
+        // Compose normalization never produces this (an omitted entrypoint: is left out of
+        // the mapping entirely, never set to null), but a raw wip.yml dependencies: entry can
+        // write "entrypoint:" (YAML null) directly, and that must mean the same as omitting it
+        // -- not the explicit-empty-string "clear the image's entrypoint" case.
+        var config = new Config(YamlLoader.LoadText("""
+            version: 1
+            mode: container
+            container: app
+            dependencies:
+              app:
+                image: myapp:dev
+                entrypoint:
+                command: serve
+            """, allowAliases: false));
+        var builder = new CommandBuilder("wslc.exe", config, new FakeEnvironment());
+
+        Assert.DoesNotContain("--entrypoint", builder.Up());
+    }
+
+    [Fact]
     public void EntrypointIsNotPassedToExec()
     {
         using var directory = new TemporaryDirectory();

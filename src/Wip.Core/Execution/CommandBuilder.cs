@@ -316,10 +316,10 @@ public sealed class CommandBuilder
             result.Add(user);
         }
 
-        if (includeEntrypoint && Entrypoint(values).FirstOrDefault() is { } entrypoint)
+        if (includeEntrypoint && Entrypoint(values) is { } entrypoint)
         {
             result.Add("--entrypoint");
-            result.Add(entrypoint);
+            result.Add(entrypoint.Executable);
         }
 
         foreach (var (key, value) in MergedEnvironment(values))
@@ -354,14 +354,40 @@ public sealed class CommandBuilder
     /// <summary>
     /// WSLC's <c>--entrypoint</c> replaces only the executable. Compose exec-form entrypoints
     /// may also contain arguments, so append everything after the executable in front of the
-    /// service command rather than passing the whole joined value as an executable name.
+    /// service command rather than passing the whole joined value as an executable name. Only
+    /// done when there is an actual command/argv, though: with none, wslc run (like Docker)
+    /// falls back to the image's own CMD as the new entrypoint's arguments, and splicing in
+    /// entrypoint arguments here would wrongly occupy that slot and suppress the image's CMD.
     /// </summary>
     private static IEnumerable<string> ContainerArguments(
         OrderedDictionary<string, object?> values,
-        IEnumerable<string> arguments) => Entrypoint(values).Skip(1).Concat(arguments);
+        IEnumerable<string> arguments)
+    {
+        var command = arguments as IReadOnlyCollection<string> ?? arguments.ToList();
+        return command.Count > 0 && Entrypoint(values) is { } entrypoint
+            ? entrypoint.Arguments.Concat(command)
+            : command;
+    }
 
-    private static IReadOnlyList<string> Entrypoint(OrderedDictionary<string, object?> values) =>
-        Shellwords.Split(RubyValue.ToStringValue(values.GetValueOrDefault("entrypoint")));
+    /// <summary>
+    /// Null when <c>entrypoint:</c> is absent, or present but <c>null</c> (a raw wip.yml
+    /// dependency entry can write that explicitly; Compose normalization never does) -- either
+    /// way the image's own entrypoint is left untouched. Present with an empty
+    /// <see cref="EntrypointOverride.Executable"/> for an explicit <c>entrypoint: ""</c>/
+    /// <c>entrypoint: []</c>, which clears it via <c>--entrypoint ""</c> instead.
+    /// </summary>
+    private static EntrypointOverride? Entrypoint(OrderedDictionary<string, object?> values)
+    {
+        if (!values.TryGetValue("entrypoint", out var raw) || raw is null)
+        {
+            return null;
+        }
+
+        var parts = Shellwords.Split(RubyValue.ToStringValue(raw));
+        return new EntrypointOverride(parts.FirstOrDefault() ?? string.Empty, parts.Skip(1).ToList());
+    }
+
+    private readonly record struct EntrypointOverride(string Executable, IReadOnlyList<string> Arguments);
 
     /// <summary>
     /// With sync configured, a live bind mount of the target (<c>.:/app</c>) is swapped for
