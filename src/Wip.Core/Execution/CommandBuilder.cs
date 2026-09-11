@@ -50,7 +50,7 @@ public sealed class CommandBuilder
             command.Add("-it");
         }
 
-        command.AddRange(Options(values, includeContainer: true, includePublish: false));
+        command.AddRange(Options(values, includeContainer: true, includePublish: false, includeEntrypoint: false));
         command.AddRange(arguments);
         return command;
     }
@@ -74,7 +74,7 @@ public sealed class CommandBuilder
 
         command.AddRange(Options(values));
         command.Add(Required(values, "image"));
-        command.AddRange(arguments);
+        command.AddRange(ContainerArguments(values, arguments));
         return command;
     }
 
@@ -100,7 +100,9 @@ public sealed class CommandBuilder
 
         command.AddRange(Options(values));
         command.Add(Required(values, "image"));
-        command.AddRange(Shellwords.Split(RubyValue.ToStringValue(values.GetValueOrDefault("command"))));
+        command.AddRange(ContainerArguments(
+            values,
+            Shellwords.Split(RubyValue.ToStringValue(values.GetValueOrDefault("command")))));
         return command;
     }
 
@@ -221,7 +223,9 @@ public sealed class CommandBuilder
 
         command.AddRange(Options(values, sync: false));
         command.Add(Required(values, "image"));
-        command.AddRange(Shellwords.Split(RubyValue.ToStringValue(values.GetValueOrDefault("command"))));
+        command.AddRange(ContainerArguments(
+            values,
+            Shellwords.Split(RubyValue.ToStringValue(values.GetValueOrDefault("command")))));
         return command;
     }
 
@@ -295,6 +299,7 @@ public sealed class CommandBuilder
         OrderedDictionary<string, object?> values,
         bool includeContainer = false,
         bool includePublish = true,
+        bool includeEntrypoint = true,
         bool sync = true)
     {
         var result = new List<string>();
@@ -309,6 +314,12 @@ public sealed class CommandBuilder
         {
             result.Add("-u");
             result.Add(user);
+        }
+
+        if (includeEntrypoint && Entrypoint(values).FirstOrDefault() is { } entrypoint)
+        {
+            result.Add("--entrypoint");
+            result.Add(entrypoint);
         }
 
         foreach (var (key, value) in MergedEnvironment(values))
@@ -339,6 +350,18 @@ public sealed class CommandBuilder
 
         return result;
     }
+
+    /// <summary>
+    /// WSLC's <c>--entrypoint</c> replaces only the executable. Compose exec-form entrypoints
+    /// may also contain arguments, so append everything after the executable in front of the
+    /// service command rather than passing the whole joined value as an executable name.
+    /// </summary>
+    private static IEnumerable<string> ContainerArguments(
+        OrderedDictionary<string, object?> values,
+        IEnumerable<string> arguments) => Entrypoint(values).Skip(1).Concat(arguments);
+
+    private static IReadOnlyList<string> Entrypoint(OrderedDictionary<string, object?> values) =>
+        Shellwords.Split(RubyValue.ToStringValue(values.GetValueOrDefault("entrypoint")));
 
     /// <summary>
     /// With sync configured, a live bind mount of the target (<c>.:/app</c>) is swapped for

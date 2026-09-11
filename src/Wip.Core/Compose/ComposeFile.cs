@@ -18,7 +18,8 @@ public sealed class ComposeFile
 {
     private static readonly string[] ServiceKeys =
     [
-        "image", "build", "command", "environment", "ports", "volumes", "working_dir", "user", "restart",
+        "image", "build", "entrypoint", "command", "environment", "ports", "volumes", "working_dir", "user",
+        "restart",
         "depends_on", "profiles", "healthcheck",
     ];
 
@@ -120,6 +121,11 @@ public sealed class ComposeFile
             var service = services[name];
             var entry = RubyValue.NewMapping();
             entry["image"] = service.Build is not null ? ImageTag(name, service) : service.Image;
+            if (service.Entrypoint is not null)
+            {
+                entry["entrypoint"] = service.Entrypoint;
+            }
+
             entry["command"] = service.Command;
             entry["env"] = service.Environment;
             entry["ports"] = service.Ports.Cast<object?>().ToList();
@@ -169,6 +175,7 @@ public sealed class ComposeFile
         return new Service(
             image,
             build,
+            NormalizeCommand(mapping.GetValueOrDefault("entrypoint")),
             NormalizeCommand(mapping.GetValueOrDefault("command")),
             NormalizeKeyValues(name, mapping.GetValueOrDefault("environment"), "environment"),
             NormalizeList(name, mapping.GetValueOrDefault("ports"), "ports", ListHint),
@@ -476,6 +483,7 @@ public sealed class ComposeFile
     private sealed record Service(
         string? Image,
         OrderedDictionary<string, object?>? Build,
+        string? Entrypoint,
         string? Command,
         OrderedDictionary<string, object?> Environment,
         List<string> Ports,
