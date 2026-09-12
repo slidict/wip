@@ -40,6 +40,7 @@ key, every command's flags, guides, and troubleshooting — see the
 - **No orchestration engine of its own** — every mode ultimately shells out to `wslc.exe` /
   `wslc` as a safe argv array; wip never talks to Docker and never grows logic that competes with
   `wslc`. See [Architecture](https://github.com/slidict/wip/wiki/Architecture).
+<a id="architecture"></a>
 - **Three modes for three project shapes** — drive containers directly, parse an existing
   `compose.yml` yourself, or bridge to a third-party compose-for-`wslc` tool. See
   [Which mode should you use?](#which-mode-should-you-use) below.
