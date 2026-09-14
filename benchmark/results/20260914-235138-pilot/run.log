@@ -1,0 +1,41 @@
+[2026-09-14T23:51:54.7154717+09:00] schedule: windows-wip#r1 -> wsl-docker#r1 -> windows-docker#r1 -> wsl-wip#r1
+[2026-09-14T23:51:54.7325424+09:00] === windows-wip round=1 warmup=False order=0 ===
+[2026-09-14T23:51:54.7406859+09:00] stopping both backends to reach baseline state
+[2026-09-14T23:51:55.2481495+09:00] sampling baseline for 15 s
+[2026-09-14T23:52:11.3044704+09:00] starting infra (wip)
+[2026-09-14T23:52:15.9788781+09:00] sampling infra-idle for 15 s
+[2026-09-14T23:52:32.0113093+09:00] starting app
+[2026-09-14T23:52:32.6136608+09:00] sampling app-idle (no load) for 15 s
+[2026-09-14T23:52:48.6475967+09:00] running load for 30 s at concurrency 20
+[2026-09-14T23:53:22.3711788+09:00] stopping app
+[2026-09-14T23:53:22.6558134+09:00] row written: config=windows-wip round=1 warmup=False
+[2026-09-14T23:53:22.6638699+09:00] === wsl-docker round=1 warmup=False order=1 ===
+[2026-09-14T23:53:22.6638699+09:00] stopping both backends to reach baseline state
+[2026-09-14T23:53:26.1775077+09:00] sampling baseline for 15 s
+[2026-09-14T23:53:42.2129451+09:00] starting infra (docker)
+[2026-09-14T23:53:57.8042381+09:00] sampling infra-idle for 15 s
+[2026-09-14T23:54:14.5745894+09:00] starting app
+[2026-09-14T23:55:17.8192943+09:00] stopping app
+[2026-09-14T23:55:18.4193725+09:00] row written: config=wsl-docker round=1 warmup=False
+[2026-09-14T23:55:18.4229097+09:00] === windows-docker round=1 warmup=False order=2 ===
+[2026-09-14T23:55:18.4280137+09:00] stopping both backends to reach baseline state
+[2026-09-14T23:56:05.4083398+09:00] sampling baseline for 15 s
+[2026-09-14T23:56:21.4863067+09:00] starting infra (docker)
+[2026-09-14T23:56:36.2970607+09:00] sampling infra-idle for 15 s
+[2026-09-14T23:56:53.1394777+09:00] starting app
+[2026-09-14T23:56:53.7507532+09:00] sampling app-idle (no load) for 15 s
+[2026-09-14T23:57:10.1260214+09:00] running load for 30 s at concurrency 20
+[2026-09-14T23:57:44.8672870+09:00] stopping app
+[2026-09-14T23:57:45.3436888+09:00] row written: config=windows-docker round=1 warmup=False
+[2026-09-14T23:57:45.3490173+09:00] === wsl-wip round=1 warmup=False order=3 ===
+[2026-09-14T23:57:45.3527827+09:00] stopping both backends to reach baseline state
+[2026-09-14T23:58:32.5041766+09:00] sampling baseline for 15 s
+[2026-09-14T23:58:48.5276950+09:00] starting infra (wip)
+[2026-09-14T23:58:52.4732057+09:00] sampling infra-idle for 15 s
+[2026-09-14T23:59:08.5000425+09:00] starting app
+[2026-09-14T23:59:11.8747582+09:00] sampling app-idle (no load) for 15 s
+[2026-09-14T23:59:27.9054659+09:00] running load for 30 s at concurrency 20
+[2026-09-15T00:00:02.2965910+09:00] stopping app
+[2026-09-15T00:00:05.3170401+09:00] row written: config=wsl-wip round=1 warmup=False
+[2026-09-15T00:00:05.3170401+09:00] stopping both backends after run
+[2026-09-15T00:00:07.4927420+09:00] done
