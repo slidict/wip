@@ -1,12 +1,10 @@
 # wip vs Docker Desktop benchmark — results
 
-Generated: 2026-09-15T08:09:14+09:00 (main run); follow-up rows added 08:26–08:38+09:00
+Generated: 2026-09-15T08:09:14+09:00
 
-**Run type:** pilot (not the full protocol in `SKILL.md`). Main run: 1 round per config, no
-warmup, 30 s load, 15 s baseline/idle. Follow-up rows (windows-docker/wsl-docker rounds 1–4): 5 s
-baseline/idle/load.
+**Run type:** pilot (not the full protocol in `SKILL.md`).
 
-## Summary (main run, round 1)
+## Summary (round 1)
 
 | Metric | windows-docker | windows-wip | wsl-docker | wsl-wip |
 |---|---|---|---|---|
@@ -35,14 +33,14 @@ Full detail in `storage.csv`.
 | windows-wip | 1 | 3983.1 | 314.5 | 276.6 | True | 266.2 | 13687.33 | 0 | 1.2968 | 2.2907 | |
 | wsl-wip | 1 | 4049.9 | 4768.8 | 248.4 | True | 2875.2 | 13768.68 | 0 | 1.3156 | 2.1972 | |
 | windows-docker | 1 | 13065.5 | 632.0 | 62046.6 | False | 510.7 | | | | | app never became http-ready |
-| windows-docker | 1 (follow-up) | 10663.9 | 703.8 | 284.3 | True | 545.7 | 6480.12 | 0 | 0.694 | 1.1584 | |
-| windows-docker | 2 (follow-up) | 12417.2 | 641.4 | 19.1 | True | 487.4 | 7379.30 | 0 | 0.5967 | 1.0288 | |
-| windows-docker | 3 (follow-up) | 10079.4 | 625.8 | 18.3 | True | 457.5 | 7432.97 | 0 | 0.5924 | 1.0217 | |
-| windows-docker | 4 (follow-up) | 10580.5 | 629.1 | 20.4 | True | 497.7 | 6487.22 | 0 | 0.6971 | 1.1349 | |
+| windows-docker | 2 | 10663.9 | 703.8 | 284.3 | True | 545.7 | 6480.12 | 0 | 0.694 | 1.1584 | |
+| windows-docker | 3 | 12417.2 | 641.4 | 19.1 | True | 487.4 | 7379.30 | 0 | 0.5967 | 1.0288 | |
+| windows-docker | 4 | 10079.4 | 625.8 | 18.3 | True | 457.5 | 7432.97 | 0 | 0.5924 | 1.0217 | |
+| windows-docker | 5 | 10580.5 | 629.1 | 20.4 | True | 497.7 | 6487.22 | 0 | 0.6971 | 1.1349 | |
 | wsl-docker | 1 | 14481.2 | 691.5 | 258.1 | True | 573.6 | 9123.996 | 0 | 2.0952 | 2.9704 | |
-| wsl-docker | 1 (follow-up) | 12640.9 | 740.2 | 20.4 | True | 553.0 | 7132.07 | 0 | 0.6356 | 1.0294 | |
-| wsl-docker | 2 (follow-up) | False | 158.7 | 0 | False | 106.9 | | | | | infra failed to become ready; Cannot connect to the Docker daemon |
-| wsl-docker | 3 (follow-up) | 11872.4 | 834.8 | 21.4 | True | 604.1 | 6980.82 | 0 | 0.6451 | 1.0582 | |
-| wsl-docker | 4 (follow-up) | 13350.2 | 721.2 | 21.9 | True | 589.9 | 7196.20 | 0 | 0.5981 | 1.1062 | |
+| wsl-docker | 2 | 12640.9 | 740.2 | 20.4 | True | 553.0 | 7132.07 | 0 | 0.6356 | 1.0294 | |
+| wsl-docker | 3 | False | 158.7 | 0 | False | 106.9 | | | | | infra failed to become ready; Cannot connect to the Docker daemon |
+| wsl-docker | 4 | 11872.4 | 834.8 | 21.4 | True | 604.1 | 6980.82 | 0 | 0.6451 | 1.0582 | |
+| wsl-docker | 5 | 13350.2 | 721.2 | 21.9 | True | 589.9 | 7196.20 | 0 | 0.5981 | 1.1062 | |
 
 See `results.csv` / `samples.csv` for full raw data, `SKILL.md` for the protocol.
