@@ -40,6 +40,32 @@ difference in this host's startup reliability, not noise — though only the ful
 measured rounds per config would make that a confident claim rather than a repeated pilot
 observation.
 
+## Storage
+
+Ran after the timing/load phase above, per `SKILL.md`'s "treat storage as a separate phase" —
+`Measure-Storage.ps1`, one dedicated test volume per backend, 512 MB written then deleted, at the
+four points `SKILL.md` defines. Single measurement each, not repeated — treat as one data point,
+not a trend. Full detail in `storage.csv`; free-space deltas below also include whatever the
+preflight image pull (`alpine:latest`) and ordinary host activity added, not just the test data.
+
+| | Docker Desktop (`docker_data.vhdx`) | WSLC (`storage.vhdx`) |
+|---|---|---|
+| Before creation | 258.87 GiB | 151.05 GiB |
+| After writing 512 MB (logical usage inside container: `512.0M`) | 258.87 GiB (unchanged) | 151.08 GiB (**+32 MiB**) |
+| After deleting the test volume | 258.87 GiB (unchanged) | 151.08 GiB (unchanged) |
+| After the reclaim attempt* | 258.87 GiB (unchanged) | 151.05 GiB (**‑31 MiB**, back to ~1 MiB above the original) |
+
+\* Neither reclaim attempt ran `Optimize-VHD` (needs the Hyper-V PowerShell module and
+elevation, not assumed available — see `Measure-Storage.ps1`'s header). For Docker Desktop, the
+reclaim attempt is just a full stop; for WSLC, it's `wslc system session terminate`. WSLC's disk
+size tracks the write/delete almost exactly (grew by 32 MiB writing 512 MB, shrank by 31 MiB after
+the session ended) — a real, small, automatic reclaim, seemingly in ~32 MiB blocks. Docker
+Desktop's `docker_data.vhdx` showed **no byte-level change at all** across write, delete, or
+reclaim in this one run; whether that means it doesn't reclaim under this backend the way WSLC's
+volume did, or the file's existing slack space simply absorbed a 512 MB write without needing to
+grow, isn't distinguishable from a single measurement — worth a repeat with a larger write size to
+tell those apart.
+
 ## Per-config detail (auto-generated)
 
 Auto-generated from `results.csv` by `Invoke-Benchmark.ps1`. Each row is one measured trial (warmup rounds excluded). See `samples.csv` for the CPU/memory time series and `SKILL.md` for the protocol.

@@ -1,0 +1,13 @@
+﻿backend,point,timestamp,vhdx_name,vhdx_path,vhdx_size_bytes,drive_c_free_bytes,logical_usage_raw,notes
+docker,before_creation,2026-09-15T08:12:08.9689980+09:00,ext4.vhdx (main),C:\Users\yusuk\AppData\Local\Docker\wsl\main\ext4.vhdx,100663296,65789792256,,
+docker,before_creation,2026-09-15T08:12:09.3124360+09:00,docker_data.vhdx,C:\Users\yusuk\AppData\Local\Docker\wsl\disk\docker_data.vhdx,277956526080,65789788160,,
+docker,after_write,2026-09-15T08:12:19.7838986+09:00,ext4.vhdx (main),C:\Users\yusuk\AppData\Local\Docker\wsl\main\ext4.vhdx,100663296,65740587008,512.0M	/data,
+docker,after_write,2026-09-15T08:12:19.8031417+09:00,docker_data.vhdx,C:\Users\yusuk\AppData\Local\Docker\wsl\disk\docker_data.vhdx,277956526080,65740193792,512.0M	/data,
+docker,after_delete,2026-09-15T08:12:19.9187796+09:00,ext4.vhdx (main),C:\Users\yusuk\AppData\Local\Docker\wsl\main\ext4.vhdx,100663296,65739337728,,
+docker,after_delete,2026-09-15T08:12:19.9350320+09:00,docker_data.vhdx,C:\Users\yusuk\AppData\Local\Docker\wsl\disk\docker_data.vhdx,277956526080,65739337728,,
+docker,after_reclaim_attempt,2026-09-15T08:13:07.2898658+09:00,ext4.vhdx (main),C:\Users\yusuk\AppData\Local\Docker\wsl\main\ext4.vhdx,100663296,65715965952,,reclaim = Docker Desktop fully stopped; not Optimize-VHD (needs Hyper-V module + elevation; not attempted)
+docker,after_reclaim_attempt,2026-09-15T08:13:07.2997032+09:00,docker_data.vhdx,C:\Users\yusuk\AppData\Local\Docker\wsl\disk\docker_data.vhdx,277956526080,65715965952,,reclaim = Docker Desktop fully stopped; not Optimize-VHD (needs Hyper-V module + elevation; not attempted)
+wip,before_creation,2026-09-15T08:13:11.5032989+09:00,storage.vhdx (wslc-cli-yusuk),C:\Users\yusuk\AppData\Local\wslc\sessions\wslc-cli-yusuk\storage.vhdx,162216804352,65678016512,,
+wip,after_write,2026-09-15T08:13:14.1719756+09:00,storage.vhdx (wslc-cli-yusuk),C:\Users\yusuk\AppData\Local\wslc\sessions\wslc-cli-yusuk\storage.vhdx,162250358784,65644265472,512.0M	/data,
+wip,after_delete,2026-09-15T08:13:14.2328500+09:00,storage.vhdx (wslc-cli-yusuk),C:\Users\yusuk\AppData\Local\wslc\sessions\wslc-cli-yusuk\storage.vhdx,162250358784,65644265472,,
+wip,after_reclaim_attempt,2026-09-15T08:13:15.3152769+09:00,storage.vhdx (wslc-cli-yusuk),C:\Users\yusuk\AppData\Local\wslc\sessions\wslc-cli-yusuk\storage.vhdx,162217852928,65714507776,,reclaim = WSLC session terminated; not Optimize-VHD (needs Hyper-V module + elevation; not attempted)
