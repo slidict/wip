@@ -12,9 +12,15 @@ public class HelpCommandTests
     public void NoArgumentsShowHelpAndSucceed()
     {
         var parsed = Program.Parse(Program.BuildRoot(), []);
-        var invocation = new InvocationConfiguration { EnableDefaultExceptionHandler = false };
+        var output = new StringWriter();
+        var invocation = new InvocationConfiguration
+        {
+            EnableDefaultExceptionHandler = false,
+            Output = output,
+        };
 
         Assert.Equal(0, parsed.Invoke(invocation));
+        Assert.Contains("Usage:", output.ToString());
     }
 
     [Fact]

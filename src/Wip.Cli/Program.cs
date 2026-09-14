@@ -64,6 +64,14 @@ internal static class Program
     /// </remarks>
     internal static ParseResult Parse(RootCommand root, string[] args)
     {
+        // Package managers may validate an installation by launching the executable without
+        // arguments. Run System.CommandLine's built-in help action directly so it uses the
+        // current command tree and invocation output, and exits successfully.
+        if (args.Length == 0)
+        {
+            return root.Parse(["--help"]);
+        }
+
         var parsed = root.Parse(args);
 
         // A matched subcommand, or nothing left over, means there is no custom name to route.
@@ -117,11 +125,6 @@ internal static class Program
             debugLogOption,
             quietOption,
         };
-
-        // Package managers may validate an installation by launching the executable without
-        // arguments. Treat that as a request for usage information rather than a command-line
-        // error, while leaving parser errors (such as unknown options) non-zero.
-        root.SetAction(_ => ShowHelp());
 
         CliContext Context(ParseResult parsed) => new(new CliOptions(
             parsed.GetValue(configOption),
