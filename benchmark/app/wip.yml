@@ -1,0 +1,13 @@
+version: 1
+mode: container
+container: app
+dependencies:
+  app:
+    image: wip-bench:latest
+    ports:
+      - "18080:3000"
+commands:
+  build:
+    type: build
+    context: .
+    tag: wip-bench:latest
