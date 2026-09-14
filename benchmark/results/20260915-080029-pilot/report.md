@@ -40,6 +40,39 @@ difference in this host's startup reliability, not noise — though only the ful
 measured rounds per config would make that a confident claim rather than a repeated pilot
 observation.
 
+## Follow-up: hunting the windows-docker/wsl-docker flake
+
+After this run, a targeted follow-up tried to reproduce the intermittent app-ready flake with
+container diagnostics captured (`docker logs`/`inspect`/`port`) before teardown, instead of
+letting `Stop-App` destroy the evidence every time as it had in all prior observations. 4 rounds
+each of `windows-docker` and `wsl-docker` were run back-to-back (short durations: 5 s
+baseline/idle/load instead of this run's 15/15/30 s — their rows are appended to `results.csv`
+above reusing round numbers 1–4, so treat those as a separate, differently-parameterized batch,
+not more samples of this run's own rounds).
+
+**7 of 8 succeeded.** The one failure was `wsl-docker` round 2, but not the symptom being hunted —
+it failed earlier, at the infra-readiness step: `Wait-WslDockerReady` (30 s timeout) never saw
+`docker info` succeed inside the WSL distro, so `infra_start_ready=False`, and the subsequent
+`docker run` correctly failed with "Cannot connect to the Docker daemon at
+unix:///var/run/docker.sock". No `diag-*.log` was produced, because the new diagnostic capture
+only triggers when the *app* fails to become ready after a *successful* start — an infra-level or
+start-level failure like this one falls outside what it currently watches for. That gap is itself
+a finding: **the diagnostics feature needs to also fire on `infra_start_ready=false` or
+`app_start_cmd_ok=false` for docker configs**, not just on a successful start followed by a failed
+readiness probe.
+
+This is still useful evidence, though: it's a direct, mechanical symptom (the WSL-side
+`docker.sock` unreachable for >30 s after a fresh Docker Desktop boot) rather than an unexplained
+HTTP timeout, and it's consistent with a theory raised earlier — that Docker Desktop's networking
+subsystem under WSL2 mirrored mode has a variable, sometimes long initialization window after
+`docker info` first succeeds, and that this affects *both* the WSL-side `docker.sock` proxy
+(seen here) and the Windows-side HTTP port-forwarding for published container ports (seen in this
+run's own `windows-docker` row, and in earlier pilots). 7/8 quick back-to-back successes here vs.
+a flake in nearly every pilot run so far also suggests the failure rate may depend on how "cold"
+Docker Desktop's start is — repeated starts within one session, close together, look more reliable
+than this pilot's every-round full stop/restart cycle. Not confirmed; worth designing a future run
+around specifically (e.g. compare a cold first-of-the-day start against a warm repeat).
+
 ## Storage
 
 Ran after the timing/load phase above, per `SKILL.md`'s "treat storage as a separate phase" —

@@ -118,6 +118,28 @@ function Start-App {
     }
 }
 
+function Save-DockerDiagnostics {
+    # Captured only when app_ready_ok is false for a docker-backed config, BEFORE Stop-App
+    # removes the container — every prior observation of this flake destroyed the evidence
+    # (docker rm -f) before anyone looked at container state, so root cause is still just
+    # hypotheses. This distinguishes "container crashed" from "container's fine, host-side port
+    # forwarding just isn't wired up yet" from "something else is on the port".
+    param([string]$OutPath, [string]$Config)
+    $sections = New-Object System.Collections.Generic.List[string]
+    $sections.Add("=== config: $Config, captured $((Get-Date).ToString('o')) ===")
+    $sections.Add("--- docker ps -a ---`n" + ((docker ps -a 2>&1) -join "`n"))
+    $sections.Add("--- docker inspect wip-bench ---`n" + ((docker inspect wip-bench 2>&1) -join "`n"))
+    $sections.Add("--- docker logs wip-bench ---`n" + ((docker logs wip-bench 2>&1) -join "`n"))
+    $sections.Add("--- docker port wip-bench ---`n" + ((docker port wip-bench 2>&1) -join "`n"))
+    $sections.Add("--- netstat (18080/3000) ---`n" + ((netstat -ano 2>&1 | Select-String '18080|:3000') -join "`n"))
+    if ($Config -like 'wsl-*') {
+        $sections.Add("--- (from inside WSL) docker logs wip-bench ---`n" + ((wsl -d $WslDistro -- docker logs wip-bench 2>&1) -join "`n"))
+        $sections.Add("--- (from inside WSL) curl -v http://127.0.0.1:18080/ ---`n" + ((wsl -d $WslDistro -- curl -v --max-time 3 'http://127.0.0.1:18080/' 2>&1) -join "`n"))
+    }
+    ($sections -join "`n`n") | Out-File -FilePath $OutPath -Encoding utf8
+    Write-Log "app-ready failure diagnostics saved to $OutPath"
+}
+
 function Stop-App {
     param([string]$Config)
     switch ($Config) {
@@ -401,7 +423,13 @@ try {
         }
         $row.app_ready_ok = $ready.Ready
         $row.app_ready_elapsed_ms = [math]::Round($ready.ElapsedMs, 1)
-        if ($start.ExitCode -eq 0 -and -not $ready.Ready) { $row.notes += 'app never became http-ready; ' }
+        if ($start.ExitCode -eq 0 -and -not $ready.Ready) {
+            $row.notes += 'app never became http-ready; '
+            if ($backend -eq 'docker') {
+                $diagPath = Join-Path $OutDir "diag-$cfg-r$($step.Round)-w$($step.IsWarmup)-$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds()).log"
+                try { Save-DockerDiagnostics -OutPath $diagPath -Config $cfg } catch { Write-Log "diagnostics capture failed: $_" }
+            }
+        }
 
         if ($ready.Ready) {
             Write-Log "sampling app-idle (no load) for $IdleWaitSec s"
