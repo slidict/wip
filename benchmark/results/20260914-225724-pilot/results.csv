@@ -1,0 +1,5 @@
+﻿timestamp,config,round,is_warmup,order_index,infra_start_ready,infra_start_elapsed_ms,app_start_cmd_ok,app_start_cmd_elapsed_ms,app_ready_ok,app_ready_elapsed_ms,app_stop_ok,app_stop_elapsed_ms,load_concurrency,load_requested_duration_s,load_actual_duration_ms,load_total_requests,load_success_requests,load_failed_requests,load_error_rate,load_throughput_rps,load_latency_p50_ms,load_latency_p95_ms,load_latency_min_ms,load_latency_max_ms,notes
+2026-09-14T23:24:47.8529564+09:00,wsl-docker,1,False,0,True,15177.2,True,1134.5,True,272.6,True,546.7,20,30,30007,270821,270821,0,0,9025.26077248642,2.0958,2.965,0.4469,50.2703,
+2026-09-14T23:27:11.1582623+09:00,wsl-wip,1,False,1,True,4847.4,True,3247.7,True,238,True,2750.6,20,30,30005,465517,465517,0,0,15514.647558740211,1.1809,1.9085,0.2207,18.0818,
+2026-09-14T23:29:32.0387836+09:00,windows-docker,1,False,2,True,13075.9,True,619.8,False,62026.7,True,412.3,,,,,,,,,,,,,app never became http-ready; 
+2026-09-14T23:31:22.3853746+09:00,windows-wip,1,False,3,True,4824.1,True,341.4,True,229.2,True,250.2,20,30,30004,387872,387872,0,0,12927.343020930542,1.4838,2.235,0.2719,20.9518,
