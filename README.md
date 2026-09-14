@@ -189,6 +189,10 @@ as Windows. See [CONTRIBUTING.md](CONTRIBUTING.md) for the full setup, and
 the golden-corpus tests, and architecture notes. Known gaps and deferred decisions are tracked in
 [docs/csharp-migration-plan.md](docs/csharp-migration-plan.md).
 
+A Docker Desktop vs. Wip/WSLC benchmark workflow lives under
+[`benchmark/`](benchmark), driven by the
+[`wip-benchmark`](.claude/skills/wip-benchmark/SKILL.md) skill.
+
 ## Contributing
 
 Bug reports and pull requests are welcome on [GitHub](https://github.com/slidict/wip). See
