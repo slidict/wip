@@ -28,7 +28,7 @@
       "processors": 10,
       "networkingMode": "mirrored"
     },
-    "note2": "networkingMode=mirrored means a container's published port is reachable at http://localhost:PORT from Windows regardless of which side (Windows or WSL) started the container, so the load generator always targets localhost from the Windows host."
+    "note2": "networkingMode=mirrored means a container's published port is reachable from Windows regardless of which side (Windows or WSL) started the container. Correction (added after this run, once the cause was found): the load generator and readiness probe target http://127.0.0.1:PORT specifically, not 'localhost' — on this host, Invoke-WebRequest to 'localhost' hung indefinitely while 127.0.0.1 answered immediately, plausibly because 'localhost' resolves ::1 first and IPv6 loopback traffic stalled under this networking mode. See benchmark/scripts/common.ps1's Wait-HttpReady and Invoke-Benchmark.ps1's -AppUrl default."
   },
   "dockerDesktop": {
     "clientVersion": "29.7.2",

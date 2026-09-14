@@ -2,7 +2,9 @@
 // regardless of which container platform/shell is under test. Always invoked from the
 // Windows host process per the benchmark protocol (same load source for every config).
 //
-// Usage: node load-gen.mjs --url http://localhost:18080/ --concurrency 20 --duration 30 --out results.json
+// Usage: node load-gen.mjs --url http://127.0.0.1:18080/ --concurrency 20 --duration 30 --out results.json
+// Not 'localhost': it can hang under WSL2 mirrored networking on some hosts (see
+// benchmark/scripts/common.ps1's Wait-HttpReady / Invoke-Benchmark.ps1's -AppUrl comments).
 import http from 'node:http';
 import { writeFileSync } from 'node:fs';
 
@@ -29,7 +31,25 @@ let stop = false;
 
 function oneRequest() {
   return new Promise((resolve) => {
+    // A response can be aborted or error out after headers arrive but before 'end' fires; if
+    // only 'end' ever resolved this promise, that worker would hang forever and Promise.all
+    // below would never settle, silently truncating the whole load phase. Guard against
+    // resolving (and counting the request) more than once no matter which event fires first.
+    let settled = false;
+    const finish = (ok, ms) => {
+      if (settled) return;
+      settled = true;
+      if (ok) {
+        success++;
+        latenciesMs.push(ms);
+      } else {
+        failed++;
+      }
+      resolve();
+    };
+
     const start = process.hrtime.bigint();
+    const elapsedMs = () => Number(process.hrtime.bigint() - start) / 1e6;
     const req = http.request(
       {
         hostname: target.hostname,
@@ -42,22 +62,15 @@ function oneRequest() {
       (res) => {
         res.on('data', () => {});
         res.on('end', () => {
-          const ms = Number(process.hrtime.bigint() - start) / 1e6;
-          if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
-            success++;
-            latenciesMs.push(ms);
-          } else {
-            failed++;
-          }
-          resolve();
+          const ok = !!(res.statusCode && res.statusCode >= 200 && res.statusCode < 300);
+          finish(ok, elapsedMs());
         });
+        res.on('aborted', () => finish(false, elapsedMs()));
+        res.on('error', () => finish(false, elapsedMs()));
       },
     );
     req.on('timeout', () => req.destroy(new Error('timeout')));
-    req.on('error', () => {
-      failed++;
-      resolve();
-    });
+    req.on('error', () => finish(false, elapsedMs()));
     req.end();
   });
 }

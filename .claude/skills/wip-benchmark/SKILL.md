@@ -53,8 +53,13 @@ why. Do not substitute another configuration's results for it.
 - If stopping something like a production/business container is required, name the target and
   confirm before doing so.
 
-For the primary comparison, keep the physical storage location of the source the same. Windows
-and WSL may reference the same location through different path spellings.
+For the primary comparison, keep the physical storage location of the source the same **and put
+it on the Windows filesystem** (referenced from WSL as `/mnt/c/...`, not as a native WSL path like
+`~/...`). Wip's bind mounts can silently mount an empty directory when the project isn't actually
+reachable the way Wip expects, and `wip doctor` rejects some placements outright — running
+`wsl-wip` against a project under WSL's own `~/...` risks comparing against no real data instead
+of catching the misconfiguration. Windows and WSL may reference the same Windows-filesystem
+location through different path spellings.
 
 If you want to compare the Windows filesystem against the WSL filesystem, treat that as a
 separate scenario. Do not change the execution origin and the storage location at the same time
@@ -86,7 +91,10 @@ Record on the Windows host side, roughly once per second.
 
 For each configuration, measure the following states.
 
-1. Baseline: both container backends stopped
+1. Baseline: both container backends fully stopped — the Docker Desktop / WSLC service itself,
+   not merely this benchmark's own container removed. Confirm first that nothing else depends on
+   either backend still running (see the "production/business container" confirmation rule
+   above); stopping the backend service can restart or hard-kill anything else that was using it.
 2. Only the target backend started
 3. The app started, with no requests being sent
 4. The same load being applied
