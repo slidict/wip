@@ -1,178 +1,177 @@
 ---
 name: wip-benchmark
-description: ローカルのWindows PCで、PowerShellとWSL Ubuntuを実行元としてDocker DesktopとWipを比較計測する。性能比較やプレゼン用の測定結果を更新したいときに使う。
+description: On a local Windows PC, benchmark Docker Desktop against Wip using PowerShell and WSL Ubuntu as execution origins. Use this when you want to update performance-comparison results, e.g. for presentations.
 ---
 
 # Wip Benchmark
 
-## 目的
+## Purpose
 
-同じWindows PC・同じアプリ・同じ負荷で、以下の4構成を比較する。
+Compare the following four configurations on the same Windows PC, with the same app and the same
+load.
 
-| ID | コマンドの実行元 | コンテナ環境 |
+| ID | Command origin | Container backend |
 |---|---|---|
 | windows-docker | Windows PowerShell | Docker Desktop |
 | windows-wip | Windows PowerShell | Wip / WSLC |
-| wsl-docker | WSL Ubuntu Bash | Docker DesktopのWSL連携 |
+| wsl-docker | WSL Ubuntu Bash | Docker Desktop's WSL integration |
 | wsl-wip | WSL Ubuntu Bash | Wip / WSLC |
 
-WSL側のDockerはDocker Desktopを使用する。
-Ubuntuに独立したDocker Engineを導入して置き換えない。
+On the WSL side, Docker means Docker Desktop. Do not install a standalone Docker Engine inside
+Ubuntu to replace it.
 
-結果から優劣を判断する。Wipが軽い・速いという結論を前提にしない。
+Judge which is better from the results. Do not assume up front that Wip is lighter or faster.
 
-## 環境の確認
+## Checking the environment
 
-実行前に次を確認し、結果に記録する。
+Before running anything, check and record the following in the results.
 
-- Windows、WSL、Ubuntuのバージョン
-- CPU、物理メモリ
-- Docker Desktop、Docker Engine、Wip、WSLCのバージョン
-- Docker Desktopのバックエンド
-- WSLと各環境のCPU・メモリ制限
-- Docker contextと接続先
-- 各シェルから使用する実行ファイルのパス
-- ソースコードとコンテナデータの保存場所
+- Windows, WSL, and Ubuntu versions
+- CPU and physical memory
+- Docker Desktop, Docker Engine, Wip, and WSLC versions
+- Docker Desktop's backend
+- CPU/memory limits for WSL and for each environment
+- Docker context and its target
+- The path to the executable each shell actually uses
+- Where source code and container data are stored
 
-WipとWSLCの操作方法は、インストール済みバージョンの
-`--help`とプロジェクトのドキュメントで確認する。
-存在を確認していないコマンドやオプションを作らない。
+Confirm how to operate Wip and WSLC using the installed version's `--help` output and the
+project's documentation. Do not invent commands or options you have not confirmed exist.
 
-必要な構成が利用できない場合は、その構成を未測定とし、
-理由を記録する。他の構成の結果で代用しない。
+If a required configuration is not available, mark that configuration as not measured and record
+why. Do not substitute another configuration's results for it.
 
-## 比較条件
+## Comparison conditions
 
-- 同一のアプリ、イメージ、設定、データ、負荷を使う。
-- 既存のベンチマーク用アプリがあれば再利用する。
-- なければ、固定レスポンスを返す小さなHTTPアプリを用意する。
-- 負荷生成は共通のWindows側プロセスから行う。
-- 同時接続数、リクエスト数、測定時間を固定する。
-- 一度に一つの構成だけを測る。
-- 比較対象のもう片方は停止し、残存プロセスを確認する。
-- 業務用コンテナなどの停止が必要なら、対象を示して確認する。
+- Use the same app, image, configuration, data, and load throughout.
+- Reuse an existing benchmark app if one already exists.
+- Otherwise, prepare a small HTTP app that returns a fixed response.
+- Generate load from one common process on the Windows side.
+- Fix concurrency, request count, and measurement duration.
+- Measure only one configuration at a time.
+- Stop the configuration being compared against, and check for leftover processes.
+- If stopping something like a production/business container is required, name the target and
+  confirm before doing so.
 
-主比較ではソースの物理的な保存場所をそろえる。
-WindowsとWSLで同じ場所を別のパス表記で参照してよい。
+For the primary comparison, keep the physical storage location of the source the same. Windows
+and WSL may reference the same location through different path spellings.
 
-WindowsのファイルシステムとWSLのファイルシステムを
-比較したい場合は、別シナリオとして扱う。
-実行元と保存場所を同時に変えて原因を決めつけない。
+If you want to compare the Windows filesystem against the WSL filesystem, treat that as a
+separate scenario. Do not change the execution origin and the storage location at the same time
+and then attribute the cause to just one of them.
 
-## 測定項目
+## What to measure
 
-### 時間
+### Time
 
-以下を分けて測る。
+Measure the following separately.
 
-- コンテナ基盤の起動から利用可能になるまで
-- 基盤が起動済みの状態からアプリがreadyになるまで
-- アプリの停止完了まで
+- From the container backend starting until it becomes usable
+- From an already-running backend until the app becomes ready
+- Until the app finishes stopping
 
-readyはプロセスの存在ではなく、HTTP応答などで確認する。
-イメージ取得は事前に済ませ、アプリ起動時間に含めない。
+Determine "ready" by an HTTP response or similar, not merely by the process existing. Finish
+pulling images ahead of time; do not let that time count toward app startup time.
 
-ビルドを測る場合は、キャッシュなしとキャッシュありを分ける。
-ネットワーク経由の取得時間が入った場合は明記する。
+If you measure builds, separate the no-cache case from the cached case. If any network fetch time
+leaked into a measurement, say so explicitly.
 
-### CPU・メモリ
+### CPU / memory
 
-Windowsホスト側で1秒間隔を目安に記録する。
+Record on the Windows host side, roughly once per second.
 
-- ホスト全体のCPU使用率
-- ホスト全体の使用物理メモリ
-- 取得可能な範囲で、関連プロセス・VMの使用量
+- Host-wide CPU usage
+- Host-wide physical memory in use
+- Usage of related processes/VMs, to whatever extent it can be obtained
 
-各構成について以下を測る。
+For each configuration, measure the following states.
 
-1. 両方のコンテナ基盤が停止した基準状態
-2. 対象の基盤だけを起動した状態
-3. アプリを起動し、リクエストを送らない状態
-4. 同じ負荷を与えている状態
+1. Baseline: both container backends stopped
+2. Only the target backend started
+3. The app started, with no requests being sent
+4. The same load being applied
 
-基準状態・基盤のみ・アプリ待機は各60秒、
-負荷測定は120秒を既定値とする。
-状態が安定しなければ延長し、その時間を記録する。
+Default durations: 60 seconds each for the baseline, backend-only, and app-idle states, and 120
+seconds for the load measurement. If a state has not stabilized, extend it and record how long you
+extended it.
 
-ホスト全体の実測値と、基準状態からの増分を報告する。
-増分には他プロセスの変動も含まれるため、
-コンテナだけの厳密な使用量とは表現しない。
+Report both the raw host-wide values and the increase over the baseline. Since that increase also
+includes fluctuation from other processes, do not describe it as an exact figure for the container
+alone.
 
-プロセスのメモリ値を単純に合算し、
-共有メモリやVMの使用量を二重計上しない。
+When summing process memory values, do not double-count shared memory or VM usage.
 
-### 負荷処理
+### Load handling
 
-資源使用量と合わせて以下を記録する。
+Record the following alongside resource usage.
 
-- 成功リクエスト数
-- エラー率
-- スループット
-- 応答時間の中央値・p95
+- Number of successful requests
+- Error rate
+- Throughput
+- Median and p95 response time
 
-処理した仕事量が違う結果を、
-CPUやメモリの少なさだけで優劣判定しない。
+Do not judge one configuration as better than another based solely on lower CPU/memory use when
+the amount of work it actually processed differed.
 
-### ストレージ
+### Storage
 
-専用のテスト用ボリュームに、同じ容量のデータを書き込み、
-以下の時点で測る。
+Write the same amount of data to a dedicated test volume, and measure at the following points.
 
-1. 作成前
-2. データ書き込み後
-3. テスト用データ・リソース削除後
-4. 領域回収操作後（実施できる場合）
+1. Before creation
+2. After writing the data
+3. After deleting the test data/resources
+4. After a space-reclamation operation (if one can be performed)
 
-記録する値：
+Values to record:
 
-- コンテナ環境内の論理使用量
-- 関連仮想ディスクのファイルサイズ
-- 取得できれば、仮想ディスクの実割り当て量
-- Windows側の該当ドライブの空き容量
+- Logical usage inside the container environment
+- The related virtual disk's file size
+- The virtual disk's actual allocated size, if obtainable
+- Free space on the relevant Windows drive
 
-データ削除と、ホストへのディスク領域返却を区別する。
-仮想ディスクのファイルサイズだけで返却量を判断しない。
+Distinguish between deleting data and actually returning disk space to the host. Do not judge how
+much space was returned from the virtual disk's file size alone.
 
-既存環境全体へのpruneや、既存データを巻き込む削除は行わない。
-領域回収が既存環境に影響する場合は、影響を示して確認する。
+Do not run a prune across the whole existing environment, and do not perform a deletion that would
+sweep up existing data. If space reclamation would affect the existing environment, show that
+impact and confirm before proceeding.
 
-## 実行方法
+## How to run this
 
-計測処理は再利用可能なスクリプトにまとめる。
-既存スクリプトがあれば利用し、毎回書き直さない。
+Bundle the measurement logic into reusable scripts. If scripts already exist, use them — don't
+rewrite them each time.
 
-- PowerShell：Windowsホスト計測、Windows側の実行、結果保存
-- Bash：WSL Ubuntu側の実行
-- Skill：条件確認、実行管理、結果の解釈
+- PowerShell: host-side measurement on Windows, execution from the Windows side, saving results
+- Bash: execution from the WSL Ubuntu side
+- Skill: checking conditions, managing execution, interpreting results
 
-起動・CPU・メモリ・負荷測定は、
-各構成でウォームアップ1回、計測3回を既定とする。
-構成の実行順をラウンドごとに変え、順序を記録する。
+Default for startup/CPU/memory/load measurements: one warmup run plus three measured rounds per
+configuration. Vary the execution order of the configurations each round, and record that order.
 
-ストレージ測定は別フェーズにする。
-各回の開始条件を復元できない場合は単発測定と明記する。
+Treat storage measurement as a separate phase. If the starting conditions for each round cannot be
+restored, mark it explicitly as a one-off measurement.
 
-タイムアウトや失敗も結果として保存する。
-成功した回だけを残さない。
-失敗後の再実行は原因を確認してから行う。
+Save timeouts and failures as results too — don't keep only the successful runs. After a failure,
+investigate the cause before re-running.
 
-## 成果物
+## Deliverables
 
-実行日時ごとのディレクトリに以下を保存する。
+Save the following into a directory named for the run's date and time.
 
-- environment.json：環境・設定・測定条件
-- samples.csv：CPU・メモリなどの時系列データ
-- results.csv：各試行の時間・負荷処理・ストレージ結果
-- report.md：4構成の比較表、結果の説明、測定上の制約
+- `environment.json`: environment, configuration, and measurement conditions
+- `samples.csv`: time-series data such as CPU and memory
+- `results.csv`: each trial's time, load-handling, and storage results
+- `report.md`: a comparison table across the four configurations, an explanation of the results,
+  and the measurement's limitations
 
-レポートには各試行の値と、中央値・最小値・最大値を載せる。
-異なる単位の指標をまとめた総合スコアは作らない。
+The report should include each trial's individual values as well as the median, minimum, and
+maximum. Do not build a combined score across metrics that use different units.
 
-Windows内、WSL内でのDocker Desktop対Wipの比較を先に示す。
-その後、同じコンテナ環境で実行元による違いを示す。
+Show the Docker Desktop vs. Wip comparison within Windows and within WSL first. Then show, for the
+same container backend, how the execution origin makes a difference.
 
-未測定値は「未測定」と記載し、推定値で埋めない。
-今回のPC・設定・負荷で得られた結果として説明する。
+Mark unmeasured values as "not measured" — do not fill them in with estimates. Describe results as
+what was obtained on this PC, with this configuration and this load, this time.
 
-終了時は、この測定で作成したリソースだけを片付け、
-変更した起動状態を可能な範囲で元に戻す。
+When finished, clean up only the resources this measurement created, and restore any startup state
+you changed, to the extent that's possible.
