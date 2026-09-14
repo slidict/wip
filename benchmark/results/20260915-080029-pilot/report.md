@@ -19,12 +19,12 @@ readiness polling, async I/O, path escaping, CSV/locale fixes, and more — see 
 | Load error rate | not measured | 0% | 0% | 0% |
 
 **windows-docker hit its known intermittent flake again this run**: `docker run` succeeded but
-the app never became HTTP-ready within 60 s. This is the same Docker Desktop
-mirrored-networking issue documented in the two prior pilot runs
-(`20260914-225724-pilot`, `20260914-235138-pilot`) — it has now hit `windows-docker` twice and
-`wsl-docker` once, in three different runs, never the same config twice in a row. It looks like a
-real characteristic of this host's Docker Desktop setup after a fresh boot, not a bug in this
-harness.
+the app never became HTTP-ready within 60 s. The same Docker Desktop mirrored-networking issue
+also showed up in two earlier throwaway harness-validation runs (not kept — they predate the
+PR #187 fixes this run validates) — across those plus this run, it has hit `windows-docker` twice
+and `wsl-docker` once, in three different runs, never the same config twice in a row. It looks
+like a real characteristic of this host's Docker Desktop setup after a fresh boot, not a bug in
+this harness.
 
 **wsl-docker succeeded end-to-end for the first time**, validating the `Wait-WslDockerReady` fix:
 a previous run found that `docker.sock` inside the WSL distro can lag behind `docker info`
