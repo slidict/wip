@@ -9,6 +9,24 @@ namespace Wip.Tests;
 public class HelpCommandTests
 {
     [Fact]
+    public void NoArgumentsShowHelpAndSucceed()
+    {
+        var parsed = Program.Parse(Program.BuildRoot(), []);
+        var invocation = new InvocationConfiguration { EnableDefaultExceptionHandler = false };
+
+        Assert.Equal(0, parsed.Invoke(invocation));
+    }
+
+    [Fact]
+    public void InvalidArgumentsStillFail()
+    {
+        var parsed = Program.Parse(Program.BuildRoot(), ["--nosuchoption"]);
+        var invocation = new InvocationConfiguration { EnableDefaultExceptionHandler = false };
+
+        Assert.NotEqual(0, parsed.Invoke(invocation));
+    }
+
+    [Fact]
     public void HelpTextMatchesRootHelpAndListsEveryCommand()
     {
         var text = Program.HelpText();

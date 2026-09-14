@@ -118,6 +118,11 @@ internal static class Program
             quietOption,
         };
 
+        // Package managers may validate an installation by launching the executable without
+        // arguments. Treat that as a request for usage information rather than a command-line
+        // error, while leaving parser errors (such as unknown options) non-zero.
+        root.SetAction(_ => ShowHelp());
+
         CliContext Context(ParseResult parsed) => new(new CliOptions(
             parsed.GetValue(configOption),
             parsed.GetValue(envFileOption),
