@@ -1,0 +1,44 @@
+﻿{
+    "capturedAt":  "2026-09-15T08:01:08.1208153+09:00",
+    "host":  {
+                 "os":  "Microsoft Windows 11 Pro",
+                 "osVersion":  "10.0.26200",
+                 "cpu":  "Intel(R) Core(TM) Ultra 7 155H",
+                 "cpuCores":  16,
+                 "cpuLogicalProcessors":  22,
+                 "totalPhysicalMemoryGB":  63.46
+             },
+    "wsl":  {
+                "versionRaw":  "W\u0000S\u0000L\u0000 \u0000�0�0�0�0�0:\u0000 \u00002\u0000.\u00009\u0000.\u00004\u0000.\u00000\u0000 | \u0000 | \u0000�0�0�0�0 \u0000�0�0�0�0�0:\u0000 \u00006\u0000.\u00001\u00008\u0000.\u00003\u00005\u0000.\u00002\u0000-\u00001\u0000 | \u0000 | \u0000W\u0000S\u0000L\u0000g\u0000 \u0000�0�0�0�0�0:\u0000 \u00001\u0000.\u00000\u0000.\u00007\u00009\u0000 | \u0000 | \u0000M\u0000S\u0000R\u0000D\u0000C\u0000 \u0000�0�0�0�0�0:\u0000 \u00001\u0000.\u00002\u0000.\u00007\u00002\u00001\u00004\u0000 | \u0000 | \u0000D\u0000i\u0000r\u0000e\u0000c\u0000t\u00003\u0000D\u0000 \u0000�0�0�0�0�0:\u0000 \u00001\u0000.\u00006\u00001\u00001\u0000.\u00001\u0000-\u00008\u00001\u00005\u00002\u00008\u00005\u00001\u00001\u0000 | \u0000 | \u0000D\u0000X\u0000C\u0000o\u0000r\u0000e\u0000 \u0000�0�0�0�0�0:\u0000 \u00001\u00000\u0000.\u00000\u0000.\u00002\u00006\u00001\u00000\u00000\u0000.\u00001\u0000-\u00002\u00004\u00000\u00003\u00003\u00001\u0000-\u00001\u00004\u00003\u00005\u0000.\u0000g\u0000e\u0000-\u0000r\u0000e\u0000l\u0000e\u0000a\u0000s\u0000e\u0000 | \u0000 | \u0000W\u0000i\u0000n\u0000d\u0000o\u0000w\u0000s\u0000 \u0000�0�0�0�0�0:\u0000 \u00001\u00000\u0000.\u00000\u0000.\u00002\u00006\u00002\u00000\u00000\u0000.\u00009\u00004\u00004\u00005\u0000 | \u0000 | \u0000"
+            },
+    "docker":  {
+                   "versionRaw":  "29.7.2 (client) / 29.7.2 (server)",
+                   "context":  "desktop-linux"
+               },
+    "wip":  {
+                "versionRaw":  "wip 2.5.2"
+            },
+    "image":  {
+                  "wipRepoCommit":  "544b63b183467107cf19593b90f46aaae1b9e53c",
+                  "dockerImageId":  "sha256:f10399d45a59848e24cd8b877214b4e22a2a9588e7d1c4cb4ed15c06995b9617",
+                  "wslcImageInspect":  "REPOSITORY                   TAG             IMAGE ID       CREATED        SIZE | wip-bench                    latest          a186ce84f105   9 hours ago    164.72 MB | wip-compose-sidekiq-worker   latest          9837b841814b   20 hours ago   159.89 MB | wip-compose-db-prepare       latest          044527f393b8   21 hours ago   360.84 MB | wip-compose-rails-web        latest          044527f393b8   21 hours ago   360.84 MB | wip-compose-terraform        latest          872d9b7f3f0d   1 week ago     2206.61 MB | \u003cuntagged\u003e                   \u003cuntagged\u003e      6fede1283079   1 week ago     2206.61 MB | \u003cuntagged\u003e                   \u003cuntagged\u003e      1eaef075807a   1 week ago     2206.61 MB | \u003cuntagged\u003e                   \u003cuntagged\u003e      7eac2401026d   1 week ago     2206.61 MB | slidict/slidict.io           local           60538b5cdbf4   1 week ago     2266.23 MB | \u003cuntagged\u003e                   \u003cuntagged\u003e      891a5e8d0a82   1 week ago     2208.06 MB | \u003cuntagged\u003e                   \u003cuntagged\u003e      a55c4beaa871   1 week ago     2207.87 MB | \u003cuntagged\u003e                   \u003cuntagged\u003e      eec498eae75b   1 week ago     2207.86 MB | \u003cuntagged\u003e                   \u003cuntagged\u003e      af65e099751d   1 week ago     2207.84 MB | \u003cuntagged\u003e                   \u003cuntagged\u003e      286882b52b41   1 week ago     2207.86 MB | \u003cuntagged\u003e                   \u003cuntagged\u003e      069947c4619e   1 week ago     2207.85 MB | \u003cuntagged\u003e                   \u003cuntagged\u003e      43e1703eff35   1 week ago     2207.85 MB | \u003cuntagged\u003e                   \u003cuntagged\u003e      9f61a0838673   1 week ago     2207.84 MB | wip-compose-chrome-service   latest          350820721476   1 week ago     3404.63 MB | \u003cuntagged\u003e                   \u003cuntagged\u003e      615fdd6ed5ad   1 week ago     2207.84 MB | \u003cuntagged\u003e                   \u003cuntagged\u003e      18b8a6cf548b   1 week ago     2207.84 MB | \u003cuntagged\u003e                   \u003cuntagged\u003e      32c6e16a1703   1 week ago     2207.84 MB | \u003cuntagged\u003e                   \u003cuntagged\u003e      89abbad196bc   1 week ago     2207.84 MB | \u003cuntagged\u003e                   \u003cuntagged\u003e      e9f577a004e5   1 week ago     2207.84 MB | \u003cuntagged\u003e                   \u003cuntagged\u003e      b1cb63b7296f   1 week ago     2824.53 MB | \u003cuntagged\u003e                   \u003cuntagged\u003e      fe857f61f567   1 week ago     2824.53 MB | \u003cuntagged\u003e                   \u003cuntagged\u003e      8dc6df582e31   1 week ago     1847.43 MB | \u003cuntagged\u003e                   \u003cuntagged\u003e      28d7ccaab1c0   1 week ago     2207.84 MB | \u003cuntagged\u003e                   \u003cuntagged\u003e      8fb52c020923   1 week ago     3404.63 MB | \u003cuntagged\u003e                   \u003cuntagged\u003e      61e1b0ebbb7e   1 week ago     2207.85 MB | \u003cuntagged\u003e                   \u003cuntagged\u003e      6fec615fa3f3   1 week ago     2207.85 MB | \u003cuntagged\u003e                   \u003cuntagged\u003e      859b50ec33e2   1 week ago     2207.85 MB | \u003cuntagged\u003e                   \u003cuntagged\u003e      6c66afcf661d   1 week ago     2207.84 MB | nats                         2-alpine        330bdac8a2ef   2 weeks ago    27.35 MB | redis                        latest          923b31bc216c   2 weeks ago    145.57 MB | redis                        7-alpine        5509c0097c60   3 weeks ago    39.09 MB | \u003cuntagged\u003e                   \u003cuntagged\u003e      c16ac832f71e   1 month ago    3404.63 MB | alpine                       3               d529dd0c6e55   3 months ago   8.42 MB | mysql                        8.0             6cd09145362d   4 months ago   799.07 MB | mysql                        8.0.31-debian   8051f9382f60   3 years ago    594.44 MB"
+              },
+    "benchmark":  {
+                      "appDir":  "C:\\Users\\yusuk\\codes\\wip\\benchmark\\app",
+                      "wslAppDir":  "/mnt/c/Users/yusuk/codes/wip/benchmark/app",
+                      "appUrl":  "http://127.0.0.1:18080/",
+                      "wslDistro":  "Ubuntu",
+                      "configs":  [
+                                      "windows-docker",
+                                      "windows-wip",
+                                      "wsl-docker",
+                                      "wsl-wip"
+                                  ],
+                      "rounds":  1,
+                      "warmups":  0,
+                      "baselineWaitSec":  15,
+                      "idleWaitSec":  15,
+                      "loadDurationSec":  30,
+                      "loadConcurrency":  20
+                  }
+}

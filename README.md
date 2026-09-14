@@ -193,11 +193,12 @@ the golden-corpus tests, and architecture notes. Known gaps and deferred decisio
 
 Early Docker Desktop vs. Wip/WSLC comparison results (infra/app startup time, HTTP readiness,
 load throughput) live under [`benchmark/results/`](benchmark/results). Latest:
-[`20260914-235138-pilot/report.md`](benchmark/results/20260914-235138-pilot/report.md), measured
-with **wip 2.5.2 / wslc 2.9.4.0**. These are small-scale pilot runs used to validate the benchmark
-harness itself, not the full multi-round protocol defined in
-[`.claude/skills/wip-benchmark/SKILL.md`](.claude/skills/wip-benchmark/SKILL.md) — treat them as
-preliminary.
+[`20260915-080029-pilot/report.md`](benchmark/results/20260915-080029-pilot/report.md) — the first
+run where all four configs (Windows/WSL origin × Docker Desktop/Wip backend) completed
+successfully in a single pass — measured with **wip 2.5.2 / wslc 2.9.4.0**. These are small-scale
+pilot runs used to validate the benchmark harness itself, not the full multi-round protocol
+defined in [`.claude/skills/wip-benchmark/SKILL.md`](.claude/skills/wip-benchmark/SKILL.md) — treat
+them as preliminary.
 
 ## Contributing
 

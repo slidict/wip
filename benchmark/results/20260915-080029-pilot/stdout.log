@@ -1,0 +1,48 @@
+[2026-09-15T08:00:39.0489497+09:00] preflight: checking Docker Desktop for pre-existing containers
+[2026-09-15T08:00:39.4303615+09:00] preflight: starting Docker Desktop to check
+[2026-09-15T08:00:54.9757699+09:00] preflight: checking WSLC for a pre-existing session/containers
+[2026-09-15T08:00:55.0564762+09:00] preflight: docker build -t wip-bench:latest (not counted in any timed result)
+[2026-09-15T08:00:58.2753975+09:00] preflight: wip build (drives wslc build; not counted in any timed result)
+[2026-09-15T08:01:08.6642651+09:00] environment.json written to C:\Users\yusuk\codes\wip\benchmark\results\20260915-080029-pilot\environment.json
+[2026-09-15T08:01:08.6866293+09:00] schedule: windows-wip#r1 -> wsl-wip#r1 -> windows-docker#r1 -> wsl-docker#r1
+[2026-09-15T08:01:08.6927294+09:00] === windows-wip round=1 warmup=False order=0 ===
+[2026-09-15T08:01:08.6927294+09:00] stopping both backends to reach baseline state
+[2026-09-15T08:01:57.0183047+09:00] sampling baseline for 15 s
+[2026-09-15T08:02:13.4408785+09:00] starting infra (wip)
+[2026-09-15T08:02:17.4493745+09:00] sampling infra-idle for 15 s
+[2026-09-15T08:02:33.4935641+09:00] starting app
+[2026-09-15T08:02:34.0971087+09:00] sampling app-idle (no load) for 15 s
+[2026-09-15T08:02:50.1214329+09:00] running load for 30 s at concurrency 20
+[2026-09-15T08:03:23.1901555+09:00] stopping app
+[2026-09-15T08:03:23.4819150+09:00] row written: config=windows-wip round=1 warmup=False
+[2026-09-15T08:03:23.4819150+09:00] === wsl-wip round=1 warmup=False order=1 ===
+[2026-09-15T08:03:23.4819150+09:00] stopping both backends to reach baseline state
+[2026-09-15T08:03:25.3505395+09:00] sampling baseline for 15 s
+[2026-09-15T08:03:41.7058350+09:00] starting infra (wip)
+[2026-09-15T08:03:45.7646120+09:00] sampling infra-idle for 15 s
+[2026-09-15T08:04:02.2795968+09:00] starting app
+[2026-09-15T08:04:07.3033514+09:00] sampling app-idle (no load) for 15 s
+[2026-09-15T08:04:23.7158779+09:00] running load for 30 s at concurrency 20
+[2026-09-15T08:04:56.3156527+09:00] stopping app
+[2026-09-15T08:04:59.1918047+09:00] row written: config=wsl-wip round=1 warmup=False
+[2026-09-15T08:04:59.2028441+09:00] === windows-docker round=1 warmup=False order=2 ===
+[2026-09-15T08:04:59.2044251+09:00] stopping both backends to reach baseline state
+[2026-09-15T08:05:01.0073907+09:00] sampling baseline for 15 s
+[2026-09-15T08:05:17.2345249+09:00] starting infra (docker)
+[2026-09-15T08:05:30.5114614+09:00] sampling infra-idle for 15 s
+[2026-09-15T08:05:46.5557138+09:00] starting app
+[2026-09-15T08:06:49.2407000+09:00] stopping app
+[2026-09-15T08:06:49.7585567+09:00] row written: config=windows-docker round=1 warmup=False
+[2026-09-15T08:06:49.7629005+09:00] === wsl-docker round=1 warmup=False order=3 ===
+[2026-09-15T08:06:49.7656527+09:00] stopping both backends to reach baseline state
+[2026-09-15T08:07:37.2366398+09:00] sampling baseline for 15 s
+[2026-09-15T08:07:53.2540996+09:00] starting infra (docker)
+[2026-09-15T08:08:07.9728080+09:00] sampling infra-idle for 15 s
+[2026-09-15T08:08:24.0241357+09:00] starting app
+[2026-09-15T08:08:24.9808372+09:00] sampling app-idle (no load) for 15 s
+[2026-09-15T08:08:40.9968614+09:00] running load for 30 s at concurrency 20
+[2026-09-15T08:09:13.4783740+09:00] stopping app
+[2026-09-15T08:09:14.0587367+09:00] row written: config=wsl-docker round=1 warmup=False
+[2026-09-15T08:09:14.1302244+09:00] report.md written to C:\Users\yusuk\codes\wip\benchmark\results\20260915-080029-pilot\report.md
+[2026-09-15T08:09:14.1342211+09:00] stopping both backends after run
+[2026-09-15T08:10:01.5275259+09:00] done
