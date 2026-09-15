@@ -13,7 +13,7 @@ on:
         type: string
     secrets:
       WINGET_TOKEN:
-        description: Classic PAT with public_repo scope, on an account that forked winget-pkgs.
+        description: slidict-bot classic PAT with public_repo scope.
         required: false
   workflow_dispatch:
     inputs:
@@ -49,11 +49,31 @@ jobs:
           set -euo pipefail
           echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
 
-      # Opens a pull request against microsoft/winget-pkgs from a fork on the account that
-      # owns WINGET_TOKEN. GITHUB_TOKEN cannot do this -- it has no rights on another
-      # repository -- so this needs a classic PAT with public_repo scope, and that account
-      # needs a fork of winget-pkgs. Without the secret the step is skipped rather than
-      # failing every release, and the step below prints what to set up.
+      # Keep the bot's default branch current before winget-releaser creates its submission
+      # branch. Otherwise a long-lived fork can make the pull request include unrelated old
+      # commits or fail because its base has fallen behind microsoft/winget-pkgs.
+      - name: Sync slidict-bot winget-pkgs fork
+        if: env.WINGET_TOKEN != ''
+        env:
+          GH_TOKEN: ${{ env.WINGET_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          login=$(gh api user --jq .login)
+          if [[ "$login" != "slidict-bot" ]]; then
+            echo "::error::WINGET_TOKEN authenticates as $login, not slidict-bot."
+            exit 1
+          fi
+
+          default_branch=$(gh api repos/microsoft/winget-pkgs --jq .default_branch)
+          gh api --method POST repos/slidict-bot/winget-pkgs/merge-upstream \
+            --field "branch=$default_branch"
+
+      # Opens a pull request against microsoft/winget-pkgs from slidict-bot/winget-pkgs.
+      # GITHUB_TOKEN cannot do this -- it has no rights on another repository -- so both the
+      # fork sync above and winget-releaser use slidict-bot's classic public_repo PAT. Without
+      # the secret these steps are skipped rather than failing every release, and the step
+      # below prints what to set up.
       - name: Create winget-pkgs pull request
         if: env.WINGET_TOKEN != ''
         uses: vedantmgoyal9/winget-releaser@4ffc7888bffd451b357355dc214d43bb9f23917e # v2
@@ -62,11 +82,8 @@ jobs:
           version: ${{ steps.resolve.outputs.version }}
           installers-regex: '^wip-.*-win-x64\.zip$'
           release-tag: ${{ inputs.tag }}
-          # Where the winget-pkgs fork lives. Set the WINGET_FORK_USER repository variable to
-          # point at a dedicated bot account: the token this action needs is a classic PAT,
-          # whose public_repo scope cannot be narrowed to one repository, so the only way to
-          # bound what it can reach is to give it to an account that owns nothing else.
-          fork-user: ${{ vars.WINGET_FORK_USER || github.repository_owner }}
+          # Keep the coarse classic PAT isolated on the dedicated bot account.
+          fork-user: slidict-bot
           token: ${{ env.WINGET_TOKEN }}
 
       - name: Explain a skipped submission
@@ -77,10 +94,8 @@ jobs:
             echo ""
             echo "To enable it, once:"
             echo ""
-            echo "1. Fork microsoft/winget-pkgs, preferably on a dedicated account. If that is"
-            echo "   not this repository's owner, set the WINGET_FORK_USER repository variable"
-            echo "   to it."
-            echo "2. Create a **classic** PAT on that account with the \`public_repo\` scope and"
+            echo "1. Fork microsoft/winget-pkgs as slidict-bot."
+            echo "2. Create a **classic** PAT on slidict-bot with the \`public_repo\` scope and"
             echo "   an expiry. Fine-grained tokens are not supported, and GITHUB_TOKEN has no"
             echo "   rights on another repository."
             echo "3. Store it as WINGET_TOKEN on the \`winget\` environment, so required"
