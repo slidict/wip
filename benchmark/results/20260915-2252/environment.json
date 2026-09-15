@@ -1,0 +1,44 @@
+﻿{
+    "capturedAt":  "2026-09-15T22:52:36.5116154+09:00",
+    "host":  {
+                 "os":  "Microsoft Windows 11 Pro",
+                 "osVersion":  "10.0.26200",
+                 "cpu":  "12th Gen Intel(R) Core(TM) i7-12700KF",
+                 "cpuCores":  12,
+                 "cpuLogicalProcessors":  20,
+                 "totalPhysicalMemoryGB":  63.86
+             },
+    "wsl":  {
+                "versionRaw":  "WSL バージョン: 2.9.12.0 | カーネル バージョン: 6.18.40.1-1 | WSLg バージョン: 1.0.79 | MSRDC バージョン: 1.2.7214 | Direct3D バージョン: 1.611.1-81528511 | DXCore バージョン: 10.0.26100.1-240331-1435.ge-release | Windows バージョン: 10.0.26200.9457"
+            },
+    "docker":  {
+                   "versionRaw":  "29.8.0 (client) / 29.8.0 (server)",
+                   "context":  "desktop-linux"
+               },
+    "wip":  {
+                "versionRaw":  "wip 2.5.2"
+            },
+    "image":  {
+                  "wipRepoCommit":  "20897a079dac78038a470de837e1b0376fec9b44",
+                  "dockerImageId":  "sha256:06d35d4ef3ff649d254645a53280165646a742b8c1e0f8010514fda93ad9012f",
+                  "wslcImageInspect":  "REPOSITORY   TAG      IMAGE ID       CREATED   SIZE | wip-bench    latest   9fa564b4ffba   12 分前     165MB"
+              },
+    "benchmark":  {
+                      "appDir":  "C:\\Users\\Yusuke\\codes\\wip\\benchmark\\app",
+                      "wslAppDir":  "/mnt/c/Users/Yusuke/codes/wip/benchmark/app",
+                      "appUrl":  "http://127.0.0.1:18080/",
+                      "wslDistro":  "Ubuntu",
+                      "configs":  [
+                                      "windows-docker",
+                                      "windows-wip",
+                                      "wsl-docker",
+                                      "wsl-wip"
+                                  ],
+                      "rounds":  3,
+                      "warmups":  1,
+                      "baselineWaitSec":  60,
+                      "idleWaitSec":  60,
+                      "loadDurationSec":  120,
+                      "loadConcurrency":  20
+                  }
+}

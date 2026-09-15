@@ -191,7 +191,10 @@ the golden-corpus tests, and architecture notes. Known gaps and deferred decisio
 
 A Docker Desktop vs. Wip/WSLC benchmark workflow lives under
 [`benchmark/`](benchmark), driven by the
-[`wip-benchmark`](.claude/skills/wip-benchmark/SKILL.md) skill.
+[`wip-benchmark`](.claude/skills/wip-benchmark/SKILL.md) skill. Latest run (2026-09-16, single
+Windows 11 PC): wip served ~40% higher throughput and about half the p50 latency versus Docker
+Desktop, at roughly half the host CPU under load — see the
+[full report](benchmark/results/20260915-2252/report.md) for the numbers and caveats.
 
 ## Contributing
 

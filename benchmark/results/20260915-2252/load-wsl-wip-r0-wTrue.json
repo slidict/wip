@@ -1,0 +1,15 @@
+{
+  "url": "http://127.0.0.1:18080/",
+  "concurrency": 20,
+  "requestedDurationSec": 120,
+  "actualDurationMs": 120005,
+  "totalRequests": 3379296,
+  "successRequests": 3379296,
+  "failedRequests": 0,
+  "errorRate": 0,
+  "throughputRps": 28159.626682221577,
+  "latencyMsMedian": 0.5357,
+  "latencyMsP95": 1.2773,
+  "latencyMsMin": 0.0986,
+  "latencyMsMax": 119.3575
+}

@@ -169,6 +169,11 @@ don't dot-source it separately when invoking the script directly). A full run re
 starts Docker Desktop and WSLC on the whole machine, so confirm with the user before launching one
 and warn that it will disrupt any other Docker/WSL work on this PC while it runs.
 
+**Prerequisite**: the load generator (`load-gen.mjs`) requires Node.js on `PATH`. This is not
+checked by the preflight step — a missing `node` only surfaces as a `Process.Start` failure at the
+first load phase, after baseline/infra/app-idle sampling has already run for that trial. Confirm
+`node --version` works before launching a full run.
+
 **Launch** (adjust `-Rounds`/`-Warmups` for a shorter check; defaults are `-Rounds 3 -Warmups 1`):
 
 ```powershell
@@ -198,6 +203,18 @@ going fine. Don't trust `run.log` alone as a liveness signal. Instead:
 - `docker ps -a` and `wslc list` show whether the `wip-bench` container is currently up, which
   round is live, and roughly how long it's been running.
 
+If you're using the `Monitor` tool to watch for `results.csv` growth or `report.md` appearing on a
+multi-hour run, its watch expires after at most 30 minutes — for a full 3-4 hour run you'll need to
+re-arm it repeatedly (it tells you the row count it last saw when it expires; re-launch with that
+as the new baseline). The benchmark process itself is unaffected by a Monitor expiring; only the
+progress notifications stop until you re-arm it.
+
+The benchmark's own PowerShell process is a child of whatever launched it. If the controlling
+session/process is itself restarted or torn down while a run is in progress, the benchmark process
+is torn down with it — a run does not survive its controlling session ending. After a session
+restart, don't assume a previously-launched run is still going: check whether its PID is still
+alive (or whether `results.csv`/`run.log` are still gaining rows) before waiting on it further.
+
 **After it finishes (or if you must stop it early)**: confirm cleanup actually happened — the
 script's own `finally` block stops both backends, but verify rather than assume:
 
@@ -218,6 +235,20 @@ session while a round's `baseline`/`infra_idle`/`app_idle` phases are sampling �
 attributable memory/CPU noise to that phase's host-wide numbers (observed live: a config's
 baseline memory read several GB higher than a sibling config's baseline in the same run, traced
 back to concurrent `wsl -d Ubuntu` checks run from the controlling session during that window).
+
+**Recovering a missing or failed trial without a full re-run**: `report.md` is only written by
+`New-ReportMarkdown` at the very end of a fully-completing run — an interrupted or partially-failed
+run leaves `results.csv`/`samples.csv` with whatever trials did complete, but no `report.md`. Rather
+than re-running the whole 1 warmup + 3 round protocol for all four configs to fill one gap, target
+just the missing config with `-Configs <that-config-only>` and `-Rounds`/`-Warmups` set so the run
+produces exactly the round count you need in a fresh `-OutDir`. Then merge its `results.csv` and
+`samples.csv` rows into the original run's files (relabeling the `round` column to match the slot
+you're filling, and noting in that row that it was captured separately, with the timestamp) rather
+than keeping a second results directory — a report should read as one dataset, not span multiple
+directories. Regenerate `report.md` afterward from the merged `results.csv` (the report-generation
+logic is self-contained in `New-ReportMarkdown`/`Get-ColumnStat` in `Invoke-Benchmark.ps1` and can
+be extracted into a standalone script if you don't want to re-run the whole harness just to render
+the table).
 
 ## Deliverables
 
