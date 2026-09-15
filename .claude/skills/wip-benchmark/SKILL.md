@@ -162,6 +162,63 @@ restored, mark it explicitly as a one-off measurement.
 Save timeouts and failures as results too — don't keep only the successful runs. After a failure,
 investigate the cause before re-running.
 
+### Quick start (validated commands)
+
+The harness lives at `benchmark/scripts/Invoke-Benchmark.ps1` (dot-sources `common.ps1` itself —
+don't dot-source it separately when invoking the script directly). A full run repeatedly stops and
+starts Docker Desktop and WSLC on the whole machine, so confirm with the user before launching one
+and warn that it will disrupt any other Docker/WSL work on this PC while it runs.
+
+**Launch** (adjust `-Rounds`/`-Warmups` for a shorter check; defaults are `-Rounds 3 -Warmups 1`):
+
+```powershell
+& 'C:\Users\yusuk\codes\wip\benchmark\scripts\Invoke-Benchmark.ps1' `
+  -OutDir "C:\Users\yusuk\codes\wip\benchmark\results\$(Get-Date -Format 'yyyyMMdd-HHmm')" `
+  -Rounds 1 -Warmups 1
+```
+
+Run this via the PowerShell tool's own `run_in_background: true` (large `timeout_ms`, e.g.
+`600000`) so the tool captures full stdout/stderr in its own output file. **Do not** wrap it in a
+separately-spawned `Start-Process ... -PassThru` — that detaches the process from the tool
+entirely; in practice it has silently vanished within a minute with no output and no results
+directory, wasting the whole invocation.
+
+One full round (1 warmup + 1 measured, all 4 configs, default 60/60/120s waits) took about 47
+minutes on this PC. Scale expectations linearly for more rounds.
+
+**Watching progress**: `run.log` inside the output directory is written by the script's own
+`Write-Log`, but it has been observed to silently stop receiving new lines partway through a run
+(the retry-and-swallow file-write in `Write-Log` gives up quietly) even though the run itself kept
+going fine. Don't trust `run.log` alone as a liveness signal. Instead:
+
+- Read the PowerShell tool's own background-output file for the true, complete log (path is given
+  when you launch with `run_in_background`).
+- Or poll `results.csv` row count / watch for `report.md` to appear, e.g. with the `Monitor` tool:
+  `until [ -f "$OUTDIR/report.md" ]; do wc -l "$OUTDIR/results.csv"; sleep 15; done`.
+- `docker ps -a` and `wslc list` show whether the `wip-bench` container is currently up, which
+  round is live, and roughly how long it's been running.
+
+**After it finishes (or if you must stop it early)**: confirm cleanup actually happened — the
+script's own `finally` block stops both backends, but verify rather than assume:
+
+```powershell
+Get-Process 'Docker Desktop','com.docker.backend' -ErrorAction SilentlyContinue  # expect nothing
+docker info                                                                       # expect "cannot connect"
+wslc system session list                                                         # expect no session rows
+wsl -l -v                                                                         # expect all distros "Stopped"
+```
+
+If the process must be interrupted before it reaches its own `finally` block, these are what you
+then have to clean up by hand (`Stop-DockerDesktopInfra` / `Stop-WslcInfra` in `common.ps1` do this
+correctly — prefer letting the script's own shutdown path run over a manual `docker rm -f` /
+`wslc system session terminate`, which is also fine but easy to get wrong under time pressure).
+
+Avoid running unrelated `docker ps -a` / `wsl -d Ubuntu ...` diagnostic commands from another
+session while a round's `baseline`/`infra_idle`/`app_idle` phases are sampling — they add real,
+attributable memory/CPU noise to that phase's host-wide numbers (observed live: a config's
+baseline memory read several GB higher than a sibling config's baseline in the same run, traced
+back to concurrent `wsl -d Ubuntu` checks run from the controlling session during that window).
+
 ## Deliverables
 
 Save the following into a directory named for the run's date and time.
