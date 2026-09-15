@@ -1,0 +1,15 @@
+# `wip up` does not build this image itself — run `wip build` (or Invoke-Benchmark.ps1's
+# preflight, which does this for both backends) before timing `wip up` against a clean checkout.
+version: 1
+mode: container
+container: app
+dependencies:
+  app:
+    image: wip-bench:latest
+    ports:
+      - "18080:3000"
+commands:
+  build:
+    type: build
+    context: .
+    tag: wip-bench:latest
