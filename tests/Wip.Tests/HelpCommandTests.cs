@@ -23,6 +23,25 @@ public class HelpCommandTests
         Assert.Contains("Usage:", output.ToString());
     }
 
+    /// <summary>The empty-argument behaviour lives on the root command itself, not just in
+    /// <see cref="Program.Parse"/>, so a caller that skips that wrapper (as a test harness or an
+    /// embedder might) still gets a successful, non-empty help output rather than a bare exit
+    /// code 1 with a "required" parse error.</summary>
+    [Fact]
+    public void BuildRootAloneShowsHelpAndSucceedsOnEmptyArguments()
+    {
+        var parsed = Program.BuildRoot().Parse([]);
+        var output = new StringWriter();
+        var invocation = new InvocationConfiguration
+        {
+            EnableDefaultExceptionHandler = false,
+            Output = output,
+        };
+
+        Assert.Equal(0, parsed.Invoke(invocation));
+        Assert.Contains("Usage:", output.ToString());
+    }
+
     [Fact]
     public void InvalidArgumentsStillFail()
     {
