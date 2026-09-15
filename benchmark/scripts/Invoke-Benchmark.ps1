@@ -244,6 +244,28 @@ function Invoke-Preflight {
     }
 }
 
+function Get-WslVersionRaw {
+    # wsl.exe writes UTF-16LE to stdout whenever it isn't attached to a real console (i.e.
+    # whenever its output is redirected/captured, as here) — decoding it with the pipeline's
+    # usual `(wsl --version) -join ' | '` (or even after setting [Console]::OutputEncoding)
+    # produces mojibake, because that path decodes with the console's encoding, not the child
+    # process's own. Setting ProcessStartInfo's StandardOutputEncoding explicitly is what
+    # actually fixes it.
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = 'wsl.exe'
+    $psi.Arguments = '--version'
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.StandardOutputEncoding = [System.Text.Encoding]::Unicode
+    $psi.StandardErrorEncoding = [System.Text.Encoding]::Unicode
+    $psi.UseShellExecute = $false
+    $p = [System.Diagnostics.Process]::Start($psi)
+    $out = $p.StandardOutput.ReadToEnd()
+    $errOut = $p.StandardError.ReadToEnd()
+    $p.WaitForExit()
+    (@($out, $errOut) | Where-Object { $_ } | ForEach-Object { $_.Trim() -split '\r?\n' }) -join ' | '
+}
+
 function New-EnvironmentJson {
     param([string]$Path)
     $os = Get-CimInstance Win32_OperatingSystem
@@ -259,7 +281,7 @@ function New-EnvironmentJson {
             cpuLogicalProcessors  = $cpu.NumberOfLogicalProcessors
             totalPhysicalMemoryGB = [math]::Round($cs.TotalPhysicalMemory / 1GB, 2)
         }
-        wsl        = [ordered]@{ versionRaw = ((wsl --version 2>&1) -join ' | ') }
+        wsl        = [ordered]@{ versionRaw = (Get-WslVersionRaw) }
         docker     = [ordered]@{
             versionRaw = ((docker version --format '{{.Client.Version}} (client) / {{.Server.Version}} (server)' 2>&1) -join ' | ')
             context    = Get-DockerContextName
