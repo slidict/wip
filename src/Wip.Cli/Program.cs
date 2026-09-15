@@ -118,6 +118,13 @@ internal static class Program
             quietOption,
         };
 
+        // Package managers may validate an installation by launching the executable without
+        // arguments. Re-parsing "--help" against this same root reuses its current command
+        // tree, and invoking that with the caller's own InvocationConfiguration (rather than a
+        // freshly built one) keeps this correct for direct callers of BuildRoot(), not just the
+        // Main wrapper: it's the same root, and captured output/exit codes come through as-is.
+        root.SetAction(parsed => root.Parse(["--help"]).Invoke(parsed.InvocationConfiguration));
+
         CliContext Context(ParseResult parsed) => new(new CliOptions(
             parsed.GetValue(configOption),
             parsed.GetValue(envFileOption),

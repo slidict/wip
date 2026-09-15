@@ -9,6 +9,49 @@ namespace Wip.Tests;
 public class HelpCommandTests
 {
     [Fact]
+    public void NoArgumentsShowHelpAndSucceed()
+    {
+        var parsed = Program.Parse(Program.BuildRoot(), []);
+        var output = new StringWriter();
+        var invocation = new InvocationConfiguration
+        {
+            EnableDefaultExceptionHandler = false,
+            Output = output,
+        };
+
+        Assert.Equal(0, parsed.Invoke(invocation));
+        Assert.Contains("Usage:", output.ToString());
+    }
+
+    /// <summary>The empty-argument behaviour lives on the root command itself, not just in
+    /// <see cref="Program.Parse"/>, so a caller that skips that wrapper (as a test harness or an
+    /// embedder might) still gets a successful, non-empty help output rather than a bare exit
+    /// code 1 with a "required" parse error.</summary>
+    [Fact]
+    public void BuildRootAloneShowsHelpAndSucceedsOnEmptyArguments()
+    {
+        var parsed = Program.BuildRoot().Parse([]);
+        var output = new StringWriter();
+        var invocation = new InvocationConfiguration
+        {
+            EnableDefaultExceptionHandler = false,
+            Output = output,
+        };
+
+        Assert.Equal(0, parsed.Invoke(invocation));
+        Assert.Contains("Usage:", output.ToString());
+    }
+
+    [Fact]
+    public void InvalidArgumentsStillFail()
+    {
+        var parsed = Program.Parse(Program.BuildRoot(), ["--nosuchoption"]);
+        var invocation = new InvocationConfiguration { EnableDefaultExceptionHandler = false };
+
+        Assert.NotEqual(0, parsed.Invoke(invocation));
+    }
+
+    [Fact]
     public void HelpTextMatchesRootHelpAndListsEveryCommand()
     {
         var text = Program.HelpText();
