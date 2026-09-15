@@ -1,0 +1,18 @@
+[2026-09-16T07:32:52.8938799+09:00] preflight: checking Docker Desktop for pre-existing containers
+[2026-09-16T07:32:53.5020380+09:00] preflight: starting Docker Desktop to check
+[2026-09-16T07:33:04.7270652+09:00] preflight: docker build -t wip-bench:latest (not counted in any timed result)
+[2026-09-16T07:33:09.9189047+09:00] environment.json written to C:\Users\Yusuke\codes\wip\benchmark\results\20260916-0732-suppl-wsldocker\environment.json
+[2026-09-16T07:33:09.9745045+09:00] schedule: wsl-docker#r1
+[2026-09-16T07:33:09.9805143+09:00] === wsl-docker round=1 warmup=False order=0 ===
+[2026-09-16T07:33:09.9820190+09:00] stopping both backends to reach baseline state
+[2026-09-16T07:33:57.1656281+09:00] sampling baseline for 60 s
+[2026-09-16T07:34:58.2027264+09:00] starting infra (docker)
+[2026-09-16T07:35:05.9451989+09:00] sampling infra-idle for 60 s
+[2026-09-16T07:36:06.9757180+09:00] starting app
+[2026-09-16T07:36:09.1736277+09:00] sampling app-idle (no load) for 60 s
+[2026-09-16T07:37:10.1925079+09:00] running load for 120 s at concurrency 20
+[2026-09-16T07:39:13.4593446+09:00] stopping app
+[2026-09-16T07:39:14.3276518+09:00] row written: config=wsl-docker round=1 warmup=False
+[2026-09-16T07:39:14.3649647+09:00] report.md written to C:\Users\Yusuke\codes\wip\benchmark\results\20260916-0732-suppl-wsldocker\report.md
+[2026-09-16T07:39:14.3665212+09:00] stopping both backends after run
+[2026-09-16T07:40:01.3715057+09:00] done

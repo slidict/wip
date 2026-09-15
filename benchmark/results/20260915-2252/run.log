@@ -1,0 +1,159 @@
+[2026-09-15T22:52:17.5266099+09:00] preflight: checking Docker Desktop for pre-existing containers
+[2026-09-15T22:52:17.8578537+09:00] preflight: starting Docker Desktop to check
+[2026-09-15T22:52:27.6965804+09:00] preflight: checking WSLC for a pre-existing session/containers
+[2026-09-15T22:52:27.7416333+09:00] preflight: docker build -t wip-bench:latest (not counted in any timed result)
+[2026-09-15T22:52:30.5770110+09:00] preflight: wip build (drives wslc build; not counted in any timed result)
+[2026-09-15T22:52:36.8109244+09:00] environment.json written to C:\Users\Yusuke\codes\wip\benchmark\results\20260915-2252\environment.json
+[2026-09-15T22:52:36.8274376+09:00] schedule: wsl-wip#r0(warmup) -> wsl-docker#r0(warmup) -> windows-wip#r0(warmup) -> windows-docker#r0(warmup) -> windows-wip#r1 -> windows-docker#r1 -> wsl-wip#r1 -> wsl-docker#r1 -> windows-wip#r2 -> wsl-docker#r2 -> wsl-wip#r2 -> windows-docker#r2 -> windows-docker#r3 -> windows-wip#r3 -> wsl-wip#r3 -> wsl-docker#r3
+[2026-09-15T22:52:36.8321524+09:00] === wsl-wip round=0 warmup=True order=0 ===
+[2026-09-15T22:52:36.8346630+09:00] stopping both backends to reach baseline state
+[2026-09-15T22:53:26.4015535+09:00] sampling baseline for 60 s
+[2026-09-15T22:54:27.4383412+09:00] starting infra (wip)
+[2026-09-15T22:54:29.2890499+09:00] sampling infra-idle for 60 s
+[2026-09-15T22:55:30.3122165+09:00] starting app
+[2026-09-15T22:55:37.4308616+09:00] sampling app-idle (no load) for 60 s
+[2026-09-15T22:56:38.4641159+09:00] running load for 120 s at concurrency 20
+[2026-09-15T22:58:41.7815541+09:00] stopping app
+[2026-09-15T22:58:46.6435267+09:00] row written: config=wsl-wip round=0 warmup=True
+[2026-09-15T22:58:46.6485256+09:00] === wsl-docker round=0 warmup=True order=1 ===
+[2026-09-15T22:58:46.6505250+09:00] stopping both backends to reach baseline state
+[2026-09-15T22:58:48.4160367+09:00] sampling baseline for 60 s
+[2026-09-15T22:59:49.7360361+09:00] starting infra (docker)
+[2026-09-15T22:59:58.5561857+09:00] sampling infra-idle for 60 s
+[2026-09-15T23:00:59.5913029+09:00] starting app
+[2026-09-15T23:01:00.0989049+09:00] stopping app
+[2026-09-15T23:01:00.4299649+09:00] row written: config=wsl-docker round=0 warmup=True
+[2026-09-15T23:01:00.4315165+09:00] === windows-wip round=0 warmup=True order=2 ===
+[2026-09-15T23:01:00.4330716+09:00] stopping both backends to reach baseline state
+[2026-09-15T23:01:47.4497503+09:00] sampling baseline for 60 s
+[2026-09-15T23:02:48.7121561+09:00] starting infra (wip)
+[2026-09-15T23:02:50.6606874+09:00] sampling infra-idle for 60 s
+[2026-09-15T23:03:51.6860816+09:00] starting app
+[2026-09-15T23:03:54.0593811+09:00] sampling app-idle (no load) for 60 s
+[2026-09-15T23:04:55.2928493+09:00] running load for 120 s at concurrency 20
+[2026-09-15T23:06:57.8623368+09:00] stopping app
+[2026-09-15T23:06:58.4254463+09:00] row written: config=windows-wip round=0 warmup=True
+[2026-09-15T23:06:58.4264459+09:00] === windows-docker round=0 warmup=True order=3 ===
+[2026-09-15T23:06:58.4284467+09:00] stopping both backends to reach baseline state
+[2026-09-15T23:07:00.0115292+09:00] sampling baseline for 60 s
+[2026-09-15T23:08:01.0461070+09:00] starting infra (docker)
+[2026-09-15T23:08:06.5094660+09:00] sampling infra-idle for 60 s
+[2026-09-15T23:09:07.5405218+09:00] starting app
+[2026-09-15T23:09:08.1960249+09:00] sampling app-idle (no load) for 60 s
+[2026-09-15T23:10:09.2276747+09:00] running load for 120 s at concurrency 20
+[2026-09-15T23:12:12.3910354+09:00] stopping app
+[2026-09-15T23:12:12.7285463+09:00] row written: config=windows-docker round=0 warmup=True
+[2026-09-15T23:12:12.7300987+09:00] === windows-wip round=1 warmup=False order=0 ===
+[2026-09-15T23:12:12.7311288+09:00] stopping both backends to reach baseline state
+[2026-09-15T23:12:59.7742737+09:00] sampling baseline for 60 s
+[2026-09-15T23:14:00.7953538+09:00] starting infra (wip)
+[2026-09-15T23:14:02.5134288+09:00] sampling infra-idle for 60 s
+[2026-09-15T23:15:03.5380845+09:00] starting app
+[2026-09-15T23:15:05.7504283+09:00] sampling app-idle (no load) for 60 s
+[2026-09-15T23:16:06.7879187+09:00] running load for 120 s at concurrency 20
+[2026-09-15T23:18:10.0025990+09:00] stopping app
+[2026-09-15T23:18:10.2355378+09:00] row written: config=windows-wip round=1 warmup=False
+[2026-09-15T23:18:10.2395356+09:00] === windows-docker round=1 warmup=False order=1 ===
+[2026-09-15T23:18:10.2455486+09:00] stopping both backends to reach baseline state
+[2026-09-15T23:18:11.9009506+09:00] sampling baseline for 60 s
+[2026-09-15T23:19:12.9287548+09:00] starting infra (docker)
+[2026-09-15T23:19:18.1081227+09:00] sampling infra-idle for 60 s
+[2026-09-15T23:20:19.1418981+09:00] starting app
+[2026-09-15T23:20:19.7820369+09:00] sampling app-idle (no load) for 60 s
+[2026-09-15T23:21:20.8160777+09:00] running load for 120 s at concurrency 20
+[2026-09-15T23:23:23.4146159+09:00] stopping app
+[2026-09-15T23:23:23.7797067+09:00] row written: config=windows-docker round=1 warmup=False
+[2026-09-15T23:23:23.7812556+09:00] === wsl-wip round=1 warmup=False order=2 ===
+[2026-09-15T23:23:23.7822869+09:00] stopping both backends to reach baseline state
+[2026-09-15T23:24:10.7899297+09:00] sampling baseline for 60 s
+[2026-09-15T23:25:11.8080311+09:00] starting infra (wip)
+[2026-09-15T23:25:13.5532515+09:00] sampling infra-idle for 60 s
+[2026-09-15T23:26:14.5775192+09:00] starting app
+[2026-09-15T23:26:22.0659188+09:00] sampling app-idle (no load) for 60 s
+[2026-09-15T23:27:23.1327175+09:00] running load for 120 s at concurrency 20
+[2026-09-15T23:29:25.7735745+09:00] stopping app
+[2026-09-15T23:29:30.0439947+09:00] row written: config=wsl-wip round=1 warmup=False
+[2026-09-15T23:29:30.0485048+09:00] === wsl-docker round=1 warmup=False order=3 ===
+[2026-09-15T23:29:30.0495054+09:00] stopping both backends to reach baseline state
+[2026-09-15T23:29:31.7569179+09:00] sampling baseline for 60 s
+[2026-09-15T23:30:32.7774355+09:00] starting infra (docker)
+[2026-09-15T23:30:41.0589574+09:00] sampling infra-idle for 60 s
+[2026-09-15T23:31:42.0932095+09:00] starting app
+[2026-09-15T23:31:43.0360853+09:00] sampling app-idle (no load) for 60 s
+[2026-09-15T23:32:44.0624731+09:00] running load for 120 s at concurrency 20
+[2026-09-15T23:34:47.1834085+09:00] stopping app
+[2026-09-15T23:34:47.8788945+09:00] row written: config=wsl-docker round=1 warmup=False
+[2026-09-15T23:34:47.8817717+09:00] === windows-wip round=2 warmup=False order=0 ===
+[2026-09-15T23:34:47.8827762+09:00] stopping both backends to reach baseline state
+[2026-09-15T23:35:34.8944601+09:00] sampling baseline for 60 s
+[2026-09-15T23:36:35.9271929+09:00] starting infra (wip)
+[2026-09-15T23:36:37.6723843+09:00] sampling infra-idle for 60 s
+[2026-09-15T23:37:38.7050172+09:00] starting app
+[2026-09-15T23:37:41.0952123+09:00] sampling app-idle (no load) for 60 s
+[2026-09-15T23:38:42.1277453+09:00] running load for 120 s at concurrency 20
+[2026-09-15T23:40:44.8572767+09:00] stopping app
+[2026-09-15T23:40:45.0747885+09:00] row written: config=windows-wip round=2 warmup=False
+[2026-09-15T23:40:45.0767891+09:00] === wsl-docker round=2 warmup=False order=1 ===
+[2026-09-15T23:40:45.0777893+09:00] stopping both backends to reach baseline state
+[2026-09-15T23:40:46.8050865+09:00] sampling baseline for 60 s
+[2026-09-15T23:41:47.8301195+09:00] starting infra (docker)
+[2026-09-15T23:41:58.0637561+09:00] sampling infra-idle for 60 s
+[2026-09-15T23:42:59.0884117+09:00] starting app
+[2026-09-15T23:43:00.1803824+09:00] sampling app-idle (no load) for 60 s
+[2026-09-15T23:44:01.2010104+09:00] running load for 120 s at concurrency 20
+[2026-09-15T23:46:04.0260683+09:00] stopping app
+[2026-09-15T23:46:04.7651522+09:00] row written: config=wsl-docker round=2 warmup=False
+[2026-09-15T23:46:04.7672153+09:00] === wsl-wip round=2 warmup=False order=2 ===
+[2026-09-15T23:46:04.7682551+09:00] stopping both backends to reach baseline state
+[2026-09-15T23:46:51.8197219+09:00] sampling baseline for 60 s
+[2026-09-15T23:47:52.8493132+09:00] starting infra (wip)
+[2026-09-15T23:47:54.5921501+09:00] sampling infra-idle for 60 s
+[2026-09-15T23:48:55.6175192+09:00] starting app
+[2026-09-15T23:49:02.3316607+09:00] sampling app-idle (no load) for 60 s
+[2026-09-15T23:50:03.3577855+09:00] running load for 120 s at concurrency 20
+[2026-09-15T23:52:06.6774829+09:00] stopping app
+[2026-09-15T23:52:11.3495076+09:00] row written: config=wsl-wip round=2 warmup=False
+[2026-09-15T23:52:11.3515071+09:00] === windows-docker round=2 warmup=False order=3 ===
+[2026-09-15T23:52:11.3565082+09:00] stopping both backends to reach baseline state
+[2026-09-15T23:52:12.8735751+09:00] sampling baseline for 60 s
+[2026-09-15T23:53:13.9040781+09:00] starting infra (docker)
+[2026-09-15T23:53:17.6361923+09:00] sampling infra-idle for 60 s
+[2026-09-15T23:54:18.6716439+09:00] starting app
+[2026-09-15T23:54:19.3248647+09:00] sampling app-idle (no load) for 60 s
+[2026-09-15T23:55:20.5884802+09:00] running load for 120 s at concurrency 20
+[2026-09-15T23:57:22.9195381+09:00] stopping app
+[2026-09-15T23:57:23.3086460+09:00] row written: config=windows-docker round=2 warmup=False
+[2026-09-15T23:57:23.3096764+09:00] === windows-docker round=3 warmup=False order=0 ===
+[2026-09-15T23:57:23.3112243+09:00] stopping both backends to reach baseline state
+[2026-09-15T23:58:10.3423950+09:00] sampling baseline for 60 s
+[2026-09-15T23:59:11.3720255+09:00] starting infra (docker)
+[2026-09-15T23:59:15.1737230+09:00] sampling infra-idle for 60 s
+[2026-09-16T00:00:16.4955856+09:00] starting app
+[2026-09-16T00:00:17.1827128+09:00] sampling app-idle (no load) for 60 s
+[2026-09-16T00:01:18.2231285+09:00] running load for 120 s at concurrency 20
+[2026-09-16T00:03:20.9833353+09:00] stopping app
+[2026-09-16T00:03:21.3893146+09:00] row written: config=windows-docker round=3 warmup=False
+[2026-09-16T00:03:21.3908568+09:00] === windows-wip round=3 warmup=False order=1 ===
+[2026-09-16T00:03:21.3924282+09:00] stopping both backends to reach baseline state
+[2026-09-16T00:04:08.4299393+09:00] sampling baseline for 60 s
+[2026-09-16T00:05:09.4593196+09:00] starting infra (wip)
+[2026-09-16T00:05:11.1556285+09:00] sampling infra-idle for 60 s
+[2026-09-16T00:06:12.3093590+09:00] starting app
+[2026-09-16T00:06:14.5839140+09:00] sampling app-idle (no load) for 60 s
+[2026-09-16T00:07:15.6840668+09:00] running load for 120 s at concurrency 20
+[2026-09-16T00:09:18.0030972+09:00] stopping app
+[2026-09-16T00:09:18.2152915+09:00] row written: config=windows-wip round=3 warmup=False
+[2026-09-16T00:09:18.2162967+09:00] === wsl-wip round=3 warmup=False order=2 ===
+[2026-09-16T00:09:18.2189116+09:00] stopping both backends to reach baseline state
+[2026-09-16T00:09:19.7466668+09:00] sampling baseline for 60 s
+[2026-09-16T00:10:20.7681364+09:00] starting infra (wip)
+[2026-09-16T00:10:22.4763263+09:00] sampling infra-idle for 60 s
+[2026-09-16T00:11:23.4968655+09:00] starting app
+[2026-09-16T00:11:30.1405302+09:00] sampling app-idle (no load) for 60 s
+[2026-09-16T00:12:31.1768220+09:00] running load for 120 s at concurrency 20
+[2026-09-16T00:14:34.1881957+09:00] stopping app
+[2026-09-16T00:14:39.2936667+09:00] row written: config=wsl-wip round=3 warmup=False
+[2026-09-16T00:14:39.2946635+09:00] === wsl-docker round=3 warmup=False order=3 ===
+[2026-09-16T00:14:39.2976641+09:00] stopping both backends to reach baseline state
+[2026-09-16T00:14:40.9397969+09:00] sampling baseline for 60 s
+[2026-09-16T00:15:42.0214070+09:00] starting infra (docker)

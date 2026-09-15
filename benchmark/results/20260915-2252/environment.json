@@ -1,0 +1,44 @@
+﻿{
+    "capturedAt":  "2026-09-15T22:52:36.5116154+09:00",
+    "host":  {
+                 "os":  "Microsoft Windows 11 Pro",
+                 "osVersion":  "10.0.26200",
+                 "cpu":  "12th Gen Intel(R) Core(TM) i7-12700KF",
+                 "cpuCores":  12,
+                 "cpuLogicalProcessors":  20,
+                 "totalPhysicalMemoryGB":  63.86
+             },
+    "wsl":  {
+                "versionRaw":  "W\u0000S\u0000L\u0000 \u0000�0�0�0�0�0:\u0000 \u00002\u0000.\u00009\u0000.\u00001\u00002\u0000.\u00000\u0000 | \u0000 | \u0000�0�0�0�0 \u0000�0�0�0�0�0:\u0000 \u00006\u0000.\u00001\u00008\u0000.\u00004\u00000\u0000.\u00001\u0000-\u00001\u0000 | \u0000 | \u0000W\u0000S\u0000L\u0000g\u0000 \u0000�0�0�0�0�0:\u0000 \u00001\u0000.\u00000\u0000.\u00007\u00009\u0000 | \u0000 | \u0000M\u0000S\u0000R\u0000D\u0000C\u0000 \u0000�0�0�0�0�0:\u0000 \u00001\u0000.\u00002\u0000.\u00007\u00002\u00001\u00004\u0000 | \u0000 | \u0000D\u0000i\u0000r\u0000e\u0000c\u0000t\u00003\u0000D\u0000 \u0000�0�0�0�0�0:\u0000 \u00001\u0000.\u00006\u00001\u00001\u0000.\u00001\u0000-\u00008\u00001\u00005\u00002\u00008\u00005\u00001\u00001\u0000 | \u0000 | \u0000D\u0000X\u0000C\u0000o\u0000r\u0000e\u0000 \u0000�0�0�0�0�0:\u0000 \u00001\u00000\u0000.\u00000\u0000.\u00002\u00006\u00001\u00000\u00000\u0000.\u00001\u0000-\u00002\u00004\u00000\u00003\u00003\u00001\u0000-\u00001\u00004\u00003\u00005\u0000.\u0000g\u0000e\u0000-\u0000r\u0000e\u0000l\u0000e\u0000a\u0000s\u0000e\u0000 | \u0000 | \u0000W\u0000i\u0000n\u0000d\u0000o\u0000w\u0000s\u0000 \u0000�0�0�0�0�0:\u0000 \u00001\u00000\u0000.\u00000\u0000.\u00002\u00006\u00002\u00000\u00000\u0000.\u00009\u00004\u00004\u00005\u0000 | \u0000 | \u0000"
+            },
+    "docker":  {
+                   "versionRaw":  "29.8.0 (client) / 29.8.0 (server)",
+                   "context":  "desktop-linux"
+               },
+    "wip":  {
+                "versionRaw":  "wip 2.5.2"
+            },
+    "image":  {
+                  "wipRepoCommit":  "20897a079dac78038a470de837e1b0376fec9b44",
+                  "dockerImageId":  "sha256:06d35d4ef3ff649d254645a53280165646a742b8c1e0f8010514fda93ad9012f",
+                  "wslcImageInspect":  "REPOSITORY   TAG      IMAGE ID       CREATED   SIZE | wip-bench    latest   9fa564b4ffba   12 分前     165MB"
+              },
+    "benchmark":  {
+                      "appDir":  "C:\\Users\\Yusuke\\codes\\wip\\benchmark\\app",
+                      "wslAppDir":  "/mnt/c/Users/Yusuke/codes/wip/benchmark/app",
+                      "appUrl":  "http://127.0.0.1:18080/",
+                      "wslDistro":  "Ubuntu",
+                      "configs":  [
+                                      "windows-docker",
+                                      "windows-wip",
+                                      "wsl-docker",
+                                      "wsl-wip"
+                                  ],
+                      "rounds":  3,
+                      "warmups":  1,
+                      "baselineWaitSec":  60,
+                      "idleWaitSec":  60,
+                      "loadDurationSec":  120,
+                      "loadConcurrency":  20
+                  }
+}
