@@ -34,6 +34,32 @@ public class DoctorTests
     }
 
     [Fact]
+    public void MissingWslcSuggestsStableAndPreReleaseWslUpdatesWithACaution()
+    {
+        using var baseUrl = new TemporaryEnvironmentVariable(LocalAiProvider.BaseUrlEnvironmentVariable,
+            "http://127.0.0.1:1");
+        using var directory = new TemporaryDirectory();
+        File.WriteAllText(Path.Combine(directory.Path, "wip.yml"), """
+            version: 1
+            container: app
+            dependencies:
+              app:
+                image: busybox:latest
+            """);
+        var resolver = new Wip.Execution.CommandResolver([]);
+
+        var results = new Doctor(new ConfigLoader(directory.Path), new FakeEnvironment(), resolver).Call();
+
+        var wslc = Assert.Single(results, result => result.Message.StartsWith("WSLC was not found."));
+        Assert.Equal(Doctor.Level.Fail, wslc.Level);
+        var message = wslc.Message.ReplaceLineEndings("\n");
+        Assert.Contains("\n  wsl --update\n", message);
+        Assert.Contains("\n  wsl --update --pre-release\n", message);
+        Assert.Contains("Caution:", wslc.Message);
+        Assert.Contains("may be unstable", wslc.Message);
+    }
+
+    [Fact]
     public void ReportsMissingAiServerAsWarnWithFixHint()
     {
         using var baseUrl = new TemporaryEnvironmentVariable(LocalAiProvider.BaseUrlEnvironmentVariable, "http://127.0.0.1:1");
