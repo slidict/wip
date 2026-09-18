@@ -11,7 +11,17 @@ public sealed class CommandResolver
     public static IReadOnlyList<string> DefaultCandidates { get; } = BuildDefaultCandidates();
 
     public const string DefaultInstallHint = """
-        Install or update the WSL container tooling, then run:
+        Install or update the WSL container tooling with:
+
+          wsl --update
+
+        If WSLC is still unavailable, you can opt in to a pre-release WSL update:
+
+          wsl --update --pre-release
+
+        Caution: --pre-release installs preview software that may be unstable.
+
+        Then run:
 
           wip doctor
         """;
