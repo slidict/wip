@@ -51,9 +51,17 @@ to state changes:
    **This is the one `wslc events` can replace.** `stop`/`destroy` map
    directly onto "exited"; a single long-lived `wslc events --filter
    type=container --filter event=stop --filter event=destroy` subprocess
-   (or one `container=` filter per dependency, if that's how multi-value
-   filters compose) can drive `RestartIfExited` immediately on each line
-   instead of on the next tick.
+   can drive `RestartIfExited` immediately on each line instead of on the
+   next tick. `--filter container=<id>` takes a container **ID**, not a
+   wip dependency name, and that ID changes every time `RestartIfExited`
+   recreates the container — so a design built on `container=` filters
+   would have to re-resolve name→ID and re-subscribe after every restart.
+   Simpler: subscribe unfiltered by container (keep `type=container` and
+   the `event=` filters) and match each line against the watched
+   dependency names client-side using the event's own name attribute
+   (confirmed present in the PR's own event line format, e.g.
+   `container stop <id> (exitCode=..., image=..., name=<name>)`) — no ID
+   tracking, and it survives recreation for free.
 
 2. **`WaitForHealthy`** (`src/Wip.Cli/CliContext.cs:1095`) — polls
    `dependencies.<name>.healthcheck` by running `wslc exec <name> <test>`
