@@ -6,3 +6,4 @@ dist/
 publish/
 .vs/
 *.user
+**/.wip/volume-usage/

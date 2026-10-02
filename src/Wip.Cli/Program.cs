@@ -163,6 +163,16 @@ internal static class Program
             sandbox.Subcommands.Add(command);
         }
         yield return sandbox;
+        var volume = new Command("volume", "Manage declared storage and reconcile ephemeral use cycles");
+        foreach (var operation in new[] { "create", "status", "destroy", "reconcile" })
+        {
+            var name = new Argument<string>("name");
+            var command = new Command(operation) { name };
+            var action = operation;
+            command.SetAction(parsed => context(parsed).Volume(action, parsed.GetValue(name)!));
+            volume.Subcommands.Add(command);
+        }
+        yield return volume;
         yield return Simple("version", "Show wip and WSLC versions", context, ctx => ctx.Version());
 
         var force = new Option<bool>("--force") { Description = "Overwrite an existing wip.yml" };

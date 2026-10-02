@@ -51,7 +51,11 @@ so a checkout on the WSL filesystem does not reach `wslc` as a UNC path — see
 Cleanup removes the `wip-e2e-app` container whether the run passed or failed, and the
 fixture's `command: sleep 600` bounds the container's life even if the script is killed
 outright. The `wip-e2e-net` network and the `wip-e2e:latest` image are left in place — both
-are reused by the next run, and the CI runner is thrown away regardless.
+are reused by the next run, and the CI runner is thrown away regardless. Named sandbox and
+volume fixtures use a unique resource namespace; their consumers are inspected for fixture
+ownership before removal. Volume finalizers explicitly remove only the declared owned
+storage after consumers are gone. Nonzero cleanup fails the run. Failed runs keep the scratch
+configuration/journal for recovery, even without `-KeepWorkspace`.
 
 ## In CI
 
@@ -66,8 +70,8 @@ instead of letting a wip command fail for unrelated reasons.
 
 ## Adding a case
 
-Keep the fixture minimal: one image, one container, no bind mounts. `volumes:` is left out
-deliberately — how `wslc` resolves a `-v` source is still an open question (see the README's
-[Known gaps & TODO](../../README.md#known-gaps--todo)), and mixing it in would make a mount
-failure look like a lifecycle failure. When that question is settled, a mount case belongs
-here as its own step, with its own assertion.
+Keep fixtures minimal and use only disposable data. `volume-lifecycle.ps1` tests declared
+storage via explicit backend `--mount type=volume` consumers: persistent data survives
+container recreation; two references protect ephemeral storage until final detach; the
+next ephemeral cycle is empty. This verifies storage without implementing the subsequent
+sandbox mount integration. Bind-mount/path-resolution coverage remains separate.

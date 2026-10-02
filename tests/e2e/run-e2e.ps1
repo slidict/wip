@@ -384,6 +384,9 @@ try {
     Assert-Exit (Invoke-Wip @('sandbox', 'destroy', 'fixture')) 0 'repeated sandbox destroy'
     Assert-Match (Invoke-Wip @('sandbox', 'status', 'fixture')) 'fixture\s+not found' 'sandbox absent'
 
+    . (Join-Path $PSScriptRoot 'volume-lifecycle.ps1')
+    Invoke-VolumeStorageE2E -Namespace $sandboxNamespace -Image 'wip-e2e:latest'
+
     Write-Step "All lifecycle assertions passed"
 }
 catch {
@@ -408,7 +411,7 @@ finally {
         }
     }
     Remove-Leftovers
-    if ($script:Workspace -and -not $KeepWorkspace) {
+    if ($script:Workspace -and -not $KeepWorkspace -and -not $script:Failed) {
         Remove-Item -LiteralPath $script:Workspace -Recurse -Force -ErrorAction SilentlyContinue
     }
     elseif ($script:Workspace) {
