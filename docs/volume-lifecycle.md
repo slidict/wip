@@ -70,7 +70,7 @@ deletion against external name replacement. Use the lifecycle API for storage ch
 4. After removing the final referencing container, call `Reconcile`. It repeats ownership
    and reference checks, then removes only the previously observed ephemeral generation.
 
-The future mount integration must invoke these hooks after attach and confirmed detach;
+Sandbox mount integration invokes these hooks after attach and confirmed detach;
 there is no background polling daemon. Direct backend users need the same explicit hooks.
 Persistent volumes are always retained by reconciliation and sandbox destruction.
 

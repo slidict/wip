@@ -52,8 +52,8 @@ inference from an agent name or a `shared`, `agent` or `sandbox` purpose mode.
 | sandbox `volumes` | Optional sequence of declared volume names; omitted means no mounts |
 
 Names and namespace match `[a-z][a-z0-9_-]{0,62}` and compare ordinally. Duplicate
-names, repeated references, undefined volumes and equal mount destinations **within
-one sandbox** are rejected. Equal destinations in different sandboxes are valid.
+names, repeated references, undefined volumes, root destination `/`, comma-containing mount destinations,
+and equal mount destinations **within one sandbox** are rejected. Equal destinations in different sandboxes are valid.
 Ancestor/descendant mounts are not equal-path conflicts; nested mounts are ordered
 so shallower paths precede deeper paths before container creation. Unknown fields inside either resource
 declaration are rejected, including agent/purpose/mode labels. Backend errors do not
