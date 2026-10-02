@@ -25,6 +25,10 @@ key, every command's flags, guides, and troubleshooting — see the
 
 ## Contents
 
+The additive sandbox/volume configuration contract is documented in
+[Sandbox and volume contract](docs/sandbox-volume-contract.md). Resource execution is a
+separate follow-up; existing container/compose commands keep their behavior.
+
 - [Highlights](#highlights)
 - [Requirements & installation](#requirements--installation)
 - [Quick start](#quick-start)
