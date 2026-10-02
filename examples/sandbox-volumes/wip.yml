@@ -1,0 +1,31 @@
+# Generic multi-sandbox configuration with shared and isolated volumes.
+# Volumes and sandboxes are declared explicitly without assuming fixed roles.
+version: 1
+resource_namespace: generic-workspace
+
+volumes:
+  # Persistent volume shared across sandboxes (survives sandbox recreation)
+  - name: shared-data
+    persistent: true
+    mount: /workspace
+
+  # Ephemeral volume shared across sandboxes for the duration of a workflow cycle
+  - name: shared-scratch
+    persistent: false
+    mount: /tmp/scratch
+
+  # Ephemeral volume isolated to a single sandbox
+  - name: private-cache
+    persistent: false
+    mount: /var/cache
+
+sandboxes:
+  # Primary sandbox mounts shared storage and shared scratch
+  - name: primary
+    image: alpine:3.20
+    volumes: [shared-data, shared-scratch]
+
+  # Secondary sandbox shares storage with primary, and also has an isolated private cache
+  - name: secondary
+    image: alpine:3.20
+    volumes: [shared-data, shared-scratch, private-cache]

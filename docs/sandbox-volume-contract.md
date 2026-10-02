@@ -1,8 +1,8 @@
 # Sandbox and volume contract
 
 This is the configuration and ownership contract for workspace slidict/workspace#194 (parent slidict/workspace#192).
-The configuration model, validation and [named sandbox lifecycle](sandbox-lifecycle.md) are implemented.
-[Declared volume storage](volume-lifecycle.md) is implemented; mount integration remains a follow-up.
+The configuration model, validation, [named sandbox lifecycle](sandbox-lifecycle.md),
+[declared volume storage](volume-lifecycle.md) and mount integration are implemented.
 Loading YAML or running `wip config` never creates, mounts, snapshots or deletes resources.
 The existing `up`, `down`, `run`, `exec` and `sync` commands still target legacy dependencies;
 they do not operate on these new declarations. Sandbox execution belongs to slidict/workspace#195,

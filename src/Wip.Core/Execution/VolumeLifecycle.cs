@@ -16,8 +16,16 @@ public interface IVolumeUsageStore
 
 public sealed record VolumeStatus(string Name, string? BackendName, bool Persistent, IReadOnlyList<string> References, bool WasUsed);
 
+public interface IVolumeLifecycle
+{
+    VolumeStatus Status(string name);
+    int Create(string name);
+    int Destroy(string name);
+    int Reconcile(string name);
+}
+
 /// <summary>Storage only. Mount integration calls reconciliation after attach and confirmed detach.</summary>
-public sealed class VolumeLifecycle(SandboxSettings settings, SandboxBackend backend, IVolumeUsageStore usage, TimeProvider? timeProvider = null)
+public sealed class VolumeLifecycle(SandboxSettings settings, SandboxBackend backend, IVolumeUsageStore usage, TimeProvider? timeProvider = null) : IVolumeLifecycle
 {
     private readonly TimeProvider clock = timeProvider ?? TimeProvider.System;
     public const string OwnerLabel = "io.slidict.wip.owner";

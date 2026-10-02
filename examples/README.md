@@ -6,6 +6,7 @@ Working `wip.yml` configs for real-world stacks, each with its own setup instruc
 |---|---|---|
 | [`rails/`](rails) | `container` | Rails + Postgres + Redis, no `compose.yml` |
 | [`node/`](node) | `compose-native` | Node.js + MySQL + Redis, driven from a `compose.yml` |
+| [`sandbox-volumes/`](sandbox-volumes) | `sandbox` | Multi-sandbox with shared and isolated named volumes |
 
 Each directory is meant to be copied into (or adapted for) an existing app — they're not runnable
 on their own, since there's no real application code here, just the placeholder Dockerfile a

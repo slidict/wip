@@ -1,7 +1,7 @@
 # Declared volume lifecycle
 
 This implements storage under [the sandbox/volume contract](sandbox-volume-contract.md).
-Mount ordering and sandbox integration belong to slidict/workspace#197. There are no agent
+Mount ordering and sandbox integration are implemented via `SandboxLifecycle`. There are no agent
 roles or purpose modes. Declare explicit persistence and a canonical mount target:
 
 ```yaml
@@ -123,6 +123,6 @@ It calls storage CLI commands from separate processes to exercise journal durabi
 Consumers are inspected for the fixture label before removal; finalizers surface cleanup
 failures and preserve the scratch config/journal for recovery. No real user data is used.
 
-For slidict/workspace#197, use `VolumeLifecycle.Create/Status/Destroy/Reconcile` and the
-returned `BackendName` for explicit attach; keep all references until successful detach,
-then reconcile. Sandbox create still rejects volume references until that integration.
+For slidict/workspace#197, `SandboxLifecycle` uses `VolumeLifecycle.Create/Status/Destroy/Reconcile` and
+backend names for volume attachment and post-detach cleanup. Sandboxes now mount declared volumes,
+reconciling usage on creation and cleaning up unreferenced ephemeral storage on destruction.
