@@ -719,4 +719,83 @@ public class SandboxLifecycleTests
         // Reconcile was called before removal AND after removal
         Assert.Equal(["temp", "temp"], fakeVolumes.ReconcileCalls);
     }
+
+    [Fact]
+    public void IdempotentCreateSucceedsWithImageDeclaredAnonymousVolume()
+    {
+        var settings = new Config(YamlLoader.LoadText("""
+            version: 1
+            resource_namespace: test
+            volumes:
+              - name: data
+                persistent: true
+                mount: /data
+            sandboxes:
+              - name: first
+                image: fixture:latest
+                volumes: [data]
+            """, allowAliases: false)).SandboxResources;
+        var fake = new Fake();
+        var fakeVolumes = new FakeVolumeLifecycle();
+        var service = new SandboxLifecycle(settings, fake.Run, fakeVolumes);
+
+        // Container is running with declared wip volume AND an anonymous image volume
+        fake.Exists = true;
+        fake.State = "running";
+        fake.Mounts = [
+            new SandboxMount("volume", "wip-v-data", "/data"),
+            new SandboxMount("volume", "a1b2c3d4e5f67890a1b2c3d4e5f67890", "/var/log"),
+        ];
+
+        Assert.Equal(0, service.Create("first"));
+        Assert.Equal(["data"], fakeVolumes.ReconcileCalls);
+    }
+
+    [Fact]
+    public void DestroyReconcilesMountedVolumesEvenIfRemovedFromSandboxDeclaration()
+    {
+        var settingsOriginal = new Config(YamlLoader.LoadText("""
+            version: 1
+            resource_namespace: test
+            volumes:
+              - name: oldvol
+                persistent: false
+                mount: /old
+              - name: newvol
+                persistent: false
+                mount: /new
+            sandboxes:
+              - name: first
+                image: fixture:latest
+                volumes: [oldvol]
+            """, allowAliases: false)).SandboxResources;
+        var fake = new Fake();
+        var fakeVolumes = new FakeVolumeLifecycle();
+        var service1 = new SandboxLifecycle(settingsOriginal, fake.Run, fakeVolumes);
+        Assert.Equal(0, service1.Create("first"));
+        fakeVolumes.ReconcileCalls.Clear();
+
+        // Now sandbox declaration changes to use newvol, but container still has oldvol mounted
+        var settingsModified = new Config(YamlLoader.LoadText("""
+            version: 1
+            resource_namespace: test
+            volumes:
+              - name: oldvol
+                persistent: false
+                mount: /old
+              - name: newvol
+                persistent: false
+                mount: /new
+            sandboxes:
+              - name: first
+                image: fixture:latest
+                volumes: [newvol]
+            """, allowAliases: false)).SandboxResources;
+        var service2 = new SandboxLifecycle(settingsModified, fake.Run, fakeVolumes);
+        Assert.Equal(0, service2.Destroy("first"));
+
+        // Both oldvol (actually mounted) and newvol (declared) should be reconciled
+        Assert.Contains("oldvol", fakeVolumes.ReconcileCalls);
+        Assert.Contains("newvol", fakeVolumes.ReconcileCalls);
+    }
 }

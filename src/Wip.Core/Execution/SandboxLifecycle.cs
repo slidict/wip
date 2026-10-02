@@ -138,14 +138,16 @@ public sealed class SandboxLifecycle(SandboxSettings settings, SandboxBackend ba
     public int Destroy(string name)
     {
         var definition = Definition(name);
-        if (definition.Volumes.Count != 0 && volumes is null)
-            throw new ConfigException($"Sandbox {name}: volume lifecycle is not configured; container removal cannot reconcile volumes");
         var existing = Status(name);
+        var reconcileVolumes = VolumesToReconcileOnDestroy(definition, existing);
+        if (reconcileVolumes.Count != 0 && volumes is null)
+            throw new ConfigException($"Sandbox {name}: volume lifecycle is not configured; container removal cannot reconcile volumes");
+
         if (existing.Id is not null)
         {
-            if (definition.Volumes.Count != 0 && volumes is not null)
+            if (reconcileVolumes.Count != 0 && volumes is not null)
             {
-                foreach (var vName in definition.Volumes)
+                foreach (var vName in reconcileVolumes)
                 {
                     var code = volumes.Reconcile(vName);
                     if (code != 0) return code;
@@ -156,10 +158,10 @@ public sealed class SandboxLifecycle(SandboxSettings settings, SandboxBackend ba
             if (removed.Code != 0) return removed.Code;
             if (Status(name).Id is not null) throw Failure(name, "container still exists after removal; retry status before recovery");
         }
-        if (definition.Volumes.Count != 0)
+        if (reconcileVolumes.Count != 0)
         {
             if (volumes is null) throw new ConfigException($"Sandbox {name}: volume lifecycle is not configured; container removal cannot reconcile volumes");
-            foreach (var vName in definition.Volumes)
+            foreach (var vName in reconcileVolumes)
             {
                 var code = volumes.Reconcile(vName);
                 if (code != 0) return code;
@@ -168,12 +170,34 @@ public sealed class SandboxLifecycle(SandboxSettings settings, SandboxBackend ba
         return 0;
     }
 
+    private IReadOnlyList<string> VolumesToReconcileOnDestroy(SandboxDefinition definition, SandboxStatus existing)
+    {
+        var result = new HashSet<string>(definition.Volumes, StringComparer.Ordinal);
+        if (existing.Id is not null)
+        {
+            foreach (var mount in existing.Mounts)
+            {
+                if (!string.Equals(mount.Type, "volume", StringComparison.OrdinalIgnoreCase)) continue;
+                var matched = settings.Volumes.FirstOrDefault(v =>
+                    (volumes is not null && volumes.Status(v.Name).BackendName == mount.Name) ||
+                    mount.Name.StartsWith(VolumeLifecycle.BackendPrefix(settings.ResourceNamespace!, v.Name), StringComparison.Ordinal) ||
+                    mount.Name == "wip-v-" + v.Name);
+                if (matched is not null)
+                {
+                    result.Add(matched.Name);
+                }
+            }
+        }
+        return result.ToArray();
+    }
+
     private void VerifyExistingMounts(string name, SandboxStatus existing, IReadOnlyList<VolumeDefinition> volumeDefs)
     {
-        var containerVolumeMounts = existing.Mounts
-            .Where(m => string.Equals(m.Type, "volume", StringComparison.OrdinalIgnoreCase))
+        var wipVolumeMounts = existing.Mounts
+            .Where(m => string.Equals(m.Type, "volume", StringComparison.OrdinalIgnoreCase) &&
+                        m.Name.StartsWith("wip-v-", StringComparison.Ordinal))
             .ToArray();
-        if (containerVolumeMounts.Length != volumeDefs.Count)
+        if (wipVolumeMounts.Length != volumeDefs.Count)
             throw Failure(name, "existing container mounts do not match declared volumes; run sandbox destroy, confirm absence, then sandbox create");
 
         if (volumeDefs.Count == 0) return;
@@ -183,7 +207,7 @@ public sealed class SandboxLifecycle(SandboxSettings settings, SandboxBackend ba
             var vStatus = volumes!.Status(vDef.Name);
             if (vStatus.BackendName is null)
                 throw Failure(name, "existing container mounts do not match declared volumes; run sandbox destroy, confirm absence, then sandbox create");
-            var matched = containerVolumeMounts.Any(m =>
+            var matched = wipVolumeMounts.Any(m =>
                 string.Equals(m.Name, vStatus.BackendName, StringComparison.Ordinal) &&
                 string.Equals(m.Destination, vDef.Mount, StringComparison.Ordinal));
             if (!matched)
