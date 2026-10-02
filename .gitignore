@@ -6,4 +6,4 @@ dist/
 publish/
 .vs/
 *.user
-.wip/volume-usage/
+**/.wip/volume-usage/

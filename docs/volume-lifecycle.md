@@ -76,7 +76,7 @@ Persistent volumes are always retained by reconciliation and sandbox destruction
 
 Usage observations live in `.wip/volume-usage/` next to the resolved `wip.yml`, keyed by a
 hash of the complete generation name. This repository ignores the directory; consuming
-projects must add `.wip/volume-usage/` to their own `.gitignore`. The journal contains versioned
+projects must add `**/.wip/volume-usage/` to their own `.gitignore` to cover nested configs too. The journal contains versioned
 JSON observations and an exclusive lease file, not volume contents. `FileVolumeUsageStore`
 holds a lease through the whole CLI operation (10-second acquisition deadline), flushes
 observations to disk and atomically publishes them. API callers must hold this shared
