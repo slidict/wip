@@ -2,6 +2,14 @@
 
 This example demonstrates how to configure multiple named sandboxes sharing persistent storage and ephemeral scratch space, alongside sandbox-isolated storage.
 
+## Setup
+
+Build the placeholder image whose default command keeps the sandbox running:
+
+```bash
+docker build -t sandbox-volumes-app:latest .
+```
+
 ## How it works
 
 1. **Explicit Storage**: Declares `volumes` with explicit persistence policy (`persistent: true|false`) and canonical Linux mount destinations.

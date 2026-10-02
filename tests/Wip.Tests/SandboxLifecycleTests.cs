@@ -634,6 +634,9 @@ public class SandboxLifecycleTests
         var fakeVolumes = new FakeVolumeLifecycle();
         var service1 = new SandboxLifecycle(settingsOriginal, fake.Run, fakeVolumes);
         Assert.Equal(0, service1.Create("first"));
+        var key = fake.Containers.Keys.First();
+        var c = fake.Containers[key];
+        fake.Containers[key] = (c.Id, c.Owner, "exited", c.Mounts);
         fake.State = "exited";
 
         var settingsDrift = new Config(YamlLoader.LoadText("""
