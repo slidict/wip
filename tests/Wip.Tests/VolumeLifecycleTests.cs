@@ -279,4 +279,20 @@ public class VolumeLifecycleTests
         Assert.True(fake.Volumes.ContainsKey(unrelated));
         Assert.Contains(name, usage.Used);
     }
+
+    [Theory]
+    [InlineData("[{\"Id\":\"one\",\"State\":\"running\",\"Mounts\":[]}]")]
+    [InlineData("[{\"Id\":\"one\",\"State\":\"running\",\"Mounts\":[]},{\"Id\":\"one\",\"State\":\"running\",\"Mounts\":[]}]")]
+    [InlineData("[{\"Id\":\"one\",\"State\":\"running\",\"Mounts\":[]},{\"Id\":\"replacement\",\"State\":\"running\",\"Mounts\":[]}]")]
+    public void MissingDuplicateOrUnexpectedBatchRecordsCannotAuthorizeCleanup(string inspection)
+    {
+        var fake = new Fake { ContainerInspectOutput = inspection };
+        var usage = new Usage();
+        var name = fake.Add("scratch", false); usage.Used.Add(name);
+        fake.Containers["one"] = [name]; fake.Containers["two"] = [name];
+        Assert.Throws<WipException>(() => new VolumeLifecycle(Settings(), fake.Run, usage).Reconcile("scratch"));
+        Assert.True(fake.Volumes.ContainsKey(name));
+        Assert.Contains(name, usage.Used);
+        Assert.DoesNotContain(fake.Calls, c => c[1] == "remove");
+    }
 }
