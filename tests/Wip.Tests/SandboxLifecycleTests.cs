@@ -317,6 +317,8 @@ public class SandboxLifecycleTests
         Assert.DoesNotContain(fake.Calls, c => c[0] == "remove");
     }
 
+    private static string FakeVolBackend(string name) => VolumeLifecycle.BackendPrefix("test", name) + "00000000000000000000000000000001";
+
     private sealed class FakeVolumeLifecycle : IVolumeLifecycle
     {
         public readonly List<string> CreateCalls = [];
@@ -330,7 +332,7 @@ public class SandboxLifecycleTests
         public VolumeStatus Status(string name)
         {
             if (Statuses.TryGetValue(name, out var status)) return status;
-            return new VolumeStatus(name, "wip-v-" + name, true, [], true);
+            return new VolumeStatus(name, FakeVolBackend(name), true, [], true);
         }
 
         public int Create(string name)
@@ -338,7 +340,7 @@ public class SandboxLifecycleTests
             CreateCalls.Add(name);
             if (!Statuses.ContainsKey(name))
             {
-                Statuses[name] = new VolumeStatus(name, "wip-v-" + name, true, [], true);
+                Statuses[name] = new VolumeStatus(name, FakeVolBackend(name), true, [], true);
             }
             return CreateCode;
         }
@@ -388,8 +390,8 @@ public class SandboxLifecycleTests
             "--name", SandboxLifecycle.BackendName("test", "first"),
             "-d",
             "--label", "io.slidict.wip.owner=v1:test:sandbox:first",
-            "--mount", "type=volume,source=wip-v-data,target=/data",
-            "--mount", "type=volume,source=wip-v-scratch,target=/scratch",
+            "--mount", $"type=volume,source={FakeVolBackend("data")},target=/data",
+            "--mount", $"type=volume,source={FakeVolBackend("scratch")},target=/scratch",
             "fixture:latest"
         ], runCall);
 
@@ -421,8 +423,8 @@ public class SandboxLifecycleTests
 
         Assert.Equal(0, service.Create("first"));
         var runCall = fake.Calls.Single(c => c[0] == "run");
-        var parentIdx = Array.IndexOf(runCall, "type=volume,source=wip-v-parent,target=/workspace");
-        var childIdx = Array.IndexOf(runCall, "type=volume,source=wip-v-child,target=/workspace/sub");
+        var parentIdx = Array.IndexOf(runCall, $"type=volume,source={FakeVolBackend("parent")},target=/workspace");
+        var childIdx = Array.IndexOf(runCall, $"type=volume,source={FakeVolBackend("child")},target=/workspace/sub");
         Assert.True(parentIdx > 0 && childIdx > 0 && parentIdx < childIdx);
     }
 
@@ -453,8 +455,8 @@ public class SandboxLifecycleTests
 
         var runFirst = fake.Calls.Single(c => c[0] == "run" && c[2] == SandboxLifecycle.BackendName("test", "first"));
         var runSecond = fake.Calls.Single(c => c[0] == "run" && c[2] == SandboxLifecycle.BackendName("test", "second"));
-        Assert.Contains("type=volume,source=wip-v-shared,target=/shared", runFirst);
-        Assert.Contains("type=volume,source=wip-v-shared,target=/shared", runSecond);
+        Assert.Contains($"type=volume,source={FakeVolBackend("shared")},target=/shared", runFirst);
+        Assert.Contains($"type=volume,source={FakeVolBackend("shared")},target=/shared", runSecond);
 
         Assert.Equal(0, service.Destroy("first"));
         Assert.Equal("running", service.Status("second").State);
@@ -492,10 +494,10 @@ public class SandboxLifecycleTests
 
         var runFirst = fake.Calls.Single(c => c[0] == "run" && c[2] == SandboxLifecycle.BackendName("test", "first"));
         var runSecond = fake.Calls.Single(c => c[0] == "run" && c[2] == SandboxLifecycle.BackendName("test", "second"));
-        Assert.Contains("type=volume,source=wip-v-vol1,target=/data", runFirst);
-        Assert.DoesNotContain("type=volume,source=wip-v-vol2,target=/data", runFirst);
-        Assert.Contains("type=volume,source=wip-v-vol2,target=/data", runSecond);
-        Assert.DoesNotContain("type=volume,source=wip-v-vol1,target=/data", runSecond);
+        Assert.Contains($"type=volume,source={FakeVolBackend("vol1")},target=/data", runFirst);
+        Assert.DoesNotContain($"type=volume,source={FakeVolBackend("vol2")},target=/data", runFirst);
+        Assert.Contains($"type=volume,source={FakeVolBackend("vol2")},target=/data", runSecond);
+        Assert.DoesNotContain($"type=volume,source={FakeVolBackend("vol1")},target=/data", runSecond);
 
         Assert.Equal(0, service.Destroy("first"));
         Assert.Equal("running", service.Status("second").State);
@@ -683,7 +685,7 @@ public class SandboxLifecycleTests
         fakeVolumes.ReconcileCode = 0;
         fake.Exists = true;
         fake.State = "running";
-        fake.Mounts = [new SandboxMount("volume", "wip-v-data", "/data")];
+        fake.Mounts = [new SandboxMount("volume", FakeVolBackend("data"), "/data")];
         Assert.Equal(0, service.Create("first"));
 
         fakeVolumes.ReconcileCode = 42;
@@ -746,7 +748,7 @@ public class SandboxLifecycleTests
         fake.Exists = true;
         fake.State = "running";
         fake.Mounts = [
-            new SandboxMount("volume", "wip-v-data", "/data"),
+            new SandboxMount("volume", FakeVolBackend("data"), "/data"),
             new SandboxMount("volume", "a1b2c3d4e5f67890a1b2c3d4e5f67890", "/var/log"),
         ];
 

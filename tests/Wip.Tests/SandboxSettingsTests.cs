@@ -65,6 +65,7 @@ public class SandboxSettingsTests
     [InlineData("volumes: [{name: data, persistent: true, mount: relative}]")]
     [InlineData("volumes: [{name: data, persistent: true, mount: /a/../b}]")]
     [InlineData("volumes: [{name: data, persistent: true, mount: /a//b}]")]
+    [InlineData("volumes: [{name: data, persistent: true, mount: /}]")]
     [InlineData("volumes: [{name: data, persistent: true, mount: /a/}]")]
     [InlineData("volumes: [{name: data, persistent: true, mount: '/data,readonly'}]")]
     [InlineData("volumes: [{name: Invalid, persistent: true, mount: /a}]")]

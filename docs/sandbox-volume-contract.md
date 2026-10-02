@@ -46,7 +46,7 @@ inference from an agent name or a `shared`, `agent` or `sandbox` purpose mode.
 | `resource_namespace` | Required for nonempty resource declarations; explicit stable project identity |
 | `volumes` | Optional sequence; each entry has exactly `name`, `persistent`, `mount` |
 | `persistent` | Required YAML boolean; never silently default to destructive ephemeral storage |
-| `mount` | Required canonical absolute Linux path; no control characters, empty segments, trailing slash (except `/`), `.` or `..` |
+| `mount` | Required canonical absolute Linux path; cannot be root destination '/', no control characters, empty segments, trailing slash, '.' or '..' |
 | `sandboxes` | Optional sequence; each entry has `name`, `image`, optional `volumes` |
 | `image` | Required nonempty string without control characters; backend support is checked by execution later |
 | sandbox `volumes` | Optional sequence of declared volume names; omitted means no mounts |

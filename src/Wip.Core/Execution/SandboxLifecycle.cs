@@ -179,8 +179,7 @@ public sealed class SandboxLifecycle(SandboxSettings settings, SandboxBackend ba
             {
                 if (!string.Equals(mount.Type, "volume", StringComparison.OrdinalIgnoreCase)) continue;
                 var matched = settings.Volumes.FirstOrDefault(v =>
-                    mount.Name.StartsWith(VolumeLifecycle.BackendPrefix(settings.ResourceNamespace!, v.Name), StringComparison.Ordinal) ||
-                    mount.Name == "wip-v-" + v.Name);
+                    mount.Name.StartsWith(VolumeLifecycle.BackendPrefix(settings.ResourceNamespace!, v.Name), StringComparison.Ordinal));
                 if (matched is not null)
                 {
                     result.Add(matched.Name);
