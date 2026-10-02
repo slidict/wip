@@ -198,4 +198,32 @@ public class SandboxLifecycleTests
         Assert.Throws<ConfigException>(() => new SandboxLifecycle(settings, fake.Run).Create("first"));
         Assert.Empty(fake.Calls);
     }
+
+    [Theory]
+    [InlineData("deleted")]
+    [InlineData("unknown")]
+    public void UnstartableStatesExplainExplicitRecovery(string state)
+    {
+        var fake = new Fake { Exists = true, State = state };
+        var service = new SandboxLifecycle(Settings(), fake.Run);
+        var exception = Assert.Throws<WipException>(() => service.Create("first"));
+        Assert.Contains("sandbox destroy", exception.Message);
+        Assert.DoesNotContain(fake.Calls, c => c[0] is "start" or "run" or "remove");
+        Assert.Equal(0, service.Destroy("first"));
+        fake.State = "running";
+        Assert.Equal(0, service.Create("first"));
+    }
+
+    [Fact]
+    public void NullTopLevelLabelsUseConfigLabelsButConflictingObjectIsRejected()
+    {
+        var fake = new Fake { Exists = true };
+        fake.InspectOutput = JsonSerializer.Serialize(new[] { new { fake.Id, fake.Name, State = new { Status = "running" }, Labels = (object?)null,
+            Config = new { Labels = new Dictionary<string, string> { [SandboxLifecycle.OwnerLabel] = fake.Owner } } } });
+        Assert.Equal("running", new SandboxLifecycle(Settings(), fake.Run).Status("first").State);
+        fake.InspectOutput = JsonSerializer.Serialize(new[] { new { fake.Id, fake.Name, fake.State,
+            Labels = new Dictionary<string, string> { [SandboxLifecycle.OwnerLabel] = "foreign" },
+            Config = new { Labels = new Dictionary<string, string> { [SandboxLifecycle.OwnerLabel] = fake.Owner } } } });
+        Assert.Throws<WipException>(() => new SandboxLifecycle(Settings(), fake.Run).Destroy("first"));
+    }
 }

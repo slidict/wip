@@ -45,8 +45,8 @@ public sealed class SandboxLifecycle(SandboxSettings settings, SandboxBackend ba
         if (!matchesId || !Names(record).Contains(backendName, StringComparer.Ordinal))
             throw Failure(name, "identity changed during inspection; retry status");
         JsonElement labels;
-        if (!record.TryGetProperty("Labels", out labels) &&
-            !(record.TryGetProperty("Config", out var config) && config.TryGetProperty("Labels", out labels)))
+        if ((!record.TryGetProperty("Labels", out labels) || labels.ValueKind != JsonValueKind.Object) &&
+            !(record.TryGetProperty("Config", out var config) && config.ValueKind == JsonValueKind.Object && config.TryGetProperty("Labels", out labels)))
             throw Failure(name, "missing ownership metadata; refusing to adopt this container");
         if (labels.ValueKind != JsonValueKind.Object || Text(labels, OwnerLabel) != Identity(name))
             throw Failure(name, "ownership mismatch; refusing to adopt this container");
@@ -64,7 +64,8 @@ public sealed class SandboxLifecycle(SandboxSettings settings, SandboxBackend ba
         if (existing.Id is not null)
         {
             if (existing.State == "running") return 0;
-            if (existing.State is not ("created" or "exited")) throw Failure(name, $"cannot start state {existing.State}");
+            if (existing.State is not ("created" or "exited"))
+                throw Failure(name, $"cannot start state {existing.State}; run sandbox destroy, confirm absence, then sandbox create");
             var started = backend(["start", existing.Id], MutationTimeout, false);
             if (started.Code != 0) return started.Code;
         }

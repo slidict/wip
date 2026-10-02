@@ -29,7 +29,7 @@ Check status and, if necessary, destroy the dedicated sandbox before retrying no
 
 | Operation | Existing owned resource | Missing resource |
 | --- | --- | --- |
-| create | Running: success without another container; created/exited: start the verified ID | Run the configured image and verify ownership/state |
+| create | Running: success without another container; created/exited: start the verified ID; deleted/unknown: recovery error | Run the configured image and verify ownership/state |
 | status | Print logical name, state, backend name and ID | Print `not found`, success |
 | destroy | Force-remove the verified container ID and confirm absence | Success |
 | exec | Requires a running container; preserve exit code | Error; never create implicitly |
@@ -63,6 +63,10 @@ destroying the owned sandbox, updating configuration and creating again. Image c
 replace an existing container implicitly. After failed destroy, inspect status and repeat destroy.
 Ownership mismatch requires investigation outside this automatic lifecycle; do not remove the
 conflicting resource merely because its name matches.
+
+Older WSLC may retain a `deleted` record. Create does not blindly run over that name: use
+ownership-checked destroy, confirm status is `not found`, then create again. Unknown states
+use the same explicit recovery path; a failed removal must be investigated before retrying.
 
 Unit tests cover ownership, partial failure and argv behavior without an agent. The Windows
 real-WSLC lifecycle CI builds an Alpine fixture with `CMD ["sleep", "600"]`, assigns a unique
