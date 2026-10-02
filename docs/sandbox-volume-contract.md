@@ -54,8 +54,8 @@ inference from an agent name or a `shared`, `agent` or `sandbox` purpose mode.
 Names and namespace match `[a-z][a-z0-9_-]{0,62}` and compare ordinally. Duplicate
 names, repeated references, undefined volumes and equal mount destinations **within
 one sandbox** are rejected. Equal destinations in different sandboxes are valid.
-Ancestor/descendant mounts are not equal-path conflicts; slidict/workspace#197 must check the backend's
-nested-mount behavior before creating resources. Unknown fields inside either resource
+Ancestor/descendant mounts are not equal-path conflicts; nested mounts are ordered
+so shallower paths precede deeper paths before container creation. Unknown fields inside either resource
 declaration are rejected, including agent/purpose/mode labels. Backend errors do not
 permit silently changing the declared mount path or persistence.
 
@@ -77,10 +77,10 @@ explicit scoped volume operation, reject active users, and report failures witho
 unrelated storage. Ephemeral volumes exist for a use cycle: create before the first attach,
 retain while any sandbox has a live reference, and clean up after the last confirmed detach.
 Multiple sandbox references are allowed for either kind. Failed creation or unknown backend
-state must not be treated as a confirmed detach. slidict/workspace#196 must implement durable ownership and
-reconciliation before cleanup; removing a declaration from YAML is not an implicit prune.
+state must not be treated as a confirmed detach. Durable ownership and
+reconciliation are implemented before cleanup; removing a declaration from YAML is not an implicit prune.
 
-Mount owns the relationship, target path and attach/detach ordering. slidict/workspace#197 resolves the
+Mount owns the relationship, target path and attach/detach ordering. Sandbox lifecycle resolves the
 validated name references; it neither chooses storage policy nor gives a volume an agent
 role. Shared `project` above emerges from two references, and `private-state` from one.
 An ephemeral volume's data is not promoted to persistent on a failed cleanup.
@@ -95,8 +95,8 @@ Compose-native's compose.yml volumes are not automatically converted or adopted.
 Old normalized config output gets no extra resource keys when the extension is absent.
 
 Migrating is deliberate: choose a namespace; declare storage and explicit persistence;
-list sandbox images and volume references; validate via `wip config`; then, once slidict/workspace#195–slidict/workspace#197
-ship, opt into their explicit resource commands. Do not silently reinterpret legacy bind
+list sandbox images and volume references; validate via `wip config`; then
+opt into their explicit resource commands (`wip volume` / `wip sandbox`). Do not silently reinterpret legacy bind
 mounts or `sync.volume`. Existing CommandBuilder and SyncSettings continue their current
 contracts; they are not lifecycle implementations for the new resources. This PR preserves
 legacy execution rather than prematurely connecting the new schema to it.
