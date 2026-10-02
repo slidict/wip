@@ -1,12 +1,17 @@
 # Fixture project for the real-WSLC end-to-end test. See README.md next to this file.
 #
 # Everything here is deliberately small and self-contained: one image built from the
-# Dockerfile beside it, one long-lived container, and no bind mounts. Volumes are left out
-# on purpose -- how wslc resolves a `-v` source is its own open question (see the README's
-# "Known gaps & TODO"), and mixing it in here would make a mount failure look like a
-# lifecycle failure.
+# Dockerfile beside it, a long-lived container, and dedicated named volume fixtures.
+# Storage tests attach explicitly via the backend; sandbox mount integration is separate.
 version: 1
 resource_namespace: e2e-placeholder
+volumes:
+  - name: persistent-fixture
+    persistent: true
+    mount: /data
+  - name: ephemeral-fixture
+    persistent: false
+    mount: /data
 sandboxes:
   - name: fixture
     image: wip-e2e:latest

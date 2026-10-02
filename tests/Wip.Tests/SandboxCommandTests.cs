@@ -32,4 +32,16 @@ public class SandboxCommandTests
         var parsed = Program.Parse(Program.BuildRoot(), ["sandbox", "exec", "first"]);
         Assert.NotEmpty(parsed.Errors);
     }
+
+    [Theory]
+    [InlineData("create")]
+    [InlineData("status")]
+    [InlineData("destroy")]
+    [InlineData("reconcile")]
+    public void StorageOperationsParseWithoutDispatch(string operation)
+    {
+        var parsed = Program.Parse(Program.BuildRoot(), ["volume", operation, "data"]);
+        Assert.Empty(parsed.Errors);
+        Assert.Equal(operation, parsed.CommandResult.Command.Name);
+    }
 }
