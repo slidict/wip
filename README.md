@@ -26,8 +26,9 @@ key, every command's flags, guides, and troubleshooting — see the
 ## Contents
 
 The additive sandbox/volume configuration contract is documented in
-[Sandbox and volume contract](docs/sandbox-volume-contract.md). Resource execution is a
-separate follow-up; existing container/compose commands keep their behavior.
+[Sandbox and volume contract](docs/sandbox-volume-contract.md). Named sandbox
+create/status/exec/destroy are described in [Sandbox lifecycle](docs/sandbox-lifecycle.md);
+volume storage and mount integration remain follow-ups.
 
 - [Highlights](#highlights)
 - [Requirements & installation](#requirements--installation)

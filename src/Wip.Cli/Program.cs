@@ -142,6 +142,27 @@ internal static class Program
 
     private static IEnumerable<Command> BuildCommands(Func<ParseResult, CliContext> context)
     {
+        var sandbox = new Command("sandbox", "Manage named, ownership-checked sandboxes");
+        foreach (var operation in new[] { "create", "status", "destroy", "exec" })
+        {
+            var name = new Argument<string>("name");
+            var command = new Command(operation) { name };
+            if (operation == "exec")
+            {
+                var argv = new Argument<string[]>("argv") { Arity = ArgumentArity.OneOrMore };
+                var timeout = new Option<int>("--timeout") { DefaultValueFactory = _ => 300, Description = "Execution deadline in seconds (default: 300)" };
+                command.Arguments.Add(argv);
+                command.Options.Add(timeout);
+                command.SetAction(parsed => context(parsed).Sandbox("exec", parsed.GetValue(name)!, parsed.GetValue(argv)!, parsed.GetValue(timeout)));
+            }
+            else
+            {
+                var action = operation;
+                command.SetAction(parsed => context(parsed).Sandbox(action, parsed.GetValue(name)!, [], 300));
+            }
+            sandbox.Subcommands.Add(command);
+        }
+        yield return sandbox;
         yield return Simple("version", "Show wip and WSLC versions", context, ctx => ctx.Version());
 
         var force = new Option<bool>("--force") { Description = "Overwrite an existing wip.yml" };

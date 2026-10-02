@@ -1,7 +1,8 @@
 # Sandbox and volume contract
 
 This is the configuration and ownership contract for workspace slidict/workspace#194 (parent slidict/workspace#192).
-The configuration model and validation are implemented; resource execution is not.
+The configuration model, validation and [named sandbox lifecycle](sandbox-lifecycle.md) are implemented.
+Volume storage and mount integration remain follow-ups.
 Loading YAML or running `wip config` never creates, mounts, snapshots or deletes resources.
 The existing `up`, `down`, `run`, `exec` and `sync` commands still target legacy dependencies;
 they do not operate on these new declarations. Sandbox execution belongs to slidict/workspace#195,
@@ -126,4 +127,4 @@ Run `dotnet test tests/Wip.Tests/Wip.Tests.csproj --configuration Release` and t
 build/AOT CI. No live sandbox or credential access is needed for this schema-only Issue.
 slidict/workspace#195/#196 can use the typed definitions and this ownership contract independently;
 slidict/workspace#197 integrates their runtimes; slidict/workspace#198 adds actual workspace config and verifies all clients.
-Completing this Issue does not close parent slidict/workspace#192 or claim the runtimes already exist.
+Completing a child Issue does not close parent slidict/workspace#192 or claim the remaining runtimes exist.

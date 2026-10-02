@@ -6,6 +6,10 @@
 # "Known gaps & TODO"), and mixing it in here would make a mount failure look like a
 # lifecycle failure.
 version: 1
+resource_namespace: e2e-placeholder
+sandboxes:
+  - name: fixture
+    image: wip-e2e:latest
 mode: container
 wslc:
   command: auto
