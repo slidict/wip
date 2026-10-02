@@ -75,7 +75,8 @@ there is no background polling daemon. Direct backend users need the same explic
 Persistent volumes are always retained by reconciliation and sandbox destruction.
 
 Usage observations live in `.wip/volume-usage/` next to the resolved `wip.yml`, keyed by a
-hash of the complete generation name. The directory is gitignored and contains versioned
+hash of the complete generation name. This repository ignores the directory; consuming
+projects must add `.wip/volume-usage/` to their own `.gitignore`. The journal contains versioned
 JSON observations and an exclusive lease file, not volume contents. `FileVolumeUsageStore`
 holds a lease through the whole CLI operation (10-second acquisition deadline), flushes
 observations to disk and atomically publishes them. API callers must hold this shared
@@ -91,11 +92,15 @@ on the journal for persistent volumes.
 
 ## Failure and recovery
 
-Probes have a 10-second deadline; create/remove have a 120-second deadline. Mutation exit
+Ownership probes have a 10-second deadline; the entire reference scan shares one 10-second
+deadline and inspects IDs in batches of at most 100. Incomplete, duplicate or mismatched
+batch responses retain storage. Create/remove have a 120-second deadline. Mutation exit
 codes are returned unchanged. A failed/timed-out create may have left owned storage: run
 status with the same declaration and repeat create to reuse it. There is no destructive
 rollback. On failed remove, check status and references before retrying. If the reference
 scan or journal is unavailable, restore access and reconcile; do not assume detach.
+After confirmed backend absence, only that removed generation's usage marker is discarded.
+A failed marker removal reports that storage is already gone; it never removes other markers.
 
 If usage was never recorded and the generation is now unattached, automatic cleanup stays
 disabled; explicit `volume destroy <name>` is the recovery action after checking the data

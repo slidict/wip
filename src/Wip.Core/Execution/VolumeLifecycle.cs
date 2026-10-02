@@ -11,13 +11,15 @@ public interface IVolumeUsageStore
 {
     bool WasUsed(string backendName);
     void MarkUsed(string backendName);
+    void Forget(string backendName);
 }
 
 public sealed record VolumeStatus(string Name, string? BackendName, bool Persistent, IReadOnlyList<string> References, bool WasUsed);
 
 /// <summary>Storage only. Mount integration calls reconciliation after attach and confirmed detach.</summary>
-public sealed class VolumeLifecycle(SandboxSettings settings, SandboxBackend backend, IVolumeUsageStore usage)
+public sealed class VolumeLifecycle(SandboxSettings settings, SandboxBackend backend, IVolumeUsageStore usage, TimeProvider? timeProvider = null)
 {
+    private readonly TimeProvider clock = timeProvider ?? TimeProvider.System;
     public const string OwnerLabel = "io.slidict.wip.owner";
     public const string PolicyLabel = "io.slidict.wip.persistent";
     public const string InstanceLabel = "io.slidict.wip.instance";
@@ -96,6 +98,7 @@ public sealed class VolumeLifecycle(SandboxSettings settings, SandboxBackend bac
         var result = backend(["volume", "remove", status.BackendName], MutationTimeout, false);
         if (result.Code != 0) return result.Code;
         if (Find(name) is not null) throw Failure(name, "storage still exists after removal; no further deletion attempted");
+        usage.Forget(status.BackendName);
         return 0;
     }
 
@@ -108,31 +111,53 @@ public sealed class VolumeLifecycle(SandboxSettings settings, SandboxBackend bac
 
     private IReadOnlyList<string> References(string backendName)
     {
+        var started = clock.GetTimestamp();
+        TimeSpan Remaining()
+        {
+            var remaining = ProbeTimeout - clock.GetElapsedTime(started);
+            if (remaining <= TimeSpan.Zero) throw new WipException("Volume reference scan deadline exceeded; detach is unknown, storage retained");
+            return remaining;
+        }
         var references = new List<string>();
-        var rows = Records(Probe(["list", "--all", "--format", "json"]), allowEmpty: true);
+        var ids = new List<string>();
+        var rows = Records(Probe(["list", "--all", "--format", "json"], Remaining()), allowEmpty: true);
         foreach (var row in rows)
         {
+            Remaining();
             if (ContainerState(row) == "deleted") continue;
             var id = Text(row, "Id") ?? Text(row, "ID");
             if (string.IsNullOrWhiteSpace(id) || id.StartsWith('-') || id.Any(char.IsControl)) throw new WipException("Volume reference scan returned invalid container ID");
-            var records = Records(Probe(["inspect", "--type", "container", "--format", "json", id]));
-            if (records.Count != 1) throw new WipException("Volume reference scan returned ambiguous container");
-            var container = records[0];
-            var fullId = Text(container, "Id") ?? Text(container, "ID");
-            if (fullId != id && !(id.Length >= 12 && id.All(Uri.IsHexDigit) && fullId is { Length: 64 } &&
-                fullId.All(Uri.IsHexDigit) && fullId.StartsWith(id, StringComparison.Ordinal))) throw new WipException("Container identity changed during volume reference scan");
-            if (ContainerState(container) == "deleted") continue;
-            if (!container.TryGetProperty("Mounts", out var mounts) || mounts.ValueKind != JsonValueKind.Array)
-                throw new WipException("Volume reference scan omitted mounts; detach is unknown");
-            foreach (var mount in mounts.EnumerateArray())
+            ids.Add(id);
+        }
+        if (ids.Distinct(StringComparer.Ordinal).Count() != ids.Count) throw new WipException("Volume reference scan returned duplicate IDs");
+        var inspectedIds = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var batch in ids.Chunk(100))
+        {
+            var records = Records(Probe(["inspect", "--type", "container", "--format", "json", .. batch], Remaining()));
+            if (records.Count != batch.Length) throw new WipException("Volume reference scan returned incomplete inspection; detach is unknown");
+            var matched = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var container in records)
             {
-                if (mount.ValueKind != JsonValueKind.Object || Text(mount, "Type") is not string type)
-                    throw new WipException("Volume reference scan returned malformed mount");
-                if (type != "volume") continue;
-                var volumeName = Text(mount, "Name") ?? throw new WipException("Volume reference scan omitted volume name");
-                if (volumeName == backendName) references.Add(fullId!);
+                Remaining();
+                var fullId = Text(container, "Id") ?? Text(container, "ID");
+                var matches = batch.Where(id => fullId == id || (id.Length >= 12 && id.All(Uri.IsHexDigit) && fullId is { Length: 64 } &&
+                    fullId.All(Uri.IsHexDigit) && fullId.StartsWith(id, StringComparison.Ordinal))).ToArray();
+                if (matches.Length != 1 || !matched.Add(matches[0]) || !inspectedIds.Add(fullId!))
+                    throw new WipException("Container identity changed or duplicated during volume reference scan");
+                if (ContainerState(container) == "deleted") continue;
+                if (!container.TryGetProperty("Mounts", out var mounts) || mounts.ValueKind != JsonValueKind.Array)
+                    throw new WipException("Volume reference scan omitted mounts; detach is unknown");
+                foreach (var mount in mounts.EnumerateArray())
+                {
+                    if (mount.ValueKind != JsonValueKind.Object || Text(mount, "Type") is not string type)
+                        throw new WipException("Volume reference scan returned malformed mount");
+                    if (type != "volume") continue;
+                    var volumeName = Text(mount, "Name") ?? throw new WipException("Volume reference scan omitted volume name");
+                    if (volumeName == backendName) references.Add(fullId!);
+                }
             }
         }
+        Remaining();
         return references.Distinct(StringComparer.Ordinal).ToArray();
     }
 
@@ -147,9 +172,9 @@ public sealed class VolumeLifecycle(SandboxSettings settings, SandboxBackend bac
         return value;
     }
 
-    private string Probe(IReadOnlyList<string> arguments)
+    private string Probe(IReadOnlyList<string> arguments, TimeSpan? timeout = null)
     {
-        var result = backend(arguments, ProbeTimeout, true);
+        var result = backend(arguments, timeout ?? ProbeTimeout, true);
         if (result.Code != 0) throw new WipException($"Volume probe failed (exit {result.Code}); state is unknown, storage retained");
         return result.Output;
     }

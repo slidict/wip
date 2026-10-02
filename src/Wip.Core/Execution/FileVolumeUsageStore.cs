@@ -75,4 +75,12 @@ public sealed class FileVolumeUsageStore : IVolumeUsageStore, IDisposable
     }
 
     public void Dispose() => lease.Dispose();
+
+    public void Forget(string backendName)
+    {
+        if (!WasUsed(backendName)) return;
+        try { File.Delete(Marker(backendName)); }
+        catch (IOException exception) { throw new WipException("Storage was removed but its usage marker could not be removed", exception); }
+        catch (UnauthorizedAccessException exception) { throw new WipException("Storage was removed but its usage marker is inaccessible", exception); }
+    }
 }

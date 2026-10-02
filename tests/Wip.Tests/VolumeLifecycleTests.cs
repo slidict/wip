@@ -23,11 +23,17 @@ public class VolumeLifecycleTests
     {
         public readonly HashSet<string> Used = [];
         public bool Fail;
+        public bool FailForget;
         public bool WasUsed(string name) => Used.Contains(name);
         public void MarkUsed(string name)
         {
             if (Fail) throw new WipException("journal failed");
             Used.Add(name);
+        }
+        public void Forget(string name)
+        {
+            if (FailForget) throw new WipException("marker removal failed");
+            Used.Remove(name);
         }
     }
 
@@ -64,7 +70,7 @@ public class VolumeLifecycleTests
             Calls.Add(argv.ToArray());
             if (capture)
             {
-                Assert.Equal(TimeSpan.FromSeconds(10), timeout);
+                Assert.InRange(timeout, TimeSpan.FromMilliseconds(1), TimeSpan.FromSeconds(10));
                 if (ProbeCode != 0) return new(ProbeCode, "");
                 if (argv[0] == "volume" && argv[1] == "list")
                 {
@@ -73,9 +79,8 @@ public class VolumeLifecycleTests
                 }
                 if (argv[0] == "volume") return new(0, JsonSerializer.Serialize(new[] { Volumes[argv[^1]] }));
                 if (argv[0] == "list") return new(0, JsonSerializer.Serialize(Containers.Keys.Select(id => new { ID = id, State = ContainerState })));
-                var containerId = argv[^1];
-                return new(0, ContainerInspectOutput ?? JsonSerializer.Serialize(new[] { new { Id = containerId, State = new { Status = ContainerState },
-                    Mounts = Containers[containerId].Select(name => new { Type = "volume", Name = name }) } }));
+                return new(0, ContainerInspectOutput ?? JsonSerializer.Serialize(argv.Skip(5).Select(containerId => new { Id = containerId, State = new { Status = ContainerState },
+                    Mounts = Containers[containerId].Select(name => new { Type = "volume", Name = name }) })));
             }
             Assert.Equal(TimeSpan.FromMinutes(2), timeout);
             Assert.DoesNotContain("--force", argv);
@@ -136,6 +141,7 @@ public class VolumeLifecycleTests
         // New service instance models process restart; usage stays generation-scoped.
         Assert.Equal(0, new VolumeLifecycle(Settings(), fake.Run, usage).Reconcile("scratch"));
         Assert.Null(service.Status("scratch").BackendName);
+        Assert.Empty(usage.Used);
         service.Create("scratch"); service.Reconcile("scratch");
         Assert.NotNull(service.Status("scratch").BackendName);
     }
@@ -232,5 +238,45 @@ public class VolumeLifecycleTests
         var fake = new Fake(); fake.Add("data", true); fake.Add("data", true);
         Assert.Throws<WipException>(() => new VolumeLifecycle(Settings(), fake.Run, new Usage()).Destroy("data"));
         Assert.Equal(2, fake.Volumes.Count);
+    }
+
+    private sealed class Clock : TimeProvider
+    {
+        public long Ticks;
+        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+        public override long GetTimestamp() => Ticks;
+    }
+
+    [Fact]
+    public void ReferenceInspectionIsBatchedAndSharesAnOverallDeadline()
+    {
+        var fake = new Fake(); var name = fake.Add("scratch", false);
+        for (var index = 0; index < 230; index++) fake.Containers[$"container-{index}"] = [name];
+        var usage = new Usage();
+        Assert.Equal(230, new VolumeLifecycle(Settings(), fake.Run, usage).Status("scratch").References.Count);
+        Assert.Equal(3, fake.Calls.Count(c => c[0] == "inspect"));
+        Assert.All(fake.Calls.Where(c => c[0] == "inspect"), c => Assert.InRange(c.Length - 5, 1, 100));
+        var clock = new Clock(); usage.Used.Clear(); fake.Calls.Clear();
+        SandboxCommandResult Slow(IReadOnlyList<string> argv, TimeSpan timeout, bool capture)
+        {
+            var result = fake.Run(argv, timeout, capture);
+            if (argv[0] == "inspect") clock.Ticks += TimeSpan.FromSeconds(6).Ticks;
+            return result;
+        }
+        Assert.Throws<WipException>(() => new VolumeLifecycle(Settings(), Slow, usage, clock).Reconcile("scratch"));
+        Assert.Empty(usage.Used);
+        Assert.DoesNotContain(fake.Calls, c => c[1] == "remove");
+    }
+
+    [Fact]
+    public void MarkerRemovalFailureDoesNotDeleteAnotherGeneration()
+    {
+        var fake = new Fake(); var usage = new Usage { FailForget = true };
+        var name = fake.Add("data", true); usage.Used.Add(name);
+        var unrelated = fake.Add("scratch", false);
+        Assert.Throws<WipException>(() => new VolumeLifecycle(Settings(), fake.Run, usage).Destroy("data"));
+        Assert.False(fake.Volumes.ContainsKey(name));
+        Assert.True(fake.Volumes.ContainsKey(unrelated));
+        Assert.Contains(name, usage.Used);
     }
 }

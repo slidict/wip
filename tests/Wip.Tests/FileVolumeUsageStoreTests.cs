@@ -18,6 +18,8 @@ public class FileVolumeUsageStoreTests
             }
             using var reopened = new FileVolumeUsageStore(directory);
             Assert.True(reopened.WasUsed("first")); Assert.False(reopened.WasUsed("second"));
+            reopened.MarkUsed("second"); reopened.Forget("first"); reopened.Forget("first");
+            Assert.False(reopened.WasUsed("first")); Assert.True(reopened.WasUsed("second"));
         }
         finally { Directory.Delete(directory, recursive: true); }
     }
