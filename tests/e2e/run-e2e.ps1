@@ -269,6 +269,9 @@ try {
     $script:Workspace = Join-Path $WorkRoot ("wip-e2e-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
     New-Item -ItemType Directory -Path $script:Workspace -Force | Out-Null
     Copy-Item -Path (Join-Path $fixture 'wip.yml') -Destination $script:Workspace
+    $sandboxConfig = Join-Path $script:Workspace 'wip.yml'
+    $sandboxNamespace = 'e2e-' + [guid]::NewGuid().ToString('N')
+    [IO.File]::WriteAllText($sandboxConfig, ([IO.File]::ReadAllText($sandboxConfig).Replace('e2e-placeholder', $sandboxNamespace)))
     Copy-Item -Path (Join-Path $fixture 'Dockerfile') -Destination $script:Workspace
 
     $dockerfile = Join-Path $script:Workspace 'Dockerfile'
@@ -366,6 +369,21 @@ try {
     $afterDown = Invoke-Wslc @('list', '--all')
     Assert-NoMatch $afterDown $script:ContainerPattern "wslc list --all after wip down"
 
+    # Generic primitives use a per-run namespace and no volumes or agent assumptions.
+    Write-Step "named sandbox create / exec / destroy"
+    Assert-Exit (Invoke-Wip @('sandbox', 'create', 'fixture')) 0 'sandbox create'
+    Assert-Exit (Invoke-Wip @('sandbox', 'create', 'fixture')) 0 'repeated sandbox create'
+    $sandboxStatus = Invoke-Wip @('sandbox', 'status', 'fixture')
+    Assert-Exit $sandboxStatus 0 'sandbox status'
+    Assert-Match $sandboxStatus 'fixture\s+running\s+wip-s-[a-f0-9]{40}' 'sandbox running'
+    $sandboxExec = Invoke-Wip @('sandbox', 'exec', 'fixture', '--', 'printf', '%s\n', 'literal spaces ; $()')
+    Assert-Exit $sandboxExec 0 'sandbox argv preservation'
+    Assert-Match $sandboxExec ([regex]::Escape('literal spaces ; $()')) 'literal sandbox argument'
+    Assert-Exit (Invoke-Wip @('sandbox', 'exec', 'fixture', '--', 'sh', '-c', 'exit 7')) 7 'sandbox exit code'
+    Assert-Exit (Invoke-Wip @('sandbox', 'destroy', 'fixture')) 0 'sandbox destroy'
+    Assert-Exit (Invoke-Wip @('sandbox', 'destroy', 'fixture')) 0 'repeated sandbox destroy'
+    Assert-Match (Invoke-Wip @('sandbox', 'status', 'fixture')) 'fixture\s+not found' 'sandbox absent'
+
     Write-Step "All lifecycle assertions passed"
 }
 catch {
@@ -375,6 +393,10 @@ catch {
     Write-Diagnostics
 }
 finally {
+    if ($script:Workspace -and (Test-Path (Join-Path $script:Workspace 'wip.yml'))) {
+        # The lifecycle verifies labels and IDs before removing this run's resource.
+        try { Invoke-Wip @('sandbox', 'destroy', 'fixture') | Out-Null } catch { Write-Warning "sandbox cleanup failed: $_" }
+    }
     Remove-Leftovers
     if ($script:Workspace -and -not $KeepWorkspace) {
         Remove-Item -LiteralPath $script:Workspace -Recurse -Force -ErrorAction SilentlyContinue
