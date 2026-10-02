@@ -38,9 +38,11 @@ public sealed partial class Config
         Path = path;
         this.envFile = envFile;
         Validate();
+        SandboxResources = SandboxSettings.Parse(raw);
     }
 
     public string? Path { get; }
+    public SandboxSettings SandboxResources { get; }
 
     public string WslcCommand => RubyValue.Presence(RubyValue.Dig(raw, "wslc", "command")) ?? "auto";
 
@@ -210,6 +212,11 @@ public sealed partial class Config
         result["compose"] = ComposeBlock;
         result["sync"] = Sync?.ToMapping();
         result["commands"] = commands;
+        // Keep legacy config output unchanged unless the additive resource schema is used.
+        if (raw.ContainsKey("volumes") || raw.ContainsKey("sandboxes") || raw.ContainsKey("resource_namespace"))
+        {
+            foreach (var (key, value) in SandboxResources.ToMapping()) result[key] = value;
+        }
 
         return redact ? (OrderedDictionary<string, object?>)RedactSecrets(result)! : result;
     }
