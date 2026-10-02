@@ -33,6 +33,10 @@ public sealed class SandboxLifecycle(SandboxSettings settings, SandboxBackend ba
         var matches = Records(listed, allowEmpty: true).Where(r => Names(r).Contains(backendName, StringComparer.Ordinal)).ToArray();
         if (matches.Length == 0) return new(name, backendName, null, "not found");
         if (matches.Length != 1) throw Failure(name, "ambiguous backend identity");
+        // Older WSLC retains deleted tombstones in list --all. No live container exists
+        // to inspect or remove; treating it as absent performs no destructive operation.
+        if (matches[0].TryGetProperty("State", out _) && State(matches[0]) == "deleted")
+            return new(name, backendName, null, "not found");
         var id = Text(matches[0], "Id") ?? Text(matches[0], "ID");
         if (string.IsNullOrWhiteSpace(id) || id.StartsWith('-') || id.Any(char.IsControl))
             throw Failure(name, "backend returned an invalid ID");
@@ -51,6 +55,7 @@ public sealed class SandboxLifecycle(SandboxSettings settings, SandboxBackend ba
         if (labels.ValueKind != JsonValueKind.Object || Text(labels, OwnerLabel) != Identity(name))
             throw Failure(name, "ownership mismatch; refusing to adopt this container");
         var state = State(record);
+        if (state == "deleted") return new(name, backendName, null, "not found");
         return new(name, backendName, inspectedId, state);
     }
 

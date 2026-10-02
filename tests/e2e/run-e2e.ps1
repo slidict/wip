@@ -395,7 +395,17 @@ catch {
 finally {
     if ($script:Workspace -and (Test-Path (Join-Path $script:Workspace 'wip.yml'))) {
         # The lifecycle verifies labels and IDs before removing this run's resource.
-        try { Invoke-Wip @('sandbox', 'destroy', 'fixture') | Out-Null } catch { Write-Warning "sandbox cleanup failed: $_" }
+        try {
+            $cleanup = Invoke-Wip @('sandbox', 'destroy', 'fixture')
+            if ($cleanup.Code -ne 0) {
+                $script:Failed = $true
+                Write-Warning "sandbox cleanup failed (exit $($cleanup.Code)): $($cleanup.Output)"
+            }
+        }
+        catch {
+            $script:Failed = $true
+            Write-Warning "sandbox cleanup failed: $_"
+        }
     }
     Remove-Leftovers
     if ($script:Workspace -and -not $KeepWorkspace) {

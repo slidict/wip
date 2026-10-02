@@ -34,12 +34,12 @@ public class SandboxLifecycleTests
         public SandboxCommandResult Run(IReadOnlyList<string> argv, TimeSpan timeout, bool capture)
         {
             Calls.Add(argv.ToArray());
-            if (argv[0] == "list") return new(ProbeCode, ListOutput ?? (Exists ? JsonSerializer.Serialize(new[] { new { Id, Name } }) : "[]"));
+            if (argv[0] == "list") return new(ProbeCode, ListOutput ?? (Exists ? JsonSerializer.Serialize(new[] { new { Id, Name, State } }) : "[]"));
             if (argv[0] == "inspect") return new(ProbeCode, InspectOutput ?? JsonSerializer.Serialize(new[] { new { Id, Name, State, Labels = new Dictionary<string, string> { [SandboxLifecycle.OwnerLabel] = Owner } } }));
             Assert.False(capture);
             if (argv[0] == "exec") { ExecTimeout = timeout; return new(ExecCode, ""); }
             Assert.Equal(TimeSpan.FromMinutes(2), timeout);
-            if (argv[0] == "run" && (MutationCode == 0 || LeaveResidue)) Exists = true;
+            if (argv[0] == "run" && (MutationCode == 0 || LeaveResidue)) { Exists = true; State = "running"; }
             if (argv[0] == "start" && MutationCode == 0) State = "running";
             if (argv[0] == "remove" && MutationCode == 0 && !LeaveResidue) Exists = false;
             return new(MutationCode, "");
@@ -200,7 +200,6 @@ public class SandboxLifecycleTests
     }
 
     [Theory]
-    [InlineData("deleted")]
     [InlineData("unknown")]
     public void UnstartableStatesExplainExplicitRecovery(string state)
     {
@@ -225,5 +224,32 @@ public class SandboxLifecycleTests
             Labels = new Dictionary<string, string> { [SandboxLifecycle.OwnerLabel] = "foreign" },
             Config = new { Labels = new Dictionary<string, string> { [SandboxLifecycle.OwnerLabel] = fake.Owner } } } });
         Assert.Throws<WipException>(() => new SandboxLifecycle(Settings(), fake.Run).Destroy("first"));
+    }
+
+    [Theory]
+    [InlineData("4")]
+    [InlineData("\"deleted\"")]
+    public void DeletedListTombstonesAreAbsentAndNeverInspectedOrRemoved(string state)
+    {
+        var fake = new Fake();
+        fake.ListOutput = $"[{{\"Name\":\"{fake.Name}\",\"State\":{state}}}]";
+        var service = new SandboxLifecycle(Settings(), fake.Run);
+        Assert.Equal("not found", service.Status("first").State);
+        Assert.Equal(0, service.Destroy("first"));
+        Assert.All(fake.Calls, c => Assert.Equal("list", c[0]));
+        fake.ListOutput = null;
+        Assert.Equal(0, service.Create("first"));
+        var tombstone = new Fake { Exists = true, State = "deleted" };
+        Assert.Equal(0, new SandboxLifecycle(Settings(), tombstone.Run).Create("first"));
+        Assert.Single(tombstone.Calls, c => c[0] == "run");
+    }
+
+    [Fact]
+    public void NullConfigIsReportedAsUnknownOwnership()
+    {
+        var fake = new Fake { Exists = true };
+        fake.InspectOutput = JsonSerializer.Serialize(new[] { new { fake.Id, fake.Name, fake.State, Config = (object?)null } });
+        Assert.Throws<WipException>(() => new SandboxLifecycle(Settings(), fake.Run).Destroy("first"));
+        Assert.DoesNotContain(fake.Calls, c => c[0] == "remove");
     }
 }
