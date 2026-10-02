@@ -1,11 +1,11 @@
 # Sandbox and volume contract
 
-This is the configuration and ownership contract for workspace #194 (parent #192).
+This is the configuration and ownership contract for workspace slidict/workspace#194 (parent slidict/workspace#192).
 The configuration model and validation are implemented; resource execution is not.
 Loading YAML or running `wip config` never creates, mounts, snapshots or deletes resources.
 The existing `up`, `down`, `run`, `exec` and `sync` commands still target legacy dependencies;
-they do not operate on these new declarations. Sandbox execution belongs to #195,
-volume lifecycle to #196, mount integration to #197, and workspace adoption to #198.
+they do not operate on these new declarations. Sandbox execution belongs to slidict/workspace#195,
+volume lifecycle to slidict/workspace#196, mount integration to slidict/workspace#197, and workspace adoption to slidict/workspace#198.
 Those management Issues live in the private workspace repository. Public implementation
 PRs should describe the technical change without publishing team credentials or local paths.
 
@@ -53,14 +53,14 @@ inference from an agent name or a `shared`, `agent` or `sandbox` purpose mode.
 Names and namespace match `[a-z][a-z0-9_-]{0,62}` and compare ordinally. Duplicate
 names, repeated references, undefined volumes and equal mount destinations **within
 one sandbox** are rejected. Equal destinations in different sandboxes are valid.
-Ancestor/descendant mounts are not equal-path conflicts; #197 must check the backend's
+Ancestor/descendant mounts are not equal-path conflicts; slidict/workspace#197 must check the backend's
 nested-mount behavior before creating resources. Unknown fields inside either resource
 declaration are rejected, including agent/purpose/mode labels. Backend errors do not
 permit silently changing the declared mount path or persistence.
 
 ## Responsibility and ownership
 
-Resource identity is `(resource_namespace, resource kind, name)`. #195/#196 must map it
+Resource identity is `(resource_namespace, resource kind, name)`. slidict/workspace#195/#196 must map it
 to collision-safe backend names and persist ownership metadata; deleting by an unscoped
 name or adopting an unrelated existing resource is prohibited. Choose separate namespaces
 for independent projects. Moving the config directory does not change identity; changing
@@ -76,10 +76,10 @@ explicit scoped volume operation, reject active users, and report failures witho
 unrelated storage. Ephemeral volumes exist for a use cycle: create before the first attach,
 retain while any sandbox has a live reference, and clean up after the last confirmed detach.
 Multiple sandbox references are allowed for either kind. Failed creation or unknown backend
-state must not be treated as a confirmed detach. #196 must implement durable ownership and
+state must not be treated as a confirmed detach. slidict/workspace#196 must implement durable ownership and
 reconciliation before cleanup; removing a declaration from YAML is not an implicit prune.
 
-Mount owns the relationship, target path and attach/detach ordering. #197 resolves the
+Mount owns the relationship, target path and attach/detach ordering. slidict/workspace#197 resolves the
 validated name references; it neither chooses storage policy nor gives a volume an agent
 role. Shared `project` above emerges from two references, and `private-state` from one.
 An ephemeral volume's data is not promoted to persistent on a failed cleanup.
@@ -94,28 +94,28 @@ Compose-native's compose.yml volumes are not automatically converted or adopted.
 Old normalized config output gets no extra resource keys when the extension is absent.
 
 Migrating is deliberate: choose a namespace; declare storage and explicit persistence;
-list sandbox images and volume references; validate via `wip config`; then, once #195–#197
+list sandbox images and volume references; validate via `wip config`; then, once slidict/workspace#195–slidict/workspace#197
 ship, opt into their explicit resource commands. Do not silently reinterpret legacy bind
 mounts or `sync.volume`. Existing CommandBuilder and SyncSettings continue their current
 contracts; they are not lifecycle implementations for the new resources. This PR preserves
 legacy execution rather than prematurely connecting the new schema to it.
 
-## Snapshot/restore decision for #196
+## Snapshot/restore decision for slidict/workspace#196
 
-Snapshot/restore is **not required for the initial #192 acceptance criteria**: retaining
+Snapshot/restore is **not required for the initial slidict/workspace#192 acceptance criteria**: retaining
 persistent data across sandbox recreation and deleting ephemeral data are lifecycle
 guarantees, not backups. No snapshot fields or promised command are introduced here.
 Existing config/CommandBuilder/SyncSettings expose neither a generic storage snapshot
 contract nor a restore transaction; a source sync is not a consistent backup.
 
-#196 should first implement and verify persistence, reference protection and cleanup.
+slidict/workspace#196 should first implement and verify persistence, reference protection and cleanup.
 If recovery beyond retained storage becomes a requirement, create a separately estimated
 snapshot/restore unit before implementing it. Its data scope must be one explicitly selected
 owned volume; it must define quiescing all users, destination/retention, backend capability,
 and restore into an inactive volume with rollback. It must not capture whole host homes,
 credentials or unrelated mounted volumes. Unsupported backend capability must fail explicitly;
 do not substitute a live filesystem copy and claim snapshot consistency. This decision and
-its rationale satisfy the conditional snapshot/restore handoff in #194/#196 without silently
+its rationale satisfy the conditional snapshot/restore handoff in slidict/workspace#194/#196 without silently
 dropping a mandatory parent criterion.
 
 ## Verification and handoff
@@ -124,6 +124,6 @@ dropping a mandatory parent criterion.
 paths, namespace identity, normalized YAML round-trip and coexistence with legacy bind mounts.
 Run `dotnet test tests/Wip.Tests/Wip.Tests.csproj --configuration Release` and the existing
 build/AOT CI. No live sandbox or credential access is needed for this schema-only Issue.
-#195/#196 can use the typed definitions and this ownership contract independently;
-#197 integrates their runtimes; #198 adds actual workspace config and verifies all clients.
-Completing this Issue does not close parent #192 or claim the runtimes already exist.
+slidict/workspace#195/#196 can use the typed definitions and this ownership contract independently;
+slidict/workspace#197 integrates their runtimes; slidict/workspace#198 adds actual workspace config and verifies all clients.
+Completing this Issue does not close parent slidict/workspace#192 or claim the runtimes already exist.

@@ -108,7 +108,9 @@ public class SandboxSettingsTests
     [Fact]
     public void ResourceIdentityRequiresExplicitNamespaceRatherThanGuessingFromDirectory()
     {
-        Assert.Throws<ConfigException>(() => Load("sandboxes: [{name: box, image: tool}]"));
+        var error = Assert.Throws<ConfigException>(() => Load("sandboxes: [{name: box, image: tool}]"));
+        Assert.Contains("resource_namespace must", error.Message);
+        Assert.DoesNotContain("resources.resource_namespace", error.Message);
         Assert.Equal("example", Load(Sample).SandboxResources.ResourceNamespace);
     }
 }

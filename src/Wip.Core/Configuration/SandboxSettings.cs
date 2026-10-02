@@ -63,7 +63,7 @@ public sealed partial class SandboxSettings
         string? resourceNamespace = null;
         if (volumes.Count > 0 || sandboxes.Count > 0 || raw.ContainsKey("resource_namespace"))
         {
-            resourceNamespace = Text(raw, "resource_namespace", "resources");
+            resourceNamespace = Text(raw, "resource_namespace", "");
             if (!ResourceName().IsMatch(resourceNamespace)) throw new ConfigException("resource_namespace must match [a-z][a-z0-9_-]{0,62}");
         }
         return new SandboxSettings(resourceNamespace, volumes, sandboxes);
@@ -97,7 +97,7 @@ public sealed partial class SandboxSettings
 
     private static string Text(OrderedDictionary<string, object?> entry, string key, string path) =>
         entry.GetValueOrDefault(key) is string text && !string.IsNullOrWhiteSpace(text) && !text.Any(char.IsControl)
-            ? text : throw new ConfigException($"{path}.{key} must be a nonempty string without control characters");
+            ? text : throw new ConfigException($"{(path.Length == 0 ? key : path + "." + key)} must be a nonempty string without control characters");
 
     private static string Name(OrderedDictionary<string, object?> entry, string path)
     {
