@@ -415,7 +415,17 @@ finally {
             }
         }
         foreach ($vol in @('persistent-fixture', 'ephemeral-fixture', 'isolated-fixture')) {
-            try { [void](Invoke-Wip @('volume', 'destroy', $vol)) } catch { }
+            try {
+                $cleanup = Invoke-Wip @('volume', 'destroy', $vol)
+                if ($cleanup.Code -ne 0) {
+                    $script:Failed = $true
+                    Write-Warning "volume cleanup failed ($vol): $($cleanup.Output)"
+                }
+            }
+            catch {
+                $script:Failed = $true
+                Write-Warning "volume cleanup failed ($vol): $_"
+            }
         }
     }
     Remove-Leftovers

@@ -80,9 +80,16 @@ function Invoke-SandboxMountE2E([string] $Namespace, [string] $Image) {
         }
         foreach ($vol in @('persistent-fixture', 'ephemeral-fixture', 'isolated-fixture')) {
             try {
-                [void](Invoke-Wip @('volume', 'destroy', $vol))
+                $cleanup = Invoke-Wip @('volume', 'destroy', $vol)
+                if ($cleanup.Code -ne 0) {
+                    $script:Failed = $true
+                    Write-Warning "volume cleanup failed ($vol): $($cleanup.Output)"
+                }
             }
-            catch { }
+            catch {
+                $script:Failed = $true
+                Write-Warning "volume cleanup failed ($vol): $_"
+            }
         }
     }
 }

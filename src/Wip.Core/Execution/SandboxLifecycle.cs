@@ -6,7 +6,11 @@ using Wip.Configuration;
 namespace Wip.Execution;
 
 public sealed record SandboxCommandResult(int Code, string Output);
-public sealed record SandboxStatus(string Name, string BackendName, string? Id, string State);
+public sealed record SandboxMount(string Type, string Name, string Destination);
+public sealed record SandboxStatus(string Name, string BackendName, string? Id, string State, IReadOnlyList<SandboxMount>? Mounts = null)
+{
+    public IReadOnlyList<SandboxMount> Mounts { get; init; } = Mounts ?? [];
+}
 
 /// <summary>Backend argv are passed directly, never through a shell. Capture is only needed for probes.</summary>
 public delegate SandboxCommandResult SandboxBackend(IReadOnlyList<string> arguments, TimeSpan timeout, bool capture);
@@ -56,7 +60,8 @@ public sealed class SandboxLifecycle(SandboxSettings settings, SandboxBackend ba
             throw Failure(name, "ownership mismatch; refusing to adopt this container");
         var state = State(record);
         if (state == "deleted") return new(name, backendName, null, "not found");
-        return new(name, backendName, inspectedId, state);
+        var mounts = ExtractMounts(record);
+        return new(name, backendName, inspectedId, state, mounts);
     }
 
     public int Create(string name)
@@ -69,11 +74,16 @@ public sealed class SandboxLifecycle(SandboxSettings settings, SandboxBackend ba
         var existing = Status(name);
         if (existing.Id is not null)
         {
+            VerifyExistingMounts(name, existing, volumeDefs);
             if (existing.State == "running")
             {
                 if (volumeDefs.Count != 0 && volumes is not null)
                 {
-                    foreach (var vDef in volumeDefs) volumes.Reconcile(vDef.Name);
+                    foreach (var vDef in volumeDefs)
+                    {
+                        var code = volumes.Reconcile(vDef.Name);
+                        if (code != 0) return code;
+                    }
                 }
                 return 0;
             }
@@ -118,7 +128,8 @@ public sealed class SandboxLifecycle(SandboxSettings settings, SandboxBackend ba
         {
             foreach (var vDef in volumeDefs)
             {
-                volumes.Reconcile(vDef.Name);
+                var code = volumes.Reconcile(vDef.Name);
+                if (code != 0) return code;
             }
         }
         return 0;
@@ -132,6 +143,14 @@ public sealed class SandboxLifecycle(SandboxSettings settings, SandboxBackend ba
         var existing = Status(name);
         if (existing.Id is not null)
         {
+            if (definition.Volumes.Count != 0 && volumes is not null)
+            {
+                foreach (var vName in definition.Volumes)
+                {
+                    var code = volumes.Reconcile(vName);
+                    if (code != 0) return code;
+                }
+            }
             // Deliberately no volume removal flag or volume command.
             var removed = backend(["remove", "-f", existing.Id], MutationTimeout, false);
             if (removed.Code != 0) return removed.Code;
@@ -149,6 +168,29 @@ public sealed class SandboxLifecycle(SandboxSettings settings, SandboxBackend ba
         return 0;
     }
 
+    private void VerifyExistingMounts(string name, SandboxStatus existing, IReadOnlyList<VolumeDefinition> volumeDefs)
+    {
+        var containerVolumeMounts = existing.Mounts
+            .Where(m => string.Equals(m.Type, "volume", StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        if (containerVolumeMounts.Length != volumeDefs.Count)
+            throw Failure(name, "existing container mounts do not match declared volumes; run sandbox destroy, confirm absence, then sandbox create");
+
+        if (volumeDefs.Count == 0) return;
+
+        foreach (var vDef in volumeDefs)
+        {
+            var vStatus = volumes!.Status(vDef.Name);
+            if (vStatus.BackendName is null)
+                throw Failure(name, "existing container mounts do not match declared volumes; run sandbox destroy, confirm absence, then sandbox create");
+            var matched = containerVolumeMounts.Any(m =>
+                string.Equals(m.Name, vStatus.BackendName, StringComparison.Ordinal) &&
+                string.Equals(m.Destination, vDef.Mount, StringComparison.Ordinal));
+            if (!matched)
+                throw Failure(name, "existing container mounts do not match declared volumes; run sandbox destroy, confirm absence, then sandbox create");
+        }
+    }
+
     private IReadOnlyList<VolumeDefinition> ValidateVolumes(string name, SandboxDefinition definition)
     {
         if (definition.Volumes.Count == 0) return [];
@@ -163,6 +205,8 @@ public sealed class SandboxLifecycle(SandboxSettings settings, SandboxBackend ba
                 ?? throw new ConfigException($"Sandbox {name} references an undefined volume: {vName}");
             if (vDef.Mount == "/")
                 throw new ConfigException($"Sandbox {name}: volume {vName} destination cannot be '/'");
+            if (vDef.Mount.Contains(','))
+                throw new ConfigException($"Sandbox {name}: volume {vName} destination cannot contain ','");
             if (!seenMounts.Add(vDef.Mount))
                 throw new ConfigException($"Sandbox {name} has conflicting mount destinations");
             volumeDefs.Add(vDef);
@@ -247,5 +291,23 @@ public sealed class SandboxLifecycle(SandboxSettings settings, SandboxBackend ba
             }
         }
         throw new WipException("Sandbox backend returned malformed JSON; existence is unknown");
+    }
+
+    private static IReadOnlyList<SandboxMount> ExtractMounts(JsonElement record)
+    {
+        if (!record.TryGetProperty("Mounts", out var mounts) || mounts.ValueKind != JsonValueKind.Array)
+            return [];
+        var result = new List<SandboxMount>();
+        foreach (var mount in mounts.EnumerateArray())
+        {
+            if (mount.ValueKind != JsonValueKind.Object) continue;
+            var type = Text(mount, "Type") ?? "";
+            var name = Text(mount, "Name") ?? "";
+            var destination = (Text(mount, "Destination") ?? Text(mount, "Target") ?? "").TrimEnd('/');
+            if (destination.Length == 0 && (Text(mount, "Destination") == "/" || Text(mount, "Target") == "/"))
+                destination = "/";
+            result.Add(new(type, name, destination));
+        }
+        return result;
     }
 }

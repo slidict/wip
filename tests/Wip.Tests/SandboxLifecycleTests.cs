@@ -18,7 +18,8 @@ public class SandboxLifecycleTests
     private sealed class Fake
     {
         public readonly List<string[]> Calls = [];
-        public readonly Dictionary<string, (string Id, string Owner, string State)> Containers = [];
+        public readonly Dictionary<string, (string Id, string Owner, string State, List<SandboxMount> Mounts)> Containers = [];
+        public List<SandboxMount> Mounts = [];
         public bool Exists;
         public string State = "running";
         public string Owner = "v1:test:sandbox:first";
@@ -58,12 +59,14 @@ public class SandboxLifecycleTests
                 if (InspectOutput is not null) return new(ProbeCode, InspectOutput);
                 var inspectId = argv[^1];
                 var match = Containers.Values.FirstOrDefault(c => c.Id == inspectId);
-                if (match != default)
+                if (match.Id is not null)
                 {
                     var cName = Containers.First(kv => kv.Value == match).Key;
-                    return new(ProbeCode, JsonSerializer.Serialize(new[] { new { Id = inspectId, Name = cName, match.State, Labels = new Dictionary<string, string> { [SandboxLifecycle.OwnerLabel] = match.Owner } } }));
+                    var mountsObj = match.Mounts.Select(m => new { Type = m.Type, Name = m.Name, Destination = m.Destination }).ToArray();
+                    return new(ProbeCode, JsonSerializer.Serialize(new[] { new { Id = inspectId, Name = cName, match.State, Labels = new Dictionary<string, string> { [SandboxLifecycle.OwnerLabel] = match.Owner }, Mounts = mountsObj } }));
                 }
-                return new(ProbeCode, JsonSerializer.Serialize(new[] { new { Id, Name, State, Labels = new Dictionary<string, string> { [SandboxLifecycle.OwnerLabel] = Owner } } }));
+                var defaultMounts = Mounts.Select(m => new { Type = m.Type, Name = m.Name, Destination = m.Destination }).ToArray();
+                return new(ProbeCode, JsonSerializer.Serialize(new[] { new { Id, Name, State, Labels = new Dictionary<string, string> { [SandboxLifecycle.OwnerLabel] = Owner }, Mounts = defaultMounts } }));
             }
             Assert.False(capture);
             if (argv[0] == "exec") { ExecTimeout = timeout; return new(ExecCode, ""); }
@@ -78,12 +81,26 @@ public class SandboxLifecycleTests
                 var cOwner = labelIdx >= 0 && labelIdx + 1 < argv.Count && argv[labelIdx + 1].StartsWith(SandboxLifecycle.OwnerLabel + "=")
                     ? argv[labelIdx + 1][(SandboxLifecycle.OwnerLabel.Length + 1)..] : Owner;
                 var cId = cName == Name ? Id : Id + "-" + cName;
-                Containers[cName] = (cId, cOwner, "running");
+                var mounts = new List<SandboxMount>();
+                for (int i = 0; i < argv.Count - 1; i++)
+                {
+                    if (argv[i] == "--mount")
+                    {
+                        var parts = argv[i + 1].Split(',');
+                        var mType = parts.FirstOrDefault(p => p.StartsWith("type="))?[5..] ?? "volume";
+                        var mSrc = parts.FirstOrDefault(p => p.StartsWith("source="))?[7..] ?? "";
+                        var mTgt = parts.FirstOrDefault(p => p.StartsWith("target="))?[7..] ?? "";
+                        mounts.Add(new(mType, mSrc, mTgt));
+                    }
+                }
+                Mounts = mounts;
+                Containers[cName] = (cId, cOwner, "running", mounts);
             }
             if (argv[0] == "start" && MutationCode == 0) State = "running";
             if (argv[0] == "remove" && MutationCode == 0 && !LeaveResidue)
             {
                 Exists = false;
+                Mounts = [];
                 var targetId = argv[^1];
                 var key = Containers.FirstOrDefault(kv => kv.Value.Id == targetId).Key;
                 if (key is not null) Containers.Remove(key);
@@ -377,7 +394,7 @@ public class SandboxLifecycleTests
         ], runCall);
 
         Assert.Equal(0, service.Destroy("first"));
-        Assert.Equal(["data", "scratch", "data", "scratch"], fakeVolumes.ReconcileCalls);
+        Assert.Equal(["data", "scratch", "data", "scratch", "data", "scratch"], fakeVolumes.ReconcileCalls);
     }
 
     [Fact]
@@ -556,5 +573,150 @@ public class SandboxLifecycleTests
         Assert.Contains("destination cannot be '/'", ex.Message);
         Assert.Empty(fake.Calls);
         Assert.Empty(fakeVolumes.CreateCalls);
+    }
+
+    [Fact]
+    public void ExistingContainerMountDriftThrowsAndRequiresRecreate()
+    {
+        var settingsOriginal = new Config(YamlLoader.LoadText("""
+            version: 1
+            resource_namespace: test
+            volumes:
+              - name: v1
+                persistent: true
+                mount: /data1
+            sandboxes:
+              - name: first
+                image: fixture:latest
+                volumes: [v1]
+            """, allowAliases: false)).SandboxResources;
+        var fake = new Fake();
+        var fakeVolumes = new FakeVolumeLifecycle();
+        var service1 = new SandboxLifecycle(settingsOriginal, fake.Run, fakeVolumes);
+        Assert.Equal(0, service1.Create("first"));
+
+        var settingsDrift = new Config(YamlLoader.LoadText("""
+            version: 1
+            resource_namespace: test
+            volumes:
+              - name: v1
+                persistent: true
+                mount: /data1
+              - name: v2
+                persistent: true
+                mount: /data2
+            sandboxes:
+              - name: first
+                image: fixture:latest
+                volumes: [v1, v2]
+            """, allowAliases: false)).SandboxResources;
+        var service2 = new SandboxLifecycle(settingsDrift, fake.Run, fakeVolumes);
+        var ex = Assert.Throws<WipException>(() => service2.Create("first"));
+        Assert.Contains("existing container mounts do not match declared volumes", ex.Message);
+    }
+
+    [Fact]
+    public void ExistingStoppedContainerMountDriftThrowsAndRefusesStart()
+    {
+        var settingsOriginal = new Config(YamlLoader.LoadText("""
+            version: 1
+            resource_namespace: test
+            volumes:
+              - name: v1
+                persistent: true
+                mount: /data1
+            sandboxes:
+              - name: first
+                image: fixture:latest
+                volumes: [v1]
+            """, allowAliases: false)).SandboxResources;
+        var fake = new Fake();
+        var fakeVolumes = new FakeVolumeLifecycle();
+        var service1 = new SandboxLifecycle(settingsOriginal, fake.Run, fakeVolumes);
+        Assert.Equal(0, service1.Create("first"));
+        fake.State = "exited";
+
+        var settingsDrift = new Config(YamlLoader.LoadText("""
+            version: 1
+            resource_namespace: test
+            volumes:
+              - name: v2
+                persistent: true
+                mount: /data2
+            sandboxes:
+              - name: first
+                image: fixture:latest
+                volumes: [v2]
+            """, allowAliases: false)).SandboxResources;
+        var service2 = new SandboxLifecycle(settingsDrift, fake.Run, fakeVolumes);
+        var ex = Assert.Throws<WipException>(() => service2.Create("first"));
+        Assert.Contains("existing container mounts do not match declared volumes", ex.Message);
+        Assert.DoesNotContain(fake.Calls, c => c[0] == "start");
+    }
+
+    [Fact]
+    public void ReconciliationFailureInCreatePropagatesNonZeroCode()
+    {
+        var settings = new Config(YamlLoader.LoadText("""
+            version: 1
+            resource_namespace: test
+            volumes:
+              - name: data
+                persistent: true
+                mount: /data
+            sandboxes:
+              - name: first
+                image: fixture:latest
+                volumes: [data]
+            """, allowAliases: false)).SandboxResources;
+        var fake = new Fake();
+        var fakeVolumes = new FakeVolumeLifecycle { ReconcileCode = 37 };
+        var service = new SandboxLifecycle(settings, fake.Run, fakeVolumes);
+
+        // Initial create failure
+        Assert.Equal(37, service.Create("first"));
+
+        // Idempotent create failure on running container
+        fakeVolumes.ReconcileCode = 0;
+        fake.Exists = true;
+        fake.State = "running";
+        fake.Mounts = [new SandboxMount("volume", "wip-v-data", "/data")];
+        Assert.Equal(0, service.Create("first"));
+
+        fakeVolumes.ReconcileCode = 42;
+        Assert.Equal(42, service.Create("first"));
+    }
+
+    [Fact]
+    public void DestroyReconcilesUsageBeforeAndAfterContainerRemoval()
+    {
+        var settings = new Config(YamlLoader.LoadText("""
+            version: 1
+            resource_namespace: test
+            volumes:
+              - name: temp
+                persistent: false
+                mount: /scratch
+            sandboxes:
+              - name: first
+                image: fixture:latest
+                volumes: [temp]
+            """, allowAliases: false)).SandboxResources;
+        var fake = new Fake();
+        var fakeVolumes = new FakeVolumeLifecycle();
+        var service = new SandboxLifecycle(settings, fake.Run, fakeVolumes);
+
+        // Simulate residual container created but run failed before reconcile
+        fake.MutationCode = 1;
+        fake.LeaveResidue = true;
+        Assert.Equal(1, service.Create("first"));
+        Assert.Empty(fakeVolumes.ReconcileCalls);
+
+        // Now destroy the residual container
+        fake.MutationCode = 0;
+        fake.LeaveResidue = false;
+        Assert.Equal(0, service.Destroy("first"));
+        // Reconcile was called before removal AND after removal
+        Assert.Equal(["temp", "temp"], fakeVolumes.ReconcileCalls);
     }
 }

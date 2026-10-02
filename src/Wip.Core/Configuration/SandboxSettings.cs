@@ -31,6 +31,8 @@ public sealed partial class SandboxSettings
             if (entry.GetValueOrDefault("persistent") is not bool persistent)
                 throw new ConfigException($"volumes.{name}.persistent must explicitly be true or false");
             var mount = Text(entry, "mount", $"volumes.{name}");
+            if (mount.Contains(','))
+                throw new ConfigException($"volumes.{name}.mount cannot contain commas");
             if (!mount.StartsWith('/') || mount.Any(char.IsControl) ||
                 (mount != "/" && mount[1..].Split('/').Any(part => part is "" or "." or "..")))
                 throw new ConfigException($"volumes.{name}.mount must be a canonical absolute Linux path");
