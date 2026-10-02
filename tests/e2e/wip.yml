@@ -11,10 +11,19 @@ volumes:
     mount: /data
   - name: ephemeral-fixture
     persistent: false
-    mount: /data
+    mount: /scratch
+  - name: isolated-fixture
+    persistent: false
+    mount: /isolated
 sandboxes:
   - name: fixture
     image: wip-e2e:latest
+  - name: mount-shared-first
+    image: wip-e2e:latest
+    volumes: [persistent-fixture, ephemeral-fixture]
+  - name: mount-shared-second
+    image: wip-e2e:latest
+    volumes: [persistent-fixture, ephemeral-fixture, isolated-fixture]
 mode: container
 wslc:
   command: auto

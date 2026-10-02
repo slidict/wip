@@ -6,12 +6,16 @@ using Wip.Configuration;
 namespace Wip.Execution;
 
 public sealed record SandboxCommandResult(int Code, string Output);
-public sealed record SandboxStatus(string Name, string BackendName, string? Id, string State);
+public sealed record SandboxMount(string Type, string Name, string Destination);
+public sealed record SandboxStatus(string Name, string BackendName, string? Id, string State, IReadOnlyList<SandboxMount>? Mounts = null)
+{
+    public IReadOnlyList<SandboxMount> Mounts { get; init; } = Mounts ?? [];
+}
 
 /// <summary>Backend argv are passed directly, never through a shell. Capture is only needed for probes.</summary>
 public delegate SandboxCommandResult SandboxBackend(IReadOnlyList<string> arguments, TimeSpan timeout, bool capture);
 
-public sealed class SandboxLifecycle(SandboxSettings settings, SandboxBackend backend)
+public sealed class SandboxLifecycle(SandboxSettings settings, SandboxBackend backend, IVolumeLifecycle? volumes = null)
 {
     public const string OwnerLabel = "io.slidict.wip.owner";
     private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(10);
@@ -56,19 +60,33 @@ public sealed class SandboxLifecycle(SandboxSettings settings, SandboxBackend ba
             throw Failure(name, "ownership mismatch; refusing to adopt this container");
         var state = State(record);
         if (state == "deleted") return new(name, backendName, null, "not found");
-        return new(name, backendName, inspectedId, state);
+        var mounts = ExtractMounts(record);
+        return new(name, backendName, inspectedId, state, mounts);
     }
 
     public int Create(string name)
     {
         var definition = Definition(name);
-        if (definition.Volumes.Count != 0)
-            throw new ConfigException($"Sandbox {name}: volume mounts are not implemented yet; no container was created");
         if (definition.Image.StartsWith('-')) throw new ConfigException("Sandbox image must not start with '-'");
+        var volumeDefs = ValidateVolumes(name, definition);
+        if (volumeDefs.Count != 0 && volumes is null)
+            throw new ConfigException($"Sandbox {name}: volume lifecycle is not configured; no container was created");
         var existing = Status(name);
         if (existing.Id is not null)
         {
-            if (existing.State == "running") return 0;
+            VerifyExistingMounts(name, existing, volumeDefs);
+            if (existing.State == "running")
+            {
+                if (volumeDefs.Count != 0 && volumes is not null)
+                {
+                    foreach (var vDef in volumeDefs)
+                    {
+                        var code = volumes.Reconcile(vDef.Name);
+                        if (code != 0) return code;
+                    }
+                }
+                return 0;
+            }
             if (existing.State is not ("created" or "exited"))
                 throw Failure(name, $"cannot start state {existing.State}; run sandbox destroy, confirm absence, then sandbox create");
             var started = backend(["start", existing.Id], MutationTimeout, false);
@@ -76,23 +94,146 @@ public sealed class SandboxLifecycle(SandboxSettings settings, SandboxBackend ba
         }
         else
         {
-            var created = backend(["run", "--name", existing.BackendName, "-d", "--label", $"{OwnerLabel}={Identity(name)}", definition.Image], MutationTimeout, false);
+            var runArgs = new List<string>
+            {
+                "run",
+                "--name", existing.BackendName,
+                "-d",
+                "--label", $"{OwnerLabel}={Identity(name)}",
+            };
+            if (volumeDefs.Count != 0)
+            {
+                if (volumes is null) throw new ConfigException($"Sandbox {name}: volume lifecycle is not configured; no container was created");
+                foreach (var vDef in volumeDefs)
+                {
+                    var code = volumes.Create(vDef.Name);
+                    if (code != 0) return code;
+                }
+                var sortedVolumeDefs = volumeDefs.OrderBy(v => v.Mount.Split('/', StringSplitOptions.RemoveEmptyEntries).Length);
+                foreach (var vDef in sortedVolumeDefs)
+                {
+                    var vStatus = volumes.Status(vDef.Name);
+                    if (vStatus.BackendName is null) throw Failure(name, $"volume {vDef.Name} was not found after creation");
+                    runArgs.Add("--mount");
+                    runArgs.Add($"type=volume,source={vStatus.BackendName},target={vDef.Mount}");
+                }
+            }
+            runArgs.Add(definition.Image);
+            var created = backend(runArgs, MutationTimeout, false);
             // Even a failed/timed-out run can leave a container. Keep it for ownership-checked recovery.
             if (created.Code != 0) return created.Code;
         }
         if (Status(name).State != "running") throw Failure(name, "creation/start did not produce a running sandbox; inspect status and image CMD, then retry or destroy");
+        if (volumeDefs.Count != 0 && volumes is not null)
+        {
+            foreach (var vDef in volumeDefs)
+            {
+                var code = volumes.Reconcile(vDef.Name);
+                if (code != 0) return code;
+            }
+        }
         return 0;
     }
 
     public int Destroy(string name)
     {
+        var definition = Definition(name);
         var existing = Status(name);
-        if (existing.Id is null) return 0;
-        // Deliberately no volume removal flag or volume command.
-        var removed = backend(["remove", "-f", existing.Id], MutationTimeout, false);
-        if (removed.Code != 0) return removed.Code;
-        if (Status(name).Id is not null) throw Failure(name, "container still exists after removal; retry status before recovery");
+        var reconcileVolumes = VolumesToReconcileOnDestroy(definition, existing);
+        if (reconcileVolumes.Count != 0 && volumes is null)
+            throw new ConfigException($"Sandbox {name}: volume lifecycle is not configured; container removal cannot reconcile volumes");
+
+        if (existing.Id is not null)
+        {
+            if (reconcileVolumes.Count != 0 && volumes is not null)
+            {
+                foreach (var vName in reconcileVolumes)
+                {
+                    var code = volumes.Reconcile(vName);
+                    if (code != 0) return code;
+                }
+            }
+            // Deliberately no volume removal flag or volume command.
+            var removed = backend(["remove", "-f", existing.Id], MutationTimeout, false);
+            if (removed.Code != 0) return removed.Code;
+            if (Status(name).Id is not null) throw Failure(name, "container still exists after removal; retry status before recovery");
+        }
+        if (reconcileVolumes.Count != 0)
+        {
+            if (volumes is null) throw new ConfigException($"Sandbox {name}: volume lifecycle is not configured; container removal cannot reconcile volumes");
+            foreach (var vName in reconcileVolumes)
+            {
+                var code = volumes.Reconcile(vName);
+                if (code != 0) return code;
+            }
+        }
         return 0;
+    }
+
+    private IReadOnlyList<string> VolumesToReconcileOnDestroy(SandboxDefinition definition, SandboxStatus existing)
+    {
+        var result = new HashSet<string>(definition.Volumes, StringComparer.Ordinal);
+        if (existing.Id is not null)
+        {
+            foreach (var mount in existing.Mounts)
+            {
+                if (!string.Equals(mount.Type, "volume", StringComparison.OrdinalIgnoreCase)) continue;
+                var matched = settings.Volumes.FirstOrDefault(v =>
+                    mount.Name.StartsWith(VolumeLifecycle.BackendPrefix(settings.ResourceNamespace!, v.Name), StringComparison.Ordinal));
+                if (matched is not null)
+                {
+                    result.Add(matched.Name);
+                }
+            }
+        }
+        return result.ToArray();
+    }
+
+    private void VerifyExistingMounts(string name, SandboxStatus existing, IReadOnlyList<VolumeDefinition> volumeDefs)
+    {
+        var wipVolumeMounts = existing.Mounts
+            .Where(m => string.Equals(m.Type, "volume", StringComparison.OrdinalIgnoreCase) &&
+                        m.Name.StartsWith("wip-v-", StringComparison.Ordinal))
+            .ToArray();
+        if (wipVolumeMounts.Length != volumeDefs.Count)
+            throw Failure(name, "existing container mounts do not match declared volumes; run sandbox destroy, confirm absence, then sandbox create");
+
+        if (volumeDefs.Count == 0) return;
+
+        foreach (var vDef in volumeDefs)
+        {
+            var vStatus = volumes!.Status(vDef.Name);
+            if (vStatus.BackendName is null)
+                throw Failure(name, "existing container mounts do not match declared volumes; run sandbox destroy, confirm absence, then sandbox create");
+            var matched = wipVolumeMounts.Any(m =>
+                string.Equals(m.Name, vStatus.BackendName, StringComparison.Ordinal) &&
+                string.Equals(m.Destination, vDef.Mount, StringComparison.Ordinal));
+            if (!matched)
+                throw Failure(name, "existing container mounts do not match declared volumes; run sandbox destroy, confirm absence, then sandbox create");
+        }
+    }
+
+    private IReadOnlyList<VolumeDefinition> ValidateVolumes(string name, SandboxDefinition definition)
+    {
+        if (definition.Volumes.Count == 0) return [];
+        var volumeDefs = new List<VolumeDefinition>();
+        var seenNames = new HashSet<string>(StringComparer.Ordinal);
+        var seenMounts = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var vName in definition.Volumes)
+        {
+            if (!seenNames.Add(vName))
+                throw new ConfigException($"Sandbox {name} repeats volume {vName}");
+            var vDef = settings.Volumes.SingleOrDefault(v => v.Name == vName)
+                ?? throw new ConfigException($"Sandbox {name} references an undefined volume: {vName}");
+            if (vDef.Mount == "/")
+                throw new ConfigException($"Sandbox {name}: volume {vName} destination cannot be '/'");
+            if (vDef.Mount.Contains(','))
+                throw new ConfigException($"Sandbox {name}: volume {vName} destination cannot contain ','");
+            if (!seenMounts.Add(vDef.Mount))
+                throw new ConfigException($"Sandbox {name} has conflicting mount destinations");
+            volumeDefs.Add(vDef);
+        }
+        return volumeDefs;
     }
 
     public int Exec(string name, IReadOnlyList<string> argv, TimeSpan timeout)
@@ -172,5 +313,23 @@ public sealed class SandboxLifecycle(SandboxSettings settings, SandboxBackend ba
             }
         }
         throw new WipException("Sandbox backend returned malformed JSON; existence is unknown");
+    }
+
+    private static IReadOnlyList<SandboxMount> ExtractMounts(JsonElement record)
+    {
+        if (!record.TryGetProperty("Mounts", out var mounts) || mounts.ValueKind != JsonValueKind.Array)
+            return [];
+        var result = new List<SandboxMount>();
+        foreach (var mount in mounts.EnumerateArray())
+        {
+            if (mount.ValueKind != JsonValueKind.Object) continue;
+            var type = Text(mount, "Type") ?? "";
+            var name = Text(mount, "Name") ?? "";
+            var destination = (Text(mount, "Destination") ?? Text(mount, "Target") ?? "").TrimEnd('/');
+            if (destination.Length == 0 && (Text(mount, "Destination") == "/" || Text(mount, "Target") == "/"))
+                destination = "/";
+            result.Add(new(type, name, destination));
+        }
+        return result;
     }
 }

@@ -387,6 +387,9 @@ try {
     . (Join-Path $PSScriptRoot 'volume-lifecycle.ps1')
     Invoke-VolumeStorageE2E -Namespace $sandboxNamespace -Image 'wip-e2e:latest'
 
+    . (Join-Path $PSScriptRoot 'sandbox-mount.ps1')
+    Invoke-SandboxMountE2E -Namespace $sandboxNamespace -Image 'wip-e2e:latest'
+
     Write-Step "All lifecycle assertions passed"
 }
 catch {
@@ -398,16 +401,31 @@ catch {
 finally {
     if ($script:Workspace -and (Test-Path (Join-Path $script:Workspace 'wip.yml'))) {
         # The lifecycle verifies labels and IDs before removing this run's resource.
-        try {
-            $cleanup = Invoke-Wip @('sandbox', 'destroy', 'fixture')
-            if ($cleanup.Code -ne 0) {
+        foreach ($sb in @('fixture', 'mount-shared-first', 'mount-shared-second')) {
+            try {
+                $cleanup = Invoke-Wip @('sandbox', 'destroy', $sb)
+                if ($cleanup.Code -ne 0) {
+                    $script:Failed = $true
+                    Write-Warning "sandbox cleanup failed ($sb): $($cleanup.Output)"
+                }
+            }
+            catch {
                 $script:Failed = $true
-                Write-Warning "sandbox cleanup failed (exit $($cleanup.Code)): $($cleanup.Output)"
+                Write-Warning "sandbox cleanup failed ($sb): $_"
             }
         }
-        catch {
-            $script:Failed = $true
-            Write-Warning "sandbox cleanup failed: $_"
+        foreach ($vol in @('persistent-fixture', 'ephemeral-fixture', 'isolated-fixture')) {
+            try {
+                $cleanup = Invoke-Wip @('volume', 'destroy', $vol)
+                if ($cleanup.Code -ne 0) {
+                    $script:Failed = $true
+                    Write-Warning "volume cleanup failed ($vol): $($cleanup.Output)"
+                }
+            }
+            catch {
+                $script:Failed = $true
+                Write-Warning "volume cleanup failed ($vol): $_"
+            }
         }
     }
     Remove-Leftovers

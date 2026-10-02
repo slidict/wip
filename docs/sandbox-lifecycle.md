@@ -34,11 +34,22 @@ Check status and, if necessary, destroy the dedicated sandbox before retrying no
 | destroy | Force-remove the verified container ID and confirm absence | Success |
 | exec | Requires a running container; preserve exit code | Error; never create implicitly |
 
-Unknown declarations are configuration errors. Create refuses volume references until the
-mount integration in slidict/workspace#197; it never silently ignores them. Storage lifecycle
-belongs to slidict/workspace#196. Destroy invokes neither volume removal nor a remove-volume
-flag, including for persistent volumes. The image default command controls sandbox lifetime;
-an immediately exiting image is reported as unsuccessful creation with a recoverable residue.
+Unknown declarations are configuration errors. Sandboxes may reference declared volumes
+by name (`volumes: [vol1, vol2]`). On `sandbox create`, referenced volumes are ensured via
+`VolumeLifecycle.Create` and mounted to the container using `--mount type=volume,source=<backendName>,target=<mountPath>`.
+Mount destinations preserve the declared canonical Linux paths and sort shallower paths before deeper
+descendant paths to prevent shadowing. After a sandbox is running, `VolumeLifecycle.Reconcile` is invoked
+for each attached volume to record usage durably. Sharing and isolation emerge naturally from configuration:
+mounting the same volume across multiple sandboxes shares the underlying storage, while mounting a volume
+in only one sandbox isolates it.
+
+On `sandbox destroy`, the container is removed by its verified ID without volume-removal flags.
+After confirmed container removal, `VolumeLifecycle.Reconcile` is invoked for each referenced volume:
+persistent volumes are retained; ephemeral volumes remain intact while any referencing container
+is still active, and are cleaned up only after the last referencing container detaches.
+Re-creating a sandbox reuses retained persistent volumes while provisioning fresh ephemeral storage.
+The image default command controls sandbox lifetime; an immediately exiting image is reported as
+unsuccessful creation with a recoverable residue.
 
 ## Ownership and recovery
 
