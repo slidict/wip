@@ -99,7 +99,8 @@ public sealed class SandboxLifecycle(SandboxSettings settings, SandboxBackend ba
     {
         if (argv.Count == 0 || string.IsNullOrEmpty(argv[0]) || argv[0].StartsWith('-'))
             throw new ConfigException("sandbox exec requires an executable (use -- before its argv)");
-        if (timeout <= TimeSpan.Zero) throw new ConfigException("sandbox exec timeout must be positive");
+        if (timeout <= TimeSpan.Zero || timeout.TotalMilliseconds > int.MaxValue)
+            throw new ConfigException("sandbox exec timeout must be positive and at most 2147483 seconds");
         var existing = Status(name);
         if (existing.Id is null || existing.State != "running") throw Failure(name, "sandbox is not running; run sandbox create first");
         return backend(["exec", existing.Id, .. argv], timeout, false).Code;

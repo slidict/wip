@@ -146,6 +146,7 @@ public class SandboxLifecycleTests
         Assert.Throws<ConfigException>(() => service.Create("missing"));
         Assert.Throws<ConfigException>(() => service.Exec("first", [], TimeSpan.FromSeconds(1)));
         Assert.Throws<ConfigException>(() => service.Exec("first", ["true"], TimeSpan.Zero));
+        Assert.Throws<ConfigException>(() => service.Exec("first", ["true"], TimeSpan.FromSeconds(int.MaxValue)));
         Assert.DoesNotContain(fake.Calls, c => c[0] is "run" or "exec");
     }
 

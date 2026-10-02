@@ -23,7 +23,7 @@ wip sandbox destroy first
 Use `--` before the executable so its options remain operands. Execution forwards each argv
 element directly to WSLC, streams stdout/stderr, and returns the child exit code. A shell is
 used only when explicitly supplied by the caller, as in the `sh` example. Execution is
-non-interactive with a 300-second default deadline; `--timeout` accepts positive seconds.
+non-interactive with a 300-second default deadline; `--timeout` accepts 1–2147483 seconds.
 Timeout returns 124. It terminates the WSLC client; a remote process may still be running.
 Check status and, if necessary, destroy the dedicated sandbox before retrying non-idempotent work.
 
