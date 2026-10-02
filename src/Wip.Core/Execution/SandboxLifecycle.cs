@@ -179,7 +179,6 @@ public sealed class SandboxLifecycle(SandboxSettings settings, SandboxBackend ba
             {
                 if (!string.Equals(mount.Type, "volume", StringComparison.OrdinalIgnoreCase)) continue;
                 var matched = settings.Volumes.FirstOrDefault(v =>
-                    (volumes is not null && volumes.Status(v.Name).BackendName == mount.Name) ||
                     mount.Name.StartsWith(VolumeLifecycle.BackendPrefix(settings.ResourceNamespace!, v.Name), StringComparison.Ordinal) ||
                     mount.Name == "wip-v-" + v.Name);
                 if (matched is not null)
