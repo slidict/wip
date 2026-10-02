@@ -46,14 +46,14 @@ inference from an agent name or a `shared`, `agent` or `sandbox` purpose mode.
 | `resource_namespace` | Required for nonempty resource declarations; explicit stable project identity |
 | `volumes` | Optional sequence; each entry has exactly `name`, `persistent`, `mount` |
 | `persistent` | Required YAML boolean; never silently default to destructive ephemeral storage |
-| `mount` | Required canonical absolute Linux path; cannot be root destination '/', no control characters, empty segments, trailing slash, '.' or '..' |
+| `mount` | Required canonical absolute Linux path; no control characters, empty segments, trailing slash (except `/`), '.' or '..' |
 | `sandboxes` | Optional sequence; each entry has `name`, `image`, optional `volumes` |
 | `image` | Required nonempty string without control characters; backend support is checked by execution later |
 | sandbox `volumes` | Optional sequence of declared volume names; omitted means no mounts |
 
 Names and namespace match `[a-z][a-z0-9_-]{0,62}` and compare ordinally. Duplicate
-names, repeated references, undefined volumes, root destination `/`, comma-containing mount destinations,
-and equal mount destinations **within one sandbox** are rejected. Equal destinations in different sandboxes are valid.
+names, repeated references, undefined volumes, comma-containing mount destinations,
+and equal mount destinations **within one sandbox** are rejected at load. Referencing a volume with root destination `/` is rejected before container creation. Equal destinations in different sandboxes are valid.
 Ancestor/descendant mounts are not equal-path conflicts; nested mounts are ordered
 so shallower paths precede deeper paths before container creation. Unknown fields inside either resource
 declaration are rejected, including agent/purpose/mode labels. Backend errors do not
