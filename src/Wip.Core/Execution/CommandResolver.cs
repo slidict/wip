@@ -15,6 +15,10 @@ public sealed class CommandResolver
 
           wsl --update
 
+        If Microsoft Store updates are unavailable, download the stable release from GitHub:
+
+          wsl --update --web-download
+
         WSLC is generally available in WSL 3.0.1 and later. Check your version with:
 
           wsl --version

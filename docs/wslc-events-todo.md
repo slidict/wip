@@ -7,6 +7,8 @@ Use `wsl --update` to update on the normal release channel.
 
 The `system events` command was merged in
 [microsoft/WSL#41608](https://github.com/microsoft/WSL/pull/41608) on **2026-09-17**.
+WSL 3.0.1 was released on **2026-09-29**, after that merge. Release ordering
+removes the old release blocker; it does not replace command capability checks.
 The earlier release-blocker assessment in this note was made before WSL 3.0.1;
 it is no longer a reason to require a different update channel. GA status alone
 is not a local verification of the event command's options or behavior.

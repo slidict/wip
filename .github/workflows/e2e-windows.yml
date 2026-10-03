@@ -142,7 +142,7 @@ jobs:
             $package | Format-List Name, Version, InstallLocation | Out-String | Write-Host
             Write-Host "--- candidates checked"
             $candidates | Sort-Object -Unique | Write-Host
-            throw "wslc.exe was not found after 'wsl --update --web-download'. Check the installed stable WSL version."
+            throw "wslc.exe was not found after 'wsl --update --web-download'. Use stable WSL 3.0.1 or later."
           }
 
           Write-Host "wslc: $wslc"

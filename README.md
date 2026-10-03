@@ -97,6 +97,9 @@ wsl --version
 wip doctor
 ```
 
+If Microsoft Store updates are unavailable, download the stable release directly
+from GitHub with `wsl --update --web-download`, then run `wip doctor` again.
+
 Install directly from this repository with [Scoop](https://scoop.sh/):
 
 ```powershell
