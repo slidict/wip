@@ -1,24 +1,17 @@
 # TODO: event-driven `wip up --watch` via `wslc events`
 
-## Status: blocked — not yet released upstream
+## Status: implementation deferred — re-check the installed command surface
 
-`wslc` gained a `system events` command (Docker `events`-style container event
-stream) in [microsoft/WSL#41608](https://github.com/microsoft/WSL/pull/41608),
-merged **2026-09-17** into `master`. The most recent published WSL release —
-`2.9.12`, itself only on the `--pre-release` channel — went out **2026-09-14**,
-three days *before* that merge. So as of 2026-09-18:
+WSLC is generally available in [WSL 3.0.1](https://github.com/microsoft/WSL/releases/tag/3.0.1).
+Use `wsl --update` to update on the normal release channel.
 
-- `wslc system events` / `wslc events` do not exist in the current stable
-  channel.
-- They do not exist in the current `--pre-release` channel either
-  (`wsl --update --pre-release` will not get you this today).
-- The feature only exists on WSL's unreleased `master` branch. It will first
-  become reachable in whatever pre-release build ships after `2.9.12`
-  (`2.9.13` or later, going by the version sequence so far).
-
-Re-check `gh api repos/microsoft/WSL/releases` (or `wslc system --help`) before
-starting implementation — this doc should not be acted on until a release
-actually contains the command.
+The `system events` command was merged in
+[microsoft/WSL#41608](https://github.com/microsoft/WSL/pull/41608) on **2026-09-17**.
+The earlier release-blocker assessment in this note was made before WSL 3.0.1;
+it is no longer a reason to require a different update channel. GA status alone
+is not a local verification of the event command's options or behavior.
+Before implementing the watcher, check `wslc system --help` and
+`wslc system events --help` against the installed version and test event output.
 
 ## What `wslc events` will provide
 
@@ -117,7 +110,6 @@ saved.
 
 ## Next step
 
-Watch for a WSL release whose tag postdates the `214bcad` merge commit on
-`microsoft/WSL`. Once one ships, redo the `wslc system --help` /
-`wslc events --help` check, then start on the `WatchRestarts` replacement
-described above.
+Update WSL with `wsl --update`, then check `wslc system --help` and
+`wslc system events --help` on the installed version. Validate the event stream
+before starting the `WatchRestarts` replacement described above.

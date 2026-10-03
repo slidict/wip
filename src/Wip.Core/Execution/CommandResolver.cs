@@ -15,11 +15,9 @@ public sealed class CommandResolver
 
           wsl --update
 
-        If WSLC is still unavailable, you can opt in to a pre-release WSL update:
+        WSLC is generally available in WSL 3.0.1 and later. Check your version with:
 
-          wsl --update --pre-release
-
-        Caution: --pre-release installs preview software that may be unstable.
+          wsl --version
 
         Then run:
 
