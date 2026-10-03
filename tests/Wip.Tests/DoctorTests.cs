@@ -34,7 +34,7 @@ public class DoctorTests
     }
 
     [Fact]
-    public void MissingWslcSuggestsStableAndPreReleaseWslUpdatesWithACaution()
+    public void MissingWslcSuggestsStableWslUpdateAndVersionCheck()
     {
         using var baseUrl = new TemporaryEnvironmentVariable(LocalAiProvider.BaseUrlEnvironmentVariable,
             "http://127.0.0.1:1");
@@ -54,9 +54,10 @@ public class DoctorTests
         Assert.Equal(Doctor.Level.Fail, wslc.Level);
         var message = wslc.Message.ReplaceLineEndings("\n");
         Assert.Contains("\n  wsl --update\n", message);
-        Assert.Contains("\n  wsl --update --pre-release\n", message);
-        Assert.Contains("Caution:", wslc.Message);
-        Assert.Contains("may be unstable", wslc.Message);
+        Assert.Contains("\n  wsl --update --web-download\n", message);
+        Assert.Contains("\n  wsl --version\n", message);
+        Assert.Contains("WSL 3.0.1", message);
+        Assert.DoesNotContain("--pre-release", message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

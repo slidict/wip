@@ -88,17 +88,17 @@ trade-offs, and `compose.yml` key support, see
 Windows with WSL2 and Microsoft WSLC. There is no runtime to install: `wip.exe` is a
 self-contained Native AOT binary.
 
-> **⚠️ WSLC itself currently requires the WSL pre-release channel.** Every WSLC-related change so
-> far has shipped only in WSL's `2.9.x` line, and every `2.9.x` release is marked pre-release —
-> the parallel `2.7.x` stable line has no WSLC code in it at all. Plain `wsl --update` will not
-> install WSLC; you need:
->
-> ```powershell
-> wsl --update --pre-release
-> ```
->
-> This installs preview WSL software that may be unstable. Run `wip doctor` afterward to confirm
-> WSLC was found.
+WSLC is generally available starting with [WSL 3.0.1](https://github.com/microsoft/WSL/releases/tag/3.0.1).
+Update using the normal release channel, then check the installed version and tooling:
+
+```powershell
+wsl --update
+wsl --version
+wip doctor
+```
+
+If Microsoft Store updates are unavailable, download the stable release directly
+from GitHub with `wsl --update --web-download`, then run `wip doctor` again.
 
 Install directly from this repository with [Scoop](https://scoop.sh/):
 

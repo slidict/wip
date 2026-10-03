@@ -15,11 +15,13 @@ public sealed class CommandResolver
 
           wsl --update
 
-        If WSLC is still unavailable, you can opt in to a pre-release WSL update:
+        If Microsoft Store updates are unavailable, download the stable release from GitHub:
 
-          wsl --update --pre-release
+          wsl --update --web-download
 
-        Caution: --pre-release installs preview software that may be unstable.
+        WSLC is generally available in WSL 3.0.1 and later. Check your version with:
+
+          wsl --version
 
         Then run:
 
