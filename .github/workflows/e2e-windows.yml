@@ -83,6 +83,11 @@ jobs:
           }
 
           $code = Show-Wsl @('--update')
+          if ($code -ne 0) {
+            # Hosted runners can be denied access to the Store update endpoint.
+            # Download the same stable release from GitHub instead.
+            $code = Show-Wsl @('--update', '--web-download')
+          }
           Show-Wsl @('--shutdown') | Out-Null
           Show-Wsl @('--version') | Out-Null
           if ($code -ne 0) { throw "wsl --update exited $code" }
