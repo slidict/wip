@@ -82,15 +82,12 @@ jobs:
               return $process.ExitCode
           }
 
-          $code = Show-Wsl @('--update')
-          if ($code -ne 0) {
-            # Hosted runners can be denied access to the Store update endpoint.
-            # Download the same stable release from GitHub instead.
-            $code = Show-Wsl @('--update', '--web-download')
-          }
+          # Hosted runners can be denied access to the Store update endpoint.
+          # Use the stable GitHub distribution directly; the next step verifies WSLC.
+          $code = Show-Wsl @('--update', '--web-download')
           Show-Wsl @('--shutdown') | Out-Null
           Show-Wsl @('--version') | Out-Null
-          if ($code -ne 0) { throw "wsl --update exited $code" }
+          if ($code -ne 0) { throw "wsl --update --web-download exited $code" }
 
       # Kept separate from the test itself so a runner image without WSLC reports that in one
       # line, instead of as a wip command failing for reasons that have nothing to do with wip.
@@ -145,7 +142,7 @@ jobs:
             $package | Format-List Name, Version, InstallLocation | Out-String | Write-Host
             Write-Host "--- candidates checked"
             $candidates | Sort-Object -Unique | Write-Host
-            throw "wslc.exe was not found after 'wsl --update'. WSLC may not ship on this runner image yet."
+            throw "wslc.exe was not found after 'wsl --update --web-download'. Check the installed stable WSL version."
           }
 
           Write-Host "wslc: $wslc"

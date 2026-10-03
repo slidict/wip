@@ -56,8 +56,8 @@ public class DoctorTests
         Assert.Contains("\n  wsl --update\n", message);
         Assert.Contains("\n  wsl --version\n", message);
         Assert.Contains("WSL 3.0.1", message);
-        Assert.DoesNotContain("--pre-release", message);
-        Assert.DoesNotContain("preview", message);
+        Assert.DoesNotContain("--pre-release", message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("preview", message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

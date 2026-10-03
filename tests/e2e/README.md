@@ -60,7 +60,9 @@ configuration/journal for recovery, even without `-KeepWorkspace`.
 ## In CI
 
 [`.github/workflows/e2e-windows.yml`](../../.github/workflows/e2e-windows.yml) runs it on
-`windows-latest`: it publishes `wip.exe`, updates WSL on the normal release channel (WSLC is GA in WSL 3.0.1 and later), verifies `wslc` is on PATH, then runs this script. It runs on every pull request, plus
+`windows-latest`: it publishes `wip.exe`, updates stable WSL directly from GitHub
+with `wsl --update --web-download` (WSLC is GA in WSL 3.0.1 and later), verifies
+`wslc` is on PATH, then runs this script. It runs on every pull request, plus
 weekly and on demand. Keeping it out of the `Test` workflow is about that workflow staying
 WSLC-free on Linux, not about running this one rarely.
 
