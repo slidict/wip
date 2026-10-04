@@ -12,7 +12,7 @@ public class DoctorTests
     public void ReportsEnglishDisplayLanguageWithNoQualifier()
     {
         using var directory = new TemporaryDirectory();
-        var results = new Doctor(new ConfigLoader(directory.Path), new FakeEnvironment())
+        var results = DoctorFor(directory, aiAvailable: _ => false)
             .Call(englishDisplayLanguage: true);
 
         var language = Assert.Single(results, result => result.Message.StartsWith("Display language:"));
@@ -24,7 +24,7 @@ public class DoctorTests
     public void FlagsANonEnglishDisplayLanguageAsPossiblyAffectingToolOutput()
     {
         using var directory = new TemporaryDirectory();
-        var results = new Doctor(new ConfigLoader(directory.Path), new FakeEnvironment())
+        var results = DoctorFor(directory, aiAvailable: _ => false)
             .Call(englishDisplayLanguage: false);
 
         var language = Assert.Single(results, result => result.Message.StartsWith("Display language:"));
@@ -36,8 +36,6 @@ public class DoctorTests
     [Fact]
     public void MissingWslcSuggestsStableWslUpdateAndVersionCheck()
     {
-        using var baseUrl = new TemporaryEnvironmentVariable(LocalAiProvider.BaseUrlEnvironmentVariable,
-            "http://127.0.0.1:1");
         using var directory = new TemporaryDirectory();
         File.WriteAllText(Path.Combine(directory.Path, "wip.yml"), """
             version: 1
@@ -48,7 +46,11 @@ public class DoctorTests
             """);
         var resolver = new Wip.Execution.CommandResolver([]);
 
-        var results = new Doctor(new ConfigLoader(directory.Path), new FakeEnvironment(), resolver).Call();
+        // This test is about the wslc hint; reporting the AI server as absent keeps the AI
+        // check out of it without depending on nothing listening on a real port.
+        var results = new Doctor(
+            new ConfigLoader(directory.Path), new FakeEnvironment(), resolver,
+            aiAvailable: _ => false).Call();
 
         var wslc = Assert.Single(results, result => result.Message.StartsWith("WSLC was not found."));
         Assert.Equal(Doctor.Level.Fail, wslc.Level);
@@ -65,40 +67,45 @@ public class DoctorTests
     {
         using var baseUrl = new TemporaryEnvironmentVariable(LocalAiProvider.BaseUrlEnvironmentVariable, "http://127.0.0.1:1");
         using var directory = new TemporaryDirectory();
-        var results = new Doctor(new ConfigLoader(directory.Path), new FakeEnvironment()).Call();
+
+        var results = DoctorFor(directory, aiAvailable: _ => false).Call();
 
         var ai = Assert.Single(results, result => result.Message.Contains("local AI server"));
         Assert.Equal(Doctor.Level.Warn, ai.Level);
         Assert.Contains("wip init --ai", ai.Message);
         Assert.Contains(LocalAiProvider.BaseUrlEnvironmentVariable, ai.Message);
+        Assert.Contains("http://127.0.0.1:1", ai.Message);
     }
 
     [Fact]
     public void CallArgumentOverridesTheBaseUrlEnvironmentVariable()
     {
-        using var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
-        listener.Start();
-        var port = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
         using var baseUrl = new TemporaryEnvironmentVariable(LocalAiProvider.BaseUrlEnvironmentVariable, "http://127.0.0.1:1");
         using var model = new TemporaryEnvironmentVariable(LocalAiProvider.ModelEnvironmentVariable, "llama3.1");
         using var directory = new TemporaryDirectory();
+        // The point of the test is which URL reaches the probe, so record it rather than
+        // standing up a server on one of the two.
+        var probed = new List<string>();
 
-        var results = new Doctor(new ConfigLoader(directory.Path), new FakeEnvironment())
-            .Call($"http://127.0.0.1:{port}");
+        var results = DoctorFor(directory, aiAvailable: url =>
+        {
+            probed.Add(url);
+            return true;
+        }).Call("http://127.0.0.1:4242");
 
         var ai = Assert.Single(results, result => result.Message.Contains("Local AI server"));
         Assert.Equal(Doctor.Level.Ok, ai.Level);
+        Assert.Equal("http://127.0.0.1:4242", Assert.Single(probed));
+        Assert.Contains("http://127.0.0.1:4242", ai.Message);
     }
 
     [Fact]
     public void ReportsMissingModelAsWarnWithFixHintWhenServerHasNoneLoaded()
     {
-        using var server = new FakeModelsServer("""{"data":[]}""");
-        using var baseUrl = new TemporaryEnvironmentVariable(LocalAiProvider.BaseUrlEnvironmentVariable, server.BaseUrl);
         using var model = new TemporaryEnvironmentVariable(LocalAiProvider.ModelEnvironmentVariable, null);
         using var directory = new TemporaryDirectory();
 
-        var results = new Doctor(new ConfigLoader(directory.Path), new FakeEnvironment()).Call();
+        var results = DoctorFor(directory, Models("""{"data":[]}""")).Call();
 
         var ai = Assert.Single(results, result => result.Message.Contains("No model configured"));
         Assert.Equal(Doctor.Level.Warn, ai.Level);
@@ -108,12 +115,10 @@ public class DoctorTests
     [Fact]
     public void AutoDiscoversTheOnlyModelTheServerHasLoaded()
     {
-        using var server = new FakeModelsServer("""{"data":[{"id":"llama3.1"}]}""");
-        using var baseUrl = new TemporaryEnvironmentVariable(LocalAiProvider.BaseUrlEnvironmentVariable, server.BaseUrl);
         using var model = new TemporaryEnvironmentVariable(LocalAiProvider.ModelEnvironmentVariable, null);
         using var directory = new TemporaryDirectory();
 
-        var results = new Doctor(new ConfigLoader(directory.Path), new FakeEnvironment()).Call();
+        var results = DoctorFor(directory, Models("""{"data":[{"id":"llama3.1"}]}""")).Call();
 
         var ai = Assert.Single(results, result => result.Message.Contains("Local AI server"));
         Assert.Equal(Doctor.Level.Ok, ai.Level);
@@ -123,12 +128,12 @@ public class DoctorTests
     [Fact]
     public void ReportsAmbiguousModelsAsWarnListingTheChoices()
     {
-        using var server = new FakeModelsServer("""{"data":[{"id":"llama3.1"},{"id":"qwen2.5-coder"}]}""");
-        using var baseUrl = new TemporaryEnvironmentVariable(LocalAiProvider.BaseUrlEnvironmentVariable, server.BaseUrl);
         using var model = new TemporaryEnvironmentVariable(LocalAiProvider.ModelEnvironmentVariable, null);
         using var directory = new TemporaryDirectory();
 
-        var results = new Doctor(new ConfigLoader(directory.Path), new FakeEnvironment()).Call();
+        var results = DoctorFor(
+            directory,
+            Models("""{"data":[{"id":"llama3.1"},{"id":"qwen2.5-coder"}]}""")).Call();
 
         var ai = Assert.Single(results, result => result.Message.Contains("more than one loaded"));
         Assert.Equal(Doctor.Level.Warn, ai.Level);
@@ -139,24 +144,56 @@ public class DoctorTests
     [Fact]
     public void ReportsAnAvailableAiServerWithModelAsOk()
     {
-        using var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
-        listener.Start();
-        var port = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
-        using var baseUrl = new TemporaryEnvironmentVariable(LocalAiProvider.BaseUrlEnvironmentVariable, $"http://127.0.0.1:{port}");
         using var model = new TemporaryEnvironmentVariable(LocalAiProvider.ModelEnvironmentVariable, "llama3.1");
         using var directory = new TemporaryDirectory();
 
-        var results = new Doctor(new ConfigLoader(directory.Path), new FakeEnvironment()).Call();
+        // A configured model short-circuits discovery, so availability is the only AI input.
+        var results = DoctorFor(directory, aiAvailable: _ => true).Call();
 
         var ai = Assert.Single(results, result => result.Message.Contains("Local AI server"));
         Assert.Equal(Doctor.Level.Ok, ai.Level);
     }
+
+    /// <summary>
+    /// A doctor whose AI checks answer from memory instead of the network.
+    /// <see cref="LocalAiProvider.IsAvailable"/> opens a real TCP connection and
+    /// <see cref="LocalAiProvider.DiscoverModel"/> issues a real HTTP request, so testing
+    /// through them meant binding a port and hoping nothing else claimed it — which is
+    /// exactly what failed on CI (slidict/workspace#276).
+    /// </summary>
+    private static Doctor DoctorFor(
+        TemporaryDirectory directory,
+        Func<string, string>? aiDiscoverModel = null,
+        Func<string, bool>? aiAvailable = null) =>
+        new(new ConfigLoader(directory.Path),
+            new FakeEnvironment(),
+            aiAvailable: aiAvailable ?? (_ => true),
+            aiDiscoverModel: aiDiscoverModel);
+
+    /// <summary>
+    /// Discovery against a canned <c>/models</c> body. The real
+    /// <see cref="LocalAiProvider.DiscoverModel"/> still decides what the list means, so the
+    /// "no model" / "one model" / "ambiguous" behaviour under test is the production logic —
+    /// only the transport is stubbed.
+    /// </summary>
+    private static Func<string, string> Models(string responseBody) =>
+        baseUrl => LocalAiProvider.DiscoverModel(baseUrl, new StubHandler(responseBody));
 
     private sealed class FakeEnvironment : IEnvironment
     {
         public bool IsInteractive => false;
         public bool IsWsl2 => true;
         public string Architecture => "linux/amd64";
+    }
+
+    private sealed class StubHandler(string responseBody) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken) =>
+            Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new StringContent(responseBody),
+            });
     }
 
     private sealed class TemporaryDirectory : IDisposable
@@ -183,54 +220,4 @@ public class DoctorTests
         public void Dispose() => Environment.SetEnvironmentVariable(name, original);
     }
 
-    /// <summary>A minimal real HTTP server for the one endpoint <see cref="LocalAiProvider.DiscoverModel"/>
-    /// calls, since <see cref="Doctor"/> talks to a base URL rather than an injectable handler.</summary>
-    private sealed class FakeModelsServer : IDisposable
-    {
-        private readonly System.Net.HttpListener listener;
-
-        internal FakeModelsServer(string modelsResponseBody)
-        {
-            var port = FreeTcpPort();
-            BaseUrl = $"http://127.0.0.1:{port}";
-            listener = new System.Net.HttpListener();
-            listener.Prefixes.Add(BaseUrl + "/");
-            listener.Start();
-            _ = Task.Run(() => Serve(modelsResponseBody));
-        }
-
-        internal string BaseUrl { get; }
-
-        private void Serve(string modelsResponseBody)
-        {
-            while (listener.IsListening)
-            {
-                System.Net.HttpListenerContext context;
-                try
-                {
-                    context = listener.GetContext();
-                }
-                catch (Exception exception) when (exception is System.Net.HttpListenerException or ObjectDisposedException)
-                {
-                    return;
-                }
-
-                var buffer = System.Text.Encoding.UTF8.GetBytes(modelsResponseBody);
-                context.Response.ContentType = "application/json";
-                context.Response.OutputStream.Write(buffer, 0, buffer.Length);
-                context.Response.OutputStream.Close();
-            }
-        }
-
-        private static int FreeTcpPort()
-        {
-            var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
-            listener.Start();
-            var port = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
-            listener.Stop();
-            return port;
-        }
-
-        public void Dispose() => listener.Stop();
-    }
 }

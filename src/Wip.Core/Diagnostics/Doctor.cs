@@ -22,18 +22,30 @@ public sealed class Doctor
     private readonly CommandResolver resolver;
     private readonly CommandResolver composeResolver;
     private readonly IEnvironment environment;
+    private readonly Func<string, bool> aiAvailable;
+    private readonly Func<string, string> aiDiscoverModel;
 
+    /// <param name="aiAvailable">How to decide a server is listening. Injectable because the
+    /// default reaches a real socket: <see cref="LocalAiProvider.IsAvailable"/> opens a TCP
+    /// connection, so a test otherwise has to hold a real port open and hope nothing else
+    /// takes it (slidict/workspace#276).</param>
+    /// <param name="aiDiscoverModel">How to ask the server for its models. Injectable for the
+    /// same reason — the default issues a real HTTP request.</param>
     public Doctor(
         ConfigLoader loader,
         IEnvironment environment,
         CommandResolver? resolver = null,
-        CommandResolver? composeResolver = null)
+        CommandResolver? composeResolver = null,
+        Func<string, bool>? aiAvailable = null,
+        Func<string, string>? aiDiscoverModel = null)
     {
         this.loader = loader;
         this.environment = environment;
         this.resolver = resolver ?? new CommandResolver();
         this.composeResolver = composeResolver ??
                                new CommandResolver([], "compose command", ComposeBridge.InstallHint);
+        this.aiAvailable = aiAvailable ?? (baseUrl => LocalAiProvider.IsAvailable(baseUrl));
+        this.aiDiscoverModel = aiDiscoverModel ?? (baseUrl => LocalAiProvider.DiscoverModel(baseUrl));
     }
 
     public IReadOnlyList<Result> Call(string? aiBaseUrl = null, bool? englishDisplayLanguage = null)
@@ -63,10 +75,10 @@ public sealed class Doctor
     /// a <see cref="Level.Fail"/> — every other check here concerns a wip.yml that already
     /// exists and is meant to run.
     /// </summary>
-    private static Result CheckAi(string? aiBaseUrl)
+    private Result CheckAi(string? aiBaseUrl)
     {
         var baseUrl = LocalAiProvider.ResolveBaseUrl(aiBaseUrl);
-        if (!LocalAiProvider.IsAvailable(baseUrl))
+        if (!aiAvailable(baseUrl))
         {
             return new Result(Level.Warn,
                 $"{LocalAiProvider.NotFoundMessage(baseUrl)} `wip init --ai` will not work until then.");
@@ -74,7 +86,7 @@ public sealed class Doctor
 
         try
         {
-            var model = LocalAiProvider.ResolveModel() ?? LocalAiProvider.DiscoverModel(baseUrl);
+            var model = LocalAiProvider.ResolveModel() ?? aiDiscoverModel(baseUrl);
             return new Result(Level.Ok, $"Local AI server at '{baseUrl}' is available (model: {model})");
         }
         catch (WipException exception)
