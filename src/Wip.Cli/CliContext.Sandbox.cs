@@ -18,6 +18,11 @@ internal sealed partial class CliContext
             var lifecycle = new SandboxLifecycle(Config.SandboxResources, ResourceBackend());
             return lifecycle.Exec(name, argv, TimeSpan.FromSeconds(timeoutSeconds));
         }
+        if (operation == "stop")
+        {
+            // Stopping keeps both the container and its attached volumes; no storage mutation.
+            return new SandboxLifecycle(Config.SandboxResources, ResourceBackend()).Stop(name);
+        }
 
         var definition = Config.SandboxResources.Sandboxes.SingleOrDefault(s => s.Name == name)
             ?? throw new ConfigException($"Unknown sandbox: {name}");

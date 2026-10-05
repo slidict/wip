@@ -135,6 +135,21 @@ public sealed class SandboxLifecycle(SandboxSettings settings, SandboxBackend ba
         return 0;
     }
 
+    public int Stop(string name)
+    {
+        var existing = Status(name);
+        if (existing.Id is null || existing.State is "created" or "exited") return 0;
+        if (existing.State != "running")
+            throw Failure(name, $"cannot stop state {existing.State}; inspect status before recovery");
+        // Keep the container and all mounts. No volume lifecycle/reconciliation is needed.
+        var stopped = backend(["stop", existing.Id], MutationTimeout, false);
+        if (stopped.Code != 0) return stopped.Code; // Outcome may be unknown; never retry here.
+        var confirmed = Status(name);
+        if (confirmed.Id != existing.Id || confirmed.State != "exited")
+            throw Failure(name, "stop did not confirm the same stopped container; outcome is unknown, inspect status before recovery");
+        return 0;
+    }
+
     public int Destroy(string name)
     {
         var definition = Definition(name);

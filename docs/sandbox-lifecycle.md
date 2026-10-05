@@ -17,6 +17,8 @@ wip sandbox create first
 wip sandbox status first
 wip sandbox exec first -- printf '%s\n' 'an argument with spaces'
 wip sandbox exec first --timeout 30 -- sh -c 'exit 7'
+wip sandbox stop first
+wip sandbox create first # resume the same stopped container
 wip sandbox destroy first
 ```
 
@@ -31,6 +33,7 @@ Check status and, if necessary, destroy the dedicated sandbox before retrying no
 | --- | --- | --- |
 | create | Running: success without another container; created/exited: start the verified ID; unknown: recovery error | Run the configured image and verify ownership/state |
 | status | Print logical name, state, backend name and ID | Print `not found`, success |
+| stop | Running: stop the verified ID, then confirm the same ID is exited; created/exited: success without mutation; other states: error | Success |
 | destroy | Force-remove the verified container ID and confirm absence | Success |
 | exec | Requires a running container; preserve exit code | Error; never create implicitly |
 
@@ -42,6 +45,11 @@ descendant paths to prevent shadowing. After a sandbox is running, `VolumeLifecy
 for each attached volume to record usage durably. Sharing and isolation emerge naturally from configuration:
 mounting the same volume across multiple sandboxes shares the underlying storage, while mounting a volume
 in only one sandbox isolates it.
+
+`sandbox stop` retains the container and every mount, including persistent and ephemeral volumes.
+It neither removes nor reconciles storage. `sandbox create` resumes the owned stopped ID using
+the existing ownership/mount checks; no separate `sandbox start` command is needed.
+Never use the top-level `stop` as a substitute: it operates on a different configured container/stack.
 
 On `sandbox destroy`, the container is removed by its verified ID without volume-removal flags.
 After confirmed container removal, `VolumeLifecycle.Reconcile` is invoked for each referenced volume:
@@ -56,7 +64,7 @@ unsuccessful creation with a recoverable residue.
 Backend names are `wip-s-` plus 40 lowercase SHA-256 hex characters derived from
 `<namespace>:sandbox:<name>`. Creation persists `io.slidict.wip.owner=v1:<namespace>:sandbox:<name>`
 as an explicit WSLC container label. Status lists the exact name, then inspects its ID and
-checks both name and label. Subsequent start/exec/remove use that verified ID, so replacing
+checks both name and label. Subsequent start/stop/exec/remove use that verified ID, so replacing
 the name cannot redirect a destructive operation to the replacement. A collision or an
 unlabelled container is rejected, never adopted. Namespace changes designate different resources;
 keep the previous configuration to clean up previously created sandboxes.
@@ -65,8 +73,14 @@ WSLC must support run labels and JSON list/inspect, including IDs, names, state 
 Explicit labels are read from top-level `Labels` (WSLC) or `Config.Labels` (Docker-compatible
 inspect). Successful list may return an empty stream for zero rows; empty inspect is an error.
 Failed, timed-out or malformed probes mean unknown existence, not absence. Probes
-have a 10-second deadline, create/start/remove a 120-second deadline. A mutation failure
+have a 10-second deadline, create/start/stop/remove a 120-second deadline. A mutation failure
 preserves its exit code and may leave a resource; there is no automatic destructive rollback.
+For stop, a successful backend exit is not enough: readback must confirm the original container
+ID in `exited` state. Disappearance, replacement, still-running/unknown state or a failed probe
+returns an error. Failure/timeout is never automatically retried. Inspect status before deciding
+whether another explicit stop or create is appropriate; do not blindly resend uncertain operations.
+Stop returns 0 for verified stopped/missing resources, the backend's nonzero exit for mutation
+failure (124 for timeout), and 1 for configuration/ownership/readback errors.
 
 After a failed create, run status with the same declaration. An owned running residue makes
 repeated create succeed; an owned stopped residue is started. Fix an invalid image/CMD by
