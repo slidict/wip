@@ -15,6 +15,28 @@ function Invoke-SandboxMountE2E([string] $Namespace, [string] $Image) {
         Assert-Exit (Invoke-Wip @('sandbox', 'exec', 'mount-shared-first', '--', 'sh', '-c', 'printf persistent-shared-data > /data/persistent.txt')) 0 'write persistent data in first sandbox'
         Assert-Exit (Invoke-Wip @('sandbox', 'exec', 'mount-shared-first', '--', 'sh', '-c', 'printf ephemeral-shared-data > /scratch/ephemeral.txt')) 0 'write ephemeral data in first sandbox'
 
+        # Stop/resume only this runner-owned fixture, retaining its ID and both volumes.
+        $beforeStop = Invoke-Wip @('sandbox', 'status', 'mount-shared-first')
+        Assert-Exit $beforeStop 0 'status before fixture stop'
+        $identity = [regex]::Match($beforeStop.Output, '(?m)^mount-shared-first\s+running\s+(wip-s-[a-f0-9]+)\s+(\S+)\s*$')
+        if (-not $identity.Success) { throw 'cannot identify dedicated fixture before stop' }
+        $originalId = $identity.Groups[2].Value
+        Assert-Exit (Invoke-Wip @('sandbox', 'stop', 'mount-shared-first')) 0 'stop dedicated mounted sandbox'
+        $stopped = Invoke-Wip @('sandbox', 'status', 'mount-shared-first')
+        Assert-Exit $stopped 0 'status after fixture stop'
+        Assert-Match $stopped ('mount-shared-first\s+exited\s+' + [regex]::Escape($identity.Groups[1].Value) + '\s+' + [regex]::Escape($originalId) + '(?:\s|$)') 'same fixture ID is stopped'
+        Assert-Exit (Invoke-Wip @('sandbox', 'stop', 'mount-shared-first')) 0 'repeated fixture stop is a noop'
+        Assert-Exit (Invoke-Wip @('sandbox', 'create', 'mount-shared-first')) 0 'create resumes stopped fixture'
+        $resumed = Invoke-Wip @('sandbox', 'status', 'mount-shared-first')
+        Assert-Exit $resumed 0 'status after fixture resume'
+        Assert-Match $resumed ('mount-shared-first\s+running\s+' + [regex]::Escape($identity.Groups[1].Value) + '\s+' + [regex]::Escape($originalId) + '(?:\s|$)') 'create resumes the same ID'
+        $retained = Invoke-Wip @('sandbox', 'exec', 'mount-shared-first', '--', 'cat', '/data/persistent.txt')
+        Assert-Exit $retained 0 'read persistent data after stop/resume'
+        Assert-Match $retained '^persistent-shared-data\s*$' 'persistent data survives stop/resume'
+        $retainedScratch = Invoke-Wip @('sandbox', 'exec', 'mount-shared-first', '--', 'cat', '/scratch/ephemeral.txt')
+        Assert-Exit $retainedScratch 0 'read attached ephemeral data after stop/resume'
+        Assert-Match $retainedScratch '^ephemeral-shared-data\s*$' 'stop leaves attached storage intact'
+
         # 2. Create second sandbox sharing the two volumes plus an isolated volume
         $sandboxes.Add('mount-shared-second')
         Assert-Exit (Invoke-Wip @('sandbox', 'create', 'mount-shared-second')) 0 'create mount-shared-second'

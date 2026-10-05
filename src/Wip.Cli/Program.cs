@@ -143,7 +143,7 @@ internal static class Program
     private static IEnumerable<Command> BuildCommands(Func<ParseResult, CliContext> context)
     {
         var sandbox = new Command("sandbox", "Manage named, ownership-checked sandboxes");
-        foreach (var operation in new[] { "create", "status", "destroy", "exec" })
+        foreach (var operation in new[] { "create", "status", "stop", "destroy", "exec" })
         {
             var name = new Argument<string>("name");
             var command = new Command(operation) { name };

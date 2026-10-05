@@ -97,6 +97,7 @@ public class SandboxLifecycleTests
                 Containers[cName] = (cId, cOwner, "running", mounts);
             }
             if (argv[0] == "start" && MutationCode == 0) State = "running";
+            if (argv[0] == "stop" && MutationCode == 0 && !LeaveResidue) State = "exited";
             if (argv[0] == "remove" && MutationCode == 0 && !LeaveResidue)
             {
                 Exists = false;
@@ -138,9 +139,112 @@ public class SandboxLifecycleTests
         Assert.DoesNotContain(fake.Calls, c => c[0] == "run");
     }
 
+    [Fact]
+    public void StopUsesVerifiedIdAndCreateResumesTheSameContainer()
+    {
+        var fake = new Fake { Exists = true };
+        fake.Mounts.Add(new("volume", "fixture-data", "/data"));
+        var service = new SandboxLifecycle(Settings(), fake.Run);
+        Assert.Equal(0, service.Stop("first"));
+        Assert.Equal("exited", service.Status("first").State);
+        Assert.Equal(0, service.Stop("first"));
+        Assert.Equal(0, service.Create("first"));
+        Assert.Equal("running", service.Status("first").State);
+        Assert.Equal(["stop", fake.Id], fake.Calls.Single(c => c[0] == "stop"));
+        Assert.Equal(["start", fake.Id], fake.Calls.Single(c => c[0] == "start"));
+        Assert.Single(fake.Mounts);
+        Assert.DoesNotContain(fake.Calls, c => c[0] is "remove" or "run" or "volume");
+    }
+
+    [Theory]
+    [InlineData(false, "running")]
+    [InlineData(true, "created")]
+    [InlineData(true, "exited")]
+    public void MissingOrAlreadyStoppedSandboxIsANoop(bool exists, string state)
+    {
+        var fake = new Fake { Exists = exists, State = state };
+        Assert.Equal(0, new SandboxLifecycle(Settings(), fake.Run).Stop("first"));
+        Assert.All(fake.Calls, c => Assert.Contains(c[0], new[] { "list", "inspect" }));
+    }
+
+    [Theory]
+    [InlineData("unknown")]
+    [InlineData("paused")]
+    [InlineData("restarting")]
+    public void UnsupportedStopStateDoesNotMutate(string state)
+    {
+        var fake = new Fake { Exists = true, State = state };
+        Assert.Throws<WipException>(() => new SandboxLifecycle(Settings(), fake.Run).Stop("first"));
+        Assert.DoesNotContain(fake.Calls, c => c[0] == "stop");
+    }
+
+    [Theory]
+    [InlineData(124, "[]")]
+    [InlineData(1, "[]")]
+    [InlineData(0, "broken")]
+    [InlineData(0, "null")]
+    public void StopRejectsFailedOrMalformedProbeWithoutMutation(int code, string output)
+    {
+        var fake = new Fake { ProbeCode = code, ListOutput = output };
+        Assert.Throws<WipException>(() => new SandboxLifecycle(Settings(), fake.Run).Stop("first"));
+        Assert.Single(fake.Calls);
+    }
+
+    [Theory]
+    [InlineData(124)]
+    [InlineData(7)]
+    public void FailedStopPreservesExitCodeWithoutRetry(int code)
+    {
+        var fake = new Fake { Exists = true, MutationCode = code };
+        Assert.Equal(code, new SandboxLifecycle(Settings(), fake.Run).Stop("first"));
+        Assert.Single(fake.Calls, c => c[0] == "stop");
+        Assert.Equal(3, fake.Calls.Count); // Initial probes and exactly one mutation.
+    }
+
+    [Theory]
+    [InlineData("running")]
+    [InlineData("unknown")]
+    [InlineData("missing")]
+    [InlineData("replacement")]
+    [InlineData("malformed")]
+    [InlineData("probe-timeout")]
+    public void UnconfirmedStopOutcomeFailsClosedWithoutRetry(string outcome)
+    {
+        var fake = new Fake { Exists = true };
+        SandboxCommandResult Backend(IReadOnlyList<string> argv, TimeSpan timeout, bool capture)
+        {
+            var result = fake.Run(argv, timeout, capture);
+            if (argv[0] == "stop")
+            {
+                if (outcome is "running" or "unknown") fake.State = outcome;
+                if (outcome == "missing") fake.Exists = false;
+                if (outcome == "replacement") fake.Id = "replacement-id";
+                if (outcome == "malformed") fake.InspectOutput = "broken";
+                if (outcome == "probe-timeout") fake.ProbeCode = 124;
+            }
+            return result;
+        }
+        Assert.Throws<WipException>(() => new SandboxLifecycle(Settings(), Backend).Stop("first"));
+        Assert.Single(fake.Calls, c => c[0] == "stop");
+        Assert.DoesNotContain(fake.Calls, c => c[0] is "remove" or "volume");
+    }
+
+    [Fact]
+    public void StopRejectsChangedOrUnlabelledOwnershipBeforeMutation()
+    {
+        foreach (var inspect in new[] { "[{\"Id\":\"replacement\",\"Name\":\"other\"}]",
+            JsonSerializer.Serialize(new[] { new { Id = "backend-id", Name = SandboxLifecycle.BackendName("test", "first"), State = "running" } }) })
+        {
+            var fake = new Fake { Exists = true, InspectOutput = inspect };
+            Assert.Throws<WipException>(() => new SandboxLifecycle(Settings(), fake.Run).Stop("first"));
+            Assert.DoesNotContain(fake.Calls, c => c[0] == "stop");
+        }
+    }
+
     [Theory]
     [InlineData("create")]
     [InlineData("destroy")]
+    [InlineData("stop")]
     [InlineData("exec")]
     public void ForeignContainerCannotBeAdoptedExecutedOrDeleted(string operation)
     {
@@ -150,6 +254,7 @@ public class SandboxLifecycleTests
         {
             "create" => service.Create("first"),
             "destroy" => service.Destroy("first"),
+            "stop" => service.Stop("first"),
             _ => service.Exec("first", ["true"], TimeSpan.FromSeconds(10)),
         });
         Assert.All(fake.Calls, c => Assert.Contains(c[0], new[] { "list", "inspect" }));

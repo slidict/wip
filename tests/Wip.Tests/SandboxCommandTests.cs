@@ -8,6 +8,7 @@ public class SandboxCommandTests
     [Theory]
     [InlineData("create")]
     [InlineData("status")]
+    [InlineData("stop")]
     [InlineData("destroy")]
     public void NestedOperationsDoNotFallBackToDispatch(string operation)
     {
