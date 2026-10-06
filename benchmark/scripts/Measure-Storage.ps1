@@ -90,7 +90,7 @@ function Write-MeasurementPoint {
         $size = (Get-Item -Path $vhdxPaths[$name] -ErrorAction SilentlyContinue).Length
         Add-StorageRow -Row @{
             backend = $Backend; point = $Point; timestamp = (Get-Date).ToString('o')
-            vhdx_name = $name; vhdx_path = $vhdxPaths[$name]; vhdx_size_bytes = $size
+            vhdx_name = $name; vhdx_path = (Get-SanitizedPath $vhdxPaths[$name]); vhdx_size_bytes = $size
             drive_c_free_bytes = $drive.Free; logical_usage_raw = $LogicalUsageRaw; notes = $Notes
         }
     }

@@ -1,4 +1,4 @@
-﻿{
+{
     "capturedAt":  "2026-09-15T22:52:36.5116154+09:00",
     "host":  {
                  "os":  "Microsoft Windows 11 Pro",
@@ -24,8 +24,8 @@
                   "wslcImageInspect":  "REPOSITORY   TAG      IMAGE ID       CREATED   SIZE | wip-bench    latest   9fa564b4ffba   12 分前     165MB"
               },
     "benchmark":  {
-                      "appDir":  "C:\\Users\\Yusuke\\codes\\wip\\benchmark\\app",
-                      "wslAppDir":  "/mnt/c/Users/Yusuke/codes/wip/benchmark/app",
+                      "appDir":  "<repo-root>\\benchmark\\app",
+                      "wslAppDir":  "/mnt/c/<repo-root>/benchmark/app",
                       "appUrl":  "http://127.0.0.1:18080/",
                       "wslDistro":  "Ubuntu",
                       "configs":  [

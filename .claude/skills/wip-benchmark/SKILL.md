@@ -177,8 +177,8 @@ first load phase, after baseline/infra/app-idle sampling has already run for tha
 **Launch** (adjust `-Rounds`/`-Warmups` for a shorter check; defaults are `-Rounds 3 -Warmups 1`):
 
 ```powershell
-& 'C:\Users\yusuk\codes\wip\benchmark\scripts\Invoke-Benchmark.ps1' `
-  -OutDir "C:\Users\yusuk\codes\wip\benchmark\results\$(Get-Date -Format 'yyyyMMdd-HHmm')" `
+& '.\benchmark\scripts\Invoke-Benchmark.ps1' `
+  -OutDir ".\benchmark\results\$(Get-Date -Format 'yyyyMMdd-HHmm')" `
   -Rounds 1 -Warmups 1
 ```
 

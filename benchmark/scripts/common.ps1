@@ -221,6 +221,81 @@ function Stop-WslcInfra {
     return [pscustomobject]@{ Stopped = $ok; ElapsedMs = $sw.Elapsed.TotalMilliseconds }
 }
 
+function Get-SanitizedPath {
+    <#
+    .SYNOPSIS
+      Sanitizes user-identifying filesystem paths and usernames from benchmark artifacts.
+    .DESCRIPTION
+      Replaces local repository paths with neutral '<repo-root>' (Windows) and '/mnt/<drive>/<repo-root>' (WSL),
+      and sanitizes Windows user profile directories and usernames to prevent exposing personal environment
+      information in public benchmark results.
+    #>
+    param(
+        [string]$Path,
+        [string]$RepoRoot = $null
+    )
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $Path }
+
+    # Resolve repository root if not explicitly provided
+    if (-not $RepoRoot) {
+        $candidate = (Join-Path $PSScriptRoot '..\..')
+        if (Test-Path $candidate) {
+            $RepoRoot = (Resolve-Path $candidate).Path
+        }
+    }
+
+    $sanitized = $Path
+
+    # 1. Sanitize local repository root (Windows and WSL, handling both single and JSON-escaped backslashes)
+    if ($RepoRoot) {
+        $repoNorm = $RepoRoot.TrimEnd('\', '/')
+        # Windows single backslash: e.g. C:\Users\Username\codes\wip -> <repo-root>
+        $sanitized = [regex]::Replace($sanitized, [regex]::Escape($repoNorm), '<repo-root>', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+        # Windows JSON-escaped double backslash: e.g. C:\\Users\\Username\\codes\\wip -> <repo-root>
+        $repoEsc = $repoNorm.Replace('\', '\\')
+        $sanitized = [regex]::Replace($sanitized, [regex]::Escape($repoEsc), '<repo-root>', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+
+        # WSL representation: e.g. /mnt/c/Users/Username/codes/wip -> /mnt/c/<repo-root>
+        if ($repoNorm -match '^([A-Za-z]):[\\/](.*)$') {
+            $drive = $matches[1].ToLower()
+            $rest = $matches[2].Replace('\', '/')
+            $wslRepoNorm = "/mnt/$drive/$rest"
+            $sanitized = [regex]::Replace($sanitized, [regex]::Escape($wslRepoNorm), "/mnt/$drive/<repo-root>", [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+        }
+    }
+
+    # 2. Sanitize specific Windows User Profile directories (Windows and WSL)
+    if ($env:USERPROFILE) {
+        $userProfileNorm = $env:USERPROFILE.TrimEnd('\', '/')
+        $sanitized = [regex]::Replace($sanitized, [regex]::Escape($userProfileNorm), 'C:\Users\<user>', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+        $userProfileEsc = $userProfileNorm.Replace('\', '\\')
+        $sanitized = [regex]::Replace($sanitized, [regex]::Escape($userProfileEsc), 'C:\\Users\\<user>', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+
+        if ($userProfileNorm -match '^([A-Za-z]):[\\/](.*)$') {
+            $drive = $matches[1].ToLower()
+            $rest = $matches[2].Replace('\', '/')
+            $wslUserProfileNorm = "/mnt/$drive/$rest"
+            $sanitized = [regex]::Replace($sanitized, [regex]::Escape($wslUserProfileNorm), "/mnt/$drive/Users/<user>", [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+        }
+    }
+
+    # 3. Generic Windows Users path pattern: C:\Users\<username> -> C:\Users\<user>
+    $sanitized = [regex]::Replace($sanitized, '(?i)\b([A-Za-z]:[\\/]Users[\\/])[^\s\\\/"]+', '$1<user>')
+    $sanitized = [regex]::Replace($sanitized, '(?i)\b([A-Za-z]:\\\\Users\\\\)[^\s\\\/"]+', '$1<user>')
+
+    # Generic WSL Users path pattern: /mnt/<drive>/Users/<username> -> /mnt/<drive>/Users/<user>
+    $sanitized = [regex]::Replace($sanitized, '(?i)(/mnt/[a-z]/Users/)[^\s\\\/"]+', '$1<user>')
+
+    # 4. Standalone username bounded by path separators, quotes, or whitespace if known
+    if ($env:USERNAME -and $env:USERNAME.Length -gt 1) {
+        $uEsc = [regex]::Escape($env:USERNAME)
+        $pattern = '(?i)(?<=[\/\\"' + "'" + '\s]|^)' + $uEsc + '(?=[\/\\"' + "'" + '\s]|$)'
+        $sanitized = [regex]::Replace($sanitized, $pattern, '<user>')
+    }
+
+    return $sanitized
+}
+
 function Format-ProcessArgument {
     param([string]$Value)
     if ($Value -match '[\s"]') {
