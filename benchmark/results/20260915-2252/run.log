@@ -3,7 +3,7 @@
 [2026-09-15T22:52:27.6965804+09:00] preflight: checking WSLC for a pre-existing session/containers
 [2026-09-15T22:52:27.7416333+09:00] preflight: docker build -t wip-bench:latest (not counted in any timed result)
 [2026-09-15T22:52:30.5770110+09:00] preflight: wip build (drives wslc build; not counted in any timed result)
-[2026-09-15T22:52:36.8109244+09:00] environment.json written to C:\Users\Yusuke\codes\wip\benchmark\results\20260915-2252\environment.json
+[2026-09-15T22:52:36.8109244+09:00] environment.json written to <repo-root>\benchmark\results\20260915-2252\environment.json
 [2026-09-15T22:52:36.8274376+09:00] schedule: wsl-wip#r0(warmup) -> wsl-docker#r0(warmup) -> windows-wip#r0(warmup) -> windows-docker#r0(warmup) -> windows-wip#r1 -> windows-docker#r1 -> wsl-wip#r1 -> wsl-docker#r1 -> windows-wip#r2 -> wsl-docker#r2 -> wsl-wip#r2 -> windows-docker#r2 -> windows-docker#r3 -> windows-wip#r3 -> wsl-wip#r3 -> wsl-docker#r3
 [2026-09-15T22:52:36.8321524+09:00] === wsl-wip round=0 warmup=True order=0 ===
 [2026-09-15T22:52:36.8346630+09:00] stopping both backends to reach baseline state

@@ -10,7 +10,7 @@ Generated: 2026-09-16T07:45+09:00 (main run: 2026-09-15 22:52–2026-09-16 00:15
 - wip: 2.5.2, repo commit `20897a0`
 - App image: `wip-bench:latest` (sha256:06d35d4e…), same image/config used for all four configs
 - Load: 1 warmup + 3 measured rounds per config, execution order randomized per round (see `run.log` for the exact order each round), concurrency 20, 120 s per load phase, 60 s each for baseline/infra-idle/app-idle
-- All source/app data on the Windows filesystem (`C:\Users\Yusuke\codes\wip\benchmark\app`), referenced from WSL as `/mnt/c/...`
+- All source/app data on the Windows filesystem (`<repo-root>\benchmark\app`), referenced from WSL as `/mnt/c/...`
 
 ## Load & timing results
 

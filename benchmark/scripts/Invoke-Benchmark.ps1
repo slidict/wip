@@ -40,7 +40,8 @@ $reportPath = Join-Path $OutDir 'report.md'
 
 function Write-Log {
     param([string]$Message)
-    $line = "[{0:o}] {1}" -f (Get-Date), $Message
+    $cleanMessage = Get-SanitizedPath $Message
+    $line = "[{0:o}] {1}" -f (Get-Date), $cleanMessage
     Write-Host $line
     for ($attempt = 0; $attempt -lt 5; $attempt++) {
         try {
@@ -295,8 +296,8 @@ function New-EnvironmentJson {
             wslcImageInspect  = if ($Configs -match 'wip$') { ((wslc images 2>&1) -join ' | ') } else { 'not built this run' }
         }
         benchmark  = [ordered]@{
-            appDir          = $AppDir
-            wslAppDir       = $wslAppDir
+            appDir          = (Get-SanitizedPath $AppDir)
+            wslAppDir       = (Get-SanitizedPath $wslAppDir)
             appUrl          = $AppUrl
             wslDistro       = $WslDistro
             configs         = $Configs
@@ -308,7 +309,9 @@ function New-EnvironmentJson {
             loadConcurrency = $LoadConcurrency
         }
     }
-    $env | ConvertTo-Json -Depth 6 | Out-File -FilePath $Path -Encoding utf8
+    $json = $env | ConvertTo-Json -Depth 6
+    $cleanJson = Get-SanitizedPath $json
+    $cleanJson | Out-File -FilePath $Path -Encoding utf8
 }
 
 function Get-ColumnStat {
@@ -362,7 +365,8 @@ function New-ReportMarkdown {
         }
         $lines.Add('')
     }
-    ($lines -join "`n") | Out-File -FilePath $ReportPath -Encoding utf8
+    $cleanLines = $lines | ForEach-Object { Get-SanitizedPath $_ }
+    ($cleanLines -join "`n") | Out-File -FilePath $ReportPath -Encoding utf8
 }
 
 $exitedCleanly = $false
