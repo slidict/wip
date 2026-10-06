@@ -207,16 +207,19 @@ jobs:
       - name: Set up .NET
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
-          dotnet-version: "10.0.x"
+          global-json-file: global.json
+
+      - name: Restore locked dependencies
+        run: dotnet restore wip.slnx --locked-mode
 
       - name: Run tests
-        run: dotnet test tests/Wip.Tests/Wip.Tests.csproj --configuration Release
+        run: dotnet test tests/Wip.Tests/Wip.Tests.csproj --configuration Release --no-restore
 
       - name: Publish
         run: >
           dotnet publish src/Wip.Cli/Wip.Cli.csproj
           --configuration Release
-          --runtime win-x64
+          --runtime win-x64 --no-restore
           --output publish/win-x64
 
       # The archive holds wip.exe alone. WinGet's zip installer type unpacks it and registers

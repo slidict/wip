@@ -1,7 +1,8 @@
 version: 2
 updates:
   # NuGet versions are centralised in Directory.Packages.props, which dependabot
-  # updates in place.
+  # updates in place together with the project packages.lock.json files. CI restores
+  # in locked mode, so dependency PRs must include the regenerated locks.
   - package-ecosystem: "nuget"
     directory: "/"
     schedule:

@@ -39,15 +39,18 @@ jobs:
       - name: Set up .NET
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
-          dotnet-version: "10.0.x"
+          global-json-file: global.json
 
       # The published binary, not `dotnet run`: this is the artifact users install, and AOT
       # compilation is the one step the managed test host cannot speak for.
+      - name: Restore locked dependencies
+        run: dotnet restore wip.slnx --locked-mode
+
       - name: Publish wip.exe
         run: >
           dotnet publish src/Wip.Cli/Wip.Cli.csproj
           --configuration Release
-          --runtime win-x64
+          --runtime win-x64 --no-restore
           --output artifacts/win-x64
 
       # WSLC is generally available in WSL 3.0.1 and later. --shutdown makes the update take

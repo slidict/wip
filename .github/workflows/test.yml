@@ -32,13 +32,20 @@ jobs:
       - name: Set up .NET
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
-          dotnet-version: "10.0.x"
+          global-json-file: global.json
+
+      - name: Restore locked dependencies
+        run: dotnet restore wip.slnx --locked-mode
+
+      - name: Verify locked restore rejects dependency drift
+        shell: pwsh
+        run: ./scripts/Test-LockedRestore.ps1
 
       - name: Build
-        run: dotnet build wip.slnx --configuration Release
+        run: dotnet build wip.slnx --configuration Release --no-restore
 
       - name: Run tests
-        run: dotnet test tests/Wip.Tests/Wip.Tests.csproj --configuration Release --no-build
+        run: dotnet test tests/Wip.Tests/Wip.Tests.csproj --configuration Release --no-build --no-restore
 
   publish:
     name: Native AOT publish
@@ -53,16 +60,19 @@ jobs:
       - name: Set up .NET
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
-          dotnet-version: "10.0.x"
+          global-json-file: global.json
 
       # Publishing is its own job because it is what actually ships, and because the AOT
       # compiler is the only thing that reports trim and reflection problems. TreatWarnings
       # AsErrors is on, so an IL warning fails here rather than reaching a release.
+      - name: Restore locked dependencies
+        run: dotnet restore wip.slnx --locked-mode
+
       - name: Publish
         run: >
           dotnet publish src/Wip.Cli/Wip.Cli.csproj
           --configuration Release
-          --runtime win-x64
+          --runtime win-x64 --no-restore
           --output artifacts/win-x64
 
       # Exercises the published binary, not the test host: the unit suite runs against
