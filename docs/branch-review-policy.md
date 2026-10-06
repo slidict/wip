@@ -15,6 +15,15 @@ change the allowed merge method. `require_last_push_approval` remains disabled;
 stale approval dismissal provides the new-diff review requirement without adding
 a separate identity constraint to the automation flow.
 
+The required check contexts remain:
+- `Tests (ubuntu-latest)`
+- `Tests (windows-latest)`
+- `Lifecycle against real WSLC`
+- `Native AOT publish`
+
+Each context remains bound to its existing GitHub Actions integration. Changing
+review settings does not make a missing or failed check acceptable.
+
 Review automation must approve the updated diff after a push. Do not treat an
 approval on an older commit as approval of newly added code. If a reviewer is
 unavailable or rate-limited, keep the PR open until a fresh review is completed.
