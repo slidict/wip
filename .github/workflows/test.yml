@@ -41,6 +41,10 @@ jobs:
         shell: pwsh
         run: ./scripts/Test-LockedRestore.ps1
 
+      - name: Verify benchmark artifact path privacy
+        shell: pwsh
+        run: ./benchmark/scripts/Test-SanitizeBenchmarkPath.ps1
+
       - name: Build
         run: dotnet build wip.slnx --configuration Release --no-restore
 
