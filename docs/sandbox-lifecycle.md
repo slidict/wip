@@ -131,11 +131,16 @@ wip sandbox attach first
   session without stopping that process is not something wip can offer.
 - **It needs a real terminal.** With no console to join, WSLC's own `attach` fails with
   `ERROR_INVALID_HANDLE` (reproduced directly with `wslc attach`, independent of wip); wip
-  passes that exit status through unchanged. A terminal can be created rather than waited for
-  — the e2e suite does exactly that for `exec --interactive` — but `attach` stays out of it
-  for a different reason: it joins the main process, so a successful attach would hold the job
-  until that process exited.
-- **Exit code.** The status the main process ended with, unchanged.
+  passes that exit status through unchanged. A created console counts: inside the e2e suite's
+  pseudo console, attach reaches the main process and the session behaves normally.
+- **The main process outlives the terminal.** Ending an attached session — Ctrl-C, or the
+  terminal going away — does not stop the sandbox: the image's CMD runs as PID 1, which
+  ignores SIGINT unless it handles it. Asserted in CI.
+- **Exit code, depending on who ended the session.** If the main process ends on its own while
+  you are attached, its status is what comes back unchanged (measured: a CMD exiting 9 returns
+  9). If you end the session instead, what comes back is that control event's status —
+  `STATUS_CONTROL_C_EXIT`, not something the container chose — which is why the e2e scenario
+  asserts the output and the sandbox's state rather than the exit code.
 
 Unit tests pin the argv WSLC receives — `exec -i -t <id> …` with a terminal, `exec -i <id> …`
 without one, `attach <id>` with neither argv nor flags — the absence of a deadline on both,
@@ -151,9 +156,9 @@ The e2e suite covers both halves of the real Windows → WSLC → container path
   console's size, a resize reaching the container pty, Ctrl-C arriving as an interrupt (a
   `trap … INT` in the container fires and its chosen status, 42, comes back through the
   chain), and the shell's own exit status, 7, on a clean exit.
-
-`attach` is the one part still outside CI: it joins the sandbox's main process, so a
-successful attach would hold the job until that process exited. Confirm it by hand.
+- **`attach` through that same console**: the main process's own output reaching the session
+  is what proves it joined rather than started something, and the sandbox is still running
+  after the session ends. The fixture image ticks once a second for exactly this.
 
 ## Ownership and recovery
 
@@ -191,7 +196,7 @@ still causes WSLC's name conflict rather than being adopted. Unknown live states
 ownership-checked destroy, absence confirmation and create; investigate failed removal first.
 
 Unit tests cover ownership, partial failure and argv behavior without an agent. The Windows
-real-WSLC lifecycle CI builds an Alpine fixture with `CMD ["sleep", "600"]`, assigns a unique
+real-WSLC lifecycle CI builds an Alpine fixture whose CMD ticks for 600 seconds, assigns a unique
 namespace, then checks repeated create, status, literal argv, exit 7, repeated destroy and absence.
 It never updates or shuts down WSL on a developer machine; runner provisioning remains confined
 to the isolated GitHub Actions runner.
