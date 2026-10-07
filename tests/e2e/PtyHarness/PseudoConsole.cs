@@ -28,6 +28,7 @@ namespace Wip.PtyHarness;
 internal sealed class PseudoConsole : IDisposable
 {
     private const int STILL_ACTIVE = 259;
+    private const uint INFINITE = 0xFFFFFFFF;
     private const uint EXTENDED_STARTUPINFO_PRESENT = 0x00080000;
     private const int PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE = 0x00020016;
 
@@ -181,11 +182,10 @@ internal sealed class PseudoConsole : IDisposable
         var bytes = Encoding.UTF8.GetBytes(text);
         if (!WriteFile(input, bytes, bytes.Length, out var written, nint.Zero) || written != bytes.Length)
             throw Win32("WriteFile (console input)");
-        if (!FlushFileBuffers(input))
-        {
-            // A pipe that cannot be flushed is not an error here: the write already went
-            // through, and the console reads it on its own schedule.
-        }
+
+        // A pipe that cannot be flushed is not an error here: the write already went through,
+        // and the console reads it on its own schedule.
+        _ = FlushFileBuffers(input);
     }
 
     /// <summary>Changes the console's size, as resizing a terminal window would.</summary>
@@ -201,7 +201,10 @@ internal sealed class PseudoConsole : IDisposable
     /// <summary>Waits for the child and returns its exit code, or null if it outlived the wait.</summary>
     public int? WaitForExit(TimeSpan timeout)
     {
-        var result = WaitForSingleObject(process, (uint)timeout.TotalMilliseconds);
+        // Spelled out rather than left to the cast: an infinite TimeSpan is -1 ms, which only
+        // becomes Win32's INFINITE by wrapping, and a reader should not have to work that out.
+        var milliseconds = timeout < TimeSpan.Zero ? INFINITE : (uint)timeout.TotalMilliseconds;
+        var result = WaitForSingleObject(process, milliseconds);
         if (result != 0) return null;
         if (!GetExitCodeProcess(process, out var code)) throw Win32("GetExitCodeProcess");
         return code == STILL_ACTIVE ? null : code;
