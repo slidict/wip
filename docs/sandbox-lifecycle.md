@@ -18,6 +18,7 @@ wip sandbox status first
 wip sandbox exec first -- printf '%s\n' 'an argument with spaces'
 wip sandbox exec first --timeout 30 -- sh -c 'exit 7'
 wip sandbox exec first --interactive -- bash
+wip sandbox attach first
 wip sandbox stop first
 wip sandbox create first # resume the same stopped container
 wip sandbox destroy first
@@ -39,6 +40,7 @@ Check status and, if necessary, destroy the dedicated sandbox before retrying no
 | destroy | Force-remove the verified container ID and confirm absence | Success |
 | exec | Requires a running container; preserve exit code | Error; never create implicitly |
 | exec --interactive | Requires a running container; attach stdin (`-i`, plus `-t` with a terminal), no deadline, preserve exit code | Error; never create implicitly |
+| attach | Requires a running container; join the main process's streams, no argv, no deadline, preserve its exit code | Error; never create implicitly |
 
 Unknown declarations are configuration errors. Sandboxes may reference declared volumes
 by name (`volumes: [vol1, vol2]`). On `sandbox create`, referenced volumes are ensured via
@@ -104,13 +106,39 @@ wip sandbox exec first -it -- python3                 # the bundled spelling, sa
 - **Non-interactive execution is unchanged.** Without the flag, argv, the 300-second default
   deadline, streaming and exit codes are exactly as before.
 
-Unit tests pin the argv WSLC receives (`exec -i -t <id> …` with a terminal, `exec -i <id> …`
-without one), the absence of a deadline, and that argv and a running container are still
-required before anything reaches the backend. The e2e suite drives a real container through a
-piped interactive `sh`: stdin reaching a still-running shell, its output coming back, EOF
-ending it and its exit status surviving the round trip. What neither suite covers is a real
-pty — terminal allocation, Ctrl-C and resize — because GitHub Actions has no terminal to
-allocate; that part is a manual check in a real terminal.
+### `attach` joins the main process instead of starting one
+
+`sandbox exec --interactive` starts a new process beside the sandbox's main one and ends when
+that new process ends. `sandbox attach` joins the process that is already running — the
+image's own CMD/ENTRYPOINT, whose lifetime *is* the sandbox's lifetime:
+
+```powershell
+wip sandbox attach first
+```
+
+- **No command, and none is accepted.** WSLC's `attach` takes only a container, and the
+  streams it joins are the ones the main process was started with. `wip sandbox attach first
+  -- bash` is a usage error, not a silently dropped argument: that request is
+  `exec --interactive`.
+- **What you send reaches the process the sandbox exists to run.** Ctrl-C there goes to the
+  main process, and ending it ends the sandbox — which is why this is a separate command
+  rather than a flag on `exec`. WSLC exposes no detach key sequence, so leaving an attached
+  session without stopping that process is not something wip can offer.
+- **It needs a real terminal.** With no console to join, WSLC's own `attach` fails with
+  `ERROR_INVALID_HANDLE` (reproduced directly with `wslc attach`, independent of wip); wip
+  passes that exit status through unchanged. For the same reason `attach` is **not** part of
+  the e2e suite: GitHub Actions has no terminal, and a successful attach would hold the job
+  until the sandbox's main process exited.
+- **Exit code.** The status the main process ended with, unchanged.
+
+Unit tests pin the argv WSLC receives — `exec -i -t <id> …` with a terminal, `exec -i <id> …`
+without one, `attach <id>` with neither argv nor flags — the absence of a deadline on both,
+and that argv and a running container are still required before anything reaches the backend.
+The e2e suite drives a real container through a piped interactive `sh`: stdin reaching a
+still-running shell, its output coming back, EOF ending it, and its exit status surviving the
+round trip. What neither suite covers is anything that needs a real pty — terminal
+allocation, Ctrl-C, resize, and `attach` at all — because GitHub Actions has no terminal to
+allocate; those stay manual checks in a real terminal.
 
 ## Ownership and recovery
 

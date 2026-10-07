@@ -10,6 +10,7 @@ public class SandboxCommandTests
     [InlineData("status")]
     [InlineData("stop")]
     [InlineData("destroy")]
+    [InlineData("attach")]
     public void NestedOperationsDoNotFallBackToDispatch(string operation)
     {
         var parsed = Program.Parse(Program.BuildRoot(), ["--config", "example.yml", "sandbox", operation, "first"]);
@@ -71,6 +72,18 @@ public class SandboxCommandTests
 
         var exception = Assert.Throws<ConfigException>(() => parsed.Invoke(invocation));
         Assert.Contains("--interactive has no deadline", exception.Message);
+    }
+
+    /// <summary>
+    /// Attach joins the process that is already running, so there is nothing to pass it; a
+    /// command given anyway is a usage error rather than a silently dropped argument (the
+    /// caller wanted <c>exec --interactive</c>).
+    /// </summary>
+    [Fact]
+    public void AttachTakesNoCommand()
+    {
+        var parsed = Program.Parse(Program.BuildRoot(), ["sandbox", "attach", "first", "--", "bash"]);
+        Assert.NotEmpty(parsed.Errors);
     }
 
     [Fact]

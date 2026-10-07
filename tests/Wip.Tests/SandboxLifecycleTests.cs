@@ -70,7 +70,7 @@ public class SandboxLifecycleTests
                 return new(ProbeCode, JsonSerializer.Serialize(new[] { new { Id, Name, State, Labels = new Dictionary<string, string> { [SandboxLifecycle.OwnerLabel] = Owner }, Mounts = defaultMounts } }));
             }
             Assert.NotEqual(SandboxConsoleMode.Capture, console);
-            if (argv[0] == "exec") { ExecTimeout = timeout; ExecConsole = console; return new(ExecCode, ""); }
+            if (argv[0] is "exec" or "attach") { ExecTimeout = timeout; ExecConsole = console; return new(ExecCode, ""); }
             Assert.Equal(TimeSpan.FromMinutes(2), timeout);
             if (argv[0] == "run" && (MutationCode == 0 || LeaveResidue))
             {
@@ -353,6 +353,32 @@ public class SandboxLifecycleTests
         Assert.Throws<ConfigException>(() => service.ExecInteractive("first", ["--help"], tty: true));
         Assert.Throws<ConfigException>(() => service.ExecInteractive("missing", ["bash"], tty: true));
         Assert.DoesNotContain(fake.Calls, c => c[0] is "run" or "exec");
+    }
+
+    /// <summary>
+    /// Attach joins the main process by verified ID: no argv, no deadline, and the status it
+    /// reports is the one that process ended with.
+    /// </summary>
+    [Fact]
+    public void AttachJoinsTheMainProcessByVerifiedIdWithoutArgvOrADeadline()
+    {
+        var fake = new Fake { Exists = true, ExecCode = 7 };
+        var service = new SandboxLifecycle(Settings(), fake.Run);
+        Assert.Equal(7, service.Attach("first"));
+        Assert.Equal(["attach", fake.Id], fake.Calls.Single(c => c[0] == "attach"));
+        Assert.Equal(SandboxConsoleMode.Interactive, fake.ExecConsole);
+        Assert.Equal(Timeout.InfiniteTimeSpan, fake.ExecTimeout);
+        Assert.DoesNotContain(fake.Calls, c => c[0] == "exec");
+    }
+
+    [Fact]
+    public void AttachRequiresARunningSandboxAndAKnownDefinition()
+    {
+        var fake = new Fake();
+        var service = new SandboxLifecycle(Settings(), fake.Run);
+        Assert.Throws<WipException>(() => service.Attach("first"));
+        Assert.Throws<ConfigException>(() => service.Attach("missing"));
+        Assert.DoesNotContain(fake.Calls, c => c[0] is "run" or "attach");
     }
 
     [Fact]

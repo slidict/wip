@@ -304,6 +304,28 @@ public sealed class SandboxLifecycle(SandboxSettings settings, SandboxBackend ba
     }
 
     /// <summary>
+    /// Connects wip's console to the sandbox's existing main process -- the image's own
+    /// CMD/ENTRYPOINT, the process whose lifetime is the sandbox's lifetime.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is not <see cref="ExecInteractive"/> with a default command. Exec starts a new
+    /// process beside the main one and ends when that process ends; attach joins the process
+    /// that is already there, so what reaches it -- input, Ctrl-C, EOF -- reaches the process
+    /// the sandbox exists to run. Ending it ends the sandbox, which is why the two are
+    /// separate commands rather than one with a flag.
+    /// </para>
+    /// <para>
+    /// WSLC's <c>attach</c> takes no command and no <c>-i</c>/<c>-t</c> of its own: the
+    /// streams it joins are the ones the main process was started with. There is accordingly
+    /// no argv to validate and no terminal to request here, and no deadline, for the same
+    /// reason <see cref="ExecInteractive"/> has none.
+    /// </para>
+    /// </remarks>
+    public int Attach(string name) =>
+        backend(["attach", RunningId(name)], Timeout.InfiniteTimeSpan, SandboxConsoleMode.Interactive).Code;
+
+    /// <summary>
     /// Both exec paths reject argv before any probe, so a usage error never reaches the
     /// backend, and reject it in the same order: argv, then the mode's own options, then
     /// the container's state.

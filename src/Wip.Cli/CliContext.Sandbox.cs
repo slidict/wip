@@ -23,6 +23,11 @@ internal sealed partial class CliContext
                 ? lifecycle.ExecInteractive(name, argv, Tty(true))
                 : lifecycle.Exec(name, argv, TimeSpan.FromSeconds(timeoutSeconds));
         }
+        if (operation == "attach")
+        {
+            var lifecycle = new SandboxLifecycle(Config.SandboxResources, ResourceBackend());
+            return lifecycle.Attach(name);
+        }
         if (operation == "stop")
         {
             // Stopping keeps both the container and its attached volumes; no storage mutation.
