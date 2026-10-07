@@ -5,5 +5,6 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Wip.Tests/Wip.Tests.csproj" />
+    <Project Path="tests/e2e/PtyHarness/PtyHarness.csproj" />
   </Folder>
 </Solution>

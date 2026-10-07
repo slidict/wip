@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>pty-harness</AssemblyName>
+    <RootNamespace>Wip.PtyHarness</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <!--
+      Test-only, Windows-only, and never shipped: it exists so the e2e suite can create the
+      terminal a CI runner does not have. The AOT analyzers are what Wip.Core and Wip.Cli
+      carry; nothing here is published.
+    -->
+    <IsAotCompatible>false</IsAotCompatible>
+    <!--
+      ConPTY is a Windows facility, and saying so is what lets the interop carry
+      [SupportedOSPlatform("windows")] without the platform analyzer failing the build that
+      cross-compiles the solution on Linux. Main still checks at runtime.
+    -->
+    <TargetPlatformIdentifier Condition="'$(TargetPlatformIdentifier)' == ''">windows</TargetPlatformIdentifier>
+  </PropertyGroup>
+
+</Project>
