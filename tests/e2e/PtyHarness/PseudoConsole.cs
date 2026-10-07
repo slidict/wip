@@ -101,9 +101,13 @@ internal sealed class PseudoConsole : IDisposable
             // CreateProcess parses one command line, so argv is quoted back into the form
             // CommandLineToArgvW reverses -- the same contract wip itself relies on when it
             // hands argv to a process API.
+            // No handle inheritance: stage two opens the console's own CONIN$/CONOUT$ rather
+            // than being handed anything, so inheriting here would only pass this process's
+            // redirected stdout/stderr pipes down the chain and keep the caller's redirect
+            // open for as long as any descendant lives.
             var commandLine = new StringBuilder(CommandLine(argv));
             if (!CreateProcess(
-                    null, commandLine, nint.Zero, nint.Zero, true,
+                    null, commandLine, nint.Zero, nint.Zero, false,
                     EXTENDED_STARTUPINFO_PRESENT, nint.Zero, workingDirectory,
                     ref startupInfo, out var processInfo))
             {
