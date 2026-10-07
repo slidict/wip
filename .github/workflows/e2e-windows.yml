@@ -56,10 +56,12 @@ jobs:
       # The terminal the runner does not have. tests/e2e/PtyHarness creates one with ConPTY
       # and drives wip inside it, which is what makes the interactive path's terminal
       # behaviour -- tty, size, resize, Ctrl-C -- assertable here rather than only by hand.
+      # Restores on its own: the harness is deliberately not in wip.slnx, so the locked
+      # restore above does not cover it. It has no package references, so this costs nothing.
       - name: Publish the pseudo-console harness
         run: >
           dotnet publish tests/e2e/PtyHarness/PtyHarness.csproj
-          --configuration Release --no-restore
+          --configuration Release
           --output artifacts/pty
 
       # WSLC is generally available in WSL 3.0.1 and later. --shutdown makes the update take

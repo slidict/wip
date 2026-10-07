@@ -12,9 +12,16 @@
     -->
     <IsAotCompatible>false</IsAotCompatible>
     <!--
+      Deliberately absent from wip.slnx. The solution is restored in locked mode and its
+      lock integrity is checked by scripts/Test-LockedRestore.ps1, which copies a fixed list
+      of projects into a fixture; a project with no package references adds nothing to that
+      check and only breaks the copy. The e2e workflow restores and publishes this one.
+    -->
+    <!--
       ConPTY is a Windows facility, and saying so is what lets the interop carry
-      [SupportedOSPlatform("windows")] without the platform analyzer failing the build that
-      cross-compiles the solution on Linux. Main still checks at runtime.
+      [SupportedOSPlatform("windows")] without the platform analyzer failing the build
+      (TreatWarningsAsErrors is on for the whole repository). Main still checks at runtime,
+      so building or running this on another host reports that in one line.
     -->
     <TargetPlatformIdentifier Condition="'$(TargetPlatformIdentifier)' == ''">windows</TargetPlatformIdentifier>
   </PropertyGroup>
