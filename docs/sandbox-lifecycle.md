@@ -94,10 +94,15 @@ wip sandbox exec first -it -- python3                 # the bundled spelling, sa
 - **Signals are the terminal's to deliver.** The child shares wip's console, so Ctrl-C comes
   from the terminal rather than from wip, and wip declines to tear itself down first so it can
   still report the child's status. This is the console-inheriting path `wip exec` and
-  `wip shell` already use; nothing here forwards or synthesises a signal.
+  `wip shell` already use; nothing here forwards or synthesises a signal. Asserted in CI: a
+  `trap … INT` in the container fires on Ctrl-C, and the status it chooses comes back.
 - **Terminal size comes from the same console.** The child inherits the real console rather
   than a pipe, so the size it reads is the console's own and wip forwards nothing. With `-t`
-  the resize path is WSLC's; wip adds no handling of its own.
+  the resize path is WSLC's; wip adds no handling of its own. Both halves are asserted in CI:
+  a shell started in an 80x24 pseudo console reads `24 80`, and resizing that console to
+  120x40 makes the same shell read `40 120` — the size reaches the container pty without wip
+  taking part. The container reads its size when asked rather than being told, so a query
+  immediately after a resize can still answer with the old one.
 - **Exit code.** The child's status is returned unchanged, exactly as in the non-interactive
   path. Timeout's 124 cannot occur, because there is no deadline to exceed.
 - **No error hints, and `--quiet` does nothing.** Both read the captured transcript, and an
@@ -126,19 +131,29 @@ wip sandbox attach first
   session without stopping that process is not something wip can offer.
 - **It needs a real terminal.** With no console to join, WSLC's own `attach` fails with
   `ERROR_INVALID_HANDLE` (reproduced directly with `wslc attach`, independent of wip); wip
-  passes that exit status through unchanged. For the same reason `attach` is **not** part of
-  the e2e suite: GitHub Actions has no terminal, and a successful attach would hold the job
-  until the sandbox's main process exited.
+  passes that exit status through unchanged. A terminal can be created rather than waited for
+  — the e2e suite does exactly that for `exec --interactive` — but `attach` stays out of it
+  for a different reason: it joins the main process, so a successful attach would hold the job
+  until that process exited.
 - **Exit code.** The status the main process ended with, unchanged.
 
 Unit tests pin the argv WSLC receives — `exec -i -t <id> …` with a terminal, `exec -i <id> …`
 without one, `attach <id>` with neither argv nor flags — the absence of a deadline on both,
 and that argv and a running container are still required before anything reaches the backend.
-The e2e suite drives a real container through a piped interactive `sh`: stdin reaching a
-still-running shell, its output coming back, EOF ending it, and its exit status surviving the
-round trip. What neither suite covers is anything that needs a real pty — terminal
-allocation, Ctrl-C, resize, and `attach` at all — because GitHub Actions has no terminal to
-allocate; those stay manual checks in a real terminal.
+
+The e2e suite covers both halves of the real Windows → WSLC → container path:
+
+- **Through a pipe**: stdin reaching a still-running shell, its output coming back, EOF
+  ending it, and its exit status surviving the round trip.
+- **Through a real pseudo console**: a CI runner has no terminal, but that only means nobody
+  hands one over — `tests/e2e/PtyHarness` creates one with `CreatePseudoConsole` (ConPTY) and
+  drives wip inside it. That covers `test -t 0 && test -t 1` inside the container, the
+  console's size, a resize reaching the container pty, Ctrl-C arriving as an interrupt (a
+  `trap … INT` in the container fires and its chosen status, 42, comes back through the
+  chain), and the shell's own exit status, 7, on a clean exit.
+
+`attach` is the one part still outside CI: it joins the sandbox's main process, so a
+successful attach would hold the job until that process exited. Confirm it by hand.
 
 ## Ownership and recovery
 

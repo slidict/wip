@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>pty-harness</AssemblyName>
+    <RootNamespace>Wip.PtyHarness</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <!--
+      Test-only, Windows-only, and never shipped: it exists so the e2e suite can create the
+      terminal a CI runner does not have. The AOT analyzers are what Wip.Core and Wip.Cli
+      carry; nothing here is published.
+    -->
+    <IsAotCompatible>false</IsAotCompatible>
+    <!--
+      Deliberately absent from wip.slnx. The solution is restored in locked mode and its
+      lock integrity is checked by scripts/Test-LockedRestore.ps1, which copies a fixed list
+      of projects into a fixture; a project with no package references adds nothing to that
+      check and only breaks the copy. The e2e workflow restores and publishes this one.
+    -->
+    <!--
+      ConPTY is a Windows facility, and saying so is what lets the interop carry
+      [SupportedOSPlatform("windows")] without the platform analyzer failing the build
+      (TreatWarningsAsErrors is on for the whole repository). Main still checks at runtime,
+      so building or running this on another host reports that in one line.
+    -->
+    <TargetPlatformIdentifier Condition="'$(TargetPlatformIdentifier)' == ''">windows</TargetPlatformIdentifier>
+  </PropertyGroup>
+
+</Project>

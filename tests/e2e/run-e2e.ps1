@@ -34,6 +34,12 @@
     Where the scratch copy of the fixture is created. Defaults to RUNNER_TEMP (set on GitHub
     Actions) and then to TEMP.
 
+.PARAMETER PtyHarness
+    Path to the pseudo-console harness (tests/e2e/PtyHarness) used by the terminal
+    assertions. Publish it with:
+
+        dotnet publish tests/e2e/PtyHarness/PtyHarness.csproj -c Release -o artifacts/pty
+
 .PARAMETER KeepWorkspace
     Leave the scratch directory behind for inspection.
 #>
@@ -43,6 +49,7 @@ param(
     [string] $Wslc = "wslc",
     [string] $BaseImage = "alpine:3.20",
     [string] $WorkRoot = $(if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { $env:TEMP }),
+    [string] $PtyHarness = "artifacts/pty/pty-harness.exe",
     [switch] $KeepWorkspace
 )
 
@@ -435,6 +442,18 @@ try {
 
     . (Join-Path $PSScriptRoot 'sandbox-mount.ps1')
     Invoke-SandboxMountE2E -Namespace $sandboxNamespace -Image 'wip-e2e:latest'
+
+    # The terminal half of interactive exec. Resolved before use rather than skipped if
+    # missing: a terminal assertion that quietly does not run is worse than one that fails.
+    . (Join-Path $PSScriptRoot 'pty-session.ps1')
+    $resolved = Resolve-Path -LiteralPath $PtyHarness -ErrorAction SilentlyContinue
+    $harnessPath = if ($resolved) { $resolved.Path } else { $null }
+    if (-not $harnessPath) {
+        throw "pty harness not found at '$PtyHarness'; publish it with " +
+            "'dotnet publish tests/e2e/PtyHarness/PtyHarness.csproj -c Release -o artifacts/pty' " +
+            "or pass -PtyHarness"
+    }
+    Invoke-PtyE2E -Harness $harnessPath -Sandbox 'fixture'
 
     Write-Step "All lifecycle assertions passed"
 }

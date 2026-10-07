@@ -57,13 +57,42 @@ ownership before removal. Volume finalizers explicitly remove only the declared 
 storage after consumers are gone. Nonzero cleanup fails the run. Failed runs keep the scratch
 configuration/journal for recovery, even without `-KeepWorkspace`.
 
+## The terminal half
+
+`pty-session.ps1` covers what only exists when a terminal does: whether the container's
+shell sees a tty, the size it reads, whether a resize reaches it, and whether Ctrl-C arrives
+as an interrupt rather than as a byte of text.
+
+A CI runner has no terminal, but that only means nobody hands one over — a process can create
+one. [`PtyHarness`](PtyHarness) calls `CreatePseudoConsole` (ConPTY), starts wip inside that
+console, and drives the session from a script of directives (`send`, `expect`, `resize`,
+`ctrl-c`, `eof`, `sleep`). Publish it alongside `wip.exe`:
+
+```powershell
+dotnet publish tests/e2e/PtyHarness/PtyHarness.csproj -c Release -o artifacts/pty
+pwsh tests/e2e/run-e2e.ps1 -Wip artifacts/win-x64/wip.exe -PtyHarness artifacts/pty/pty-harness.exe
+```
+
+Two things the harness learned the hard way, both documented at their call sites:
+
+- A process attached to a pseudo console still inherits the creator's standard handles when
+  the creator has its own, so a CI step's redirected pipes reach the child and `isatty` is
+  false — measured as `IsInputRedirected=True` in a correctly sized 80x24 console, with
+  `wslc exec -i` then failing with `ERROR_INVALID_HANDLE`. The harness therefore starts the
+  command through a second stage that opens the console's own `CONIN$`/`CONOUT$` first.
+- Closing the console's input before the session ends is read as the terminal going away. The
+  close event reaches `wslc`, which dies with `STATUS_CONTROL_C_EXIT`, and wip faithfully
+  reports that instead of the status the shell chose. A session that ends itself is given the
+  chance to; the outcome is written to `--result` before anything is closed, which is why the
+  assertions read that file rather than the harness's own exit code.
+
 ## In CI
 
 [`.github/workflows/e2e-windows.yml`](../../.github/workflows/e2e-windows.yml) runs it on
 `windows-latest`: it publishes `wip.exe`, updates stable WSL directly from GitHub
 with `wsl --update --web-download` (WSLC is GA in WSL 3.0.1 and later), verifies
-`wslc` is on PATH, then runs this script. It runs on every pull request, plus
-weekly and on demand. Keeping it out of the `Test` workflow is about that workflow staying
+`wslc` is on PATH, publishes the pseudo-console harness, then runs this script. It runs on
+every pull request, plus weekly and on demand. Keeping it out of the `Test` workflow is about that workflow staying
 WSLC-free on Linux, not about running this one rarely.
 
 If the runner image has no WSLC, the "Verify wslc is available" step says so in one line
