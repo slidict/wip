@@ -12,8 +12,26 @@ public sealed record SandboxStatus(string Name, string BackendName, string? Id, 
     public IReadOnlyList<SandboxMount> Mounts { get; init; } = Mounts ?? [];
 }
 
+/// <summary>How a backend invocation uses wip's own console.</summary>
+/// <remarks>
+/// One mode rather than a pair of booleans, because capturing a child's output and handing
+/// it the console are mutually exclusive: the interactive child writes straight to the
+/// terminal, so there is nothing left for wip to read.
+/// </remarks>
+public enum SandboxConsoleMode
+{
+    /// <summary>Stream the child's output through wip, keeping none of it.</summary>
+    Stream,
+
+    /// <summary>Capture the child's output so a probe can parse it.</summary>
+    Capture,
+
+    /// <summary>Hand wip's own stdin/stdout/stderr to the child so a user can drive it.</summary>
+    Interactive,
+}
+
 /// <summary>Backend argv are passed directly, never through a shell. Capture is only needed for probes.</summary>
-public delegate SandboxCommandResult SandboxBackend(IReadOnlyList<string> arguments, TimeSpan timeout, bool capture);
+public delegate SandboxCommandResult SandboxBackend(IReadOnlyList<string> arguments, TimeSpan timeout, SandboxConsoleMode console);
 
 public sealed class SandboxLifecycle(SandboxSettings settings, SandboxBackend backend, IVolumeLifecycle? volumes = null)
 {
@@ -89,7 +107,7 @@ public sealed class SandboxLifecycle(SandboxSettings settings, SandboxBackend ba
             }
             if (existing.State is not ("created" or "exited"))
                 throw Failure(name, $"cannot start state {existing.State}; run sandbox destroy, confirm absence, then sandbox create");
-            var started = backend(["start", existing.Id], MutationTimeout, false);
+            var started = backend(["start", existing.Id], MutationTimeout, SandboxConsoleMode.Stream);
             if (started.Code != 0) return started.Code;
         }
         else
@@ -119,7 +137,7 @@ public sealed class SandboxLifecycle(SandboxSettings settings, SandboxBackend ba
                 }
             }
             runArgs.Add(definition.Image);
-            var created = backend(runArgs, MutationTimeout, false);
+            var created = backend(runArgs, MutationTimeout, SandboxConsoleMode.Stream);
             // Even a failed/timed-out run can leave a container. Keep it for ownership-checked recovery.
             if (created.Code != 0) return created.Code;
         }
@@ -142,7 +160,7 @@ public sealed class SandboxLifecycle(SandboxSettings settings, SandboxBackend ba
         if (existing.State != "running")
             throw Failure(name, $"cannot stop state {existing.State}; inspect status before recovery");
         // Keep the container and all mounts. No volume lifecycle/reconciliation is needed.
-        var stopped = backend(["stop", existing.Id], MutationTimeout, false);
+        var stopped = backend(["stop", existing.Id], MutationTimeout, SandboxConsoleMode.Stream);
         if (stopped.Code != 0) return stopped.Code; // Outcome may be unknown; never retry here.
         var confirmed = Status(name);
         if (confirmed.Id != existing.Id || confirmed.State != "exited")
@@ -169,7 +187,7 @@ public sealed class SandboxLifecycle(SandboxSettings settings, SandboxBackend ba
                 }
             }
             // Deliberately no volume removal flag or volume command.
-            var removed = backend(["remove", "-f", existing.Id], MutationTimeout, false);
+            var removed = backend(["remove", "-f", existing.Id], MutationTimeout, SandboxConsoleMode.Stream);
             if (removed.Code != 0) return removed.Code;
             if (Status(name).Id is not null) throw Failure(name, "container still exists after removal; retry status before recovery");
         }
@@ -253,18 +271,82 @@ public sealed class SandboxLifecycle(SandboxSettings settings, SandboxBackend ba
 
     public int Exec(string name, IReadOnlyList<string> argv, TimeSpan timeout)
     {
-        if (argv.Count == 0 || string.IsNullOrEmpty(argv[0]) || argv[0].StartsWith('-'))
-            throw new ConfigException("sandbox exec requires an executable (use -- before its argv)");
+        ValidateArgv(argv);
         if (timeout <= TimeSpan.Zero || timeout.TotalMilliseconds > int.MaxValue)
             throw new ConfigException("sandbox exec timeout must be positive and at most 2147483 seconds");
+        return backend(["exec", RunningId(name), .. argv], timeout, SandboxConsoleMode.Stream).Code;
+    }
+
+    /// <summary>
+    /// Runs the same argv as <see cref="Exec"/>, but with wip's own stdin/stdout/stderr
+    /// handed to the child, which is what a shell, a REPL or any other interactive CLI needs.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// There is deliberately no deadline parameter. <see cref="Exec"/>'s timeout exists so an
+    /// automated call cannot hang a script; a session the user is typing into has no such
+    /// bound, and a deadline that killed it mid-edit would be a bug rather than a safeguard.
+    /// </para>
+    /// <para>
+    /// WSLC separates the two halves of docker's <c>-it</c>, and so does this: <c>-i</c>
+    /// attaches stdin and is always passed, because a session nothing can be typed into is
+    /// not interactive, while <paramref name="tty"/> adds <c>-t</c> only when wip's own stdin
+    /// and stdout are a terminal -- the same condition <c>wip exec</c> applies. Piping a
+    /// script into a sandboxed shell therefore still reaches it; it simply runs without a pty.
+    /// </para>
+    /// </remarks>
+    public int ExecInteractive(string name, IReadOnlyList<string> argv, bool tty)
+    {
+        ValidateArgv(argv);
+        var id = RunningId(name);
+        IReadOnlyList<string> arguments = tty ? ["exec", "-i", "-t", id, .. argv] : ["exec", "-i", id, .. argv];
+        return backend(arguments, Timeout.InfiniteTimeSpan, SandboxConsoleMode.Interactive).Code;
+    }
+
+    /// <summary>
+    /// Connects wip's console to the sandbox's existing main process -- the image's own
+    /// CMD/ENTRYPOINT, the process whose lifetime is the sandbox's lifetime.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is not <see cref="ExecInteractive"/> with a default command. Exec starts a new
+    /// process beside the main one and ends when that process ends; attach joins the process
+    /// that is already there, so what reaches it -- input, Ctrl-C, EOF -- reaches the process
+    /// the sandbox exists to run. Ending it ends the sandbox, which is why the two are
+    /// separate commands rather than one with a flag.
+    /// </para>
+    /// <para>
+    /// WSLC's <c>attach</c> takes no command and no <c>-i</c>/<c>-t</c> of its own: the
+    /// streams it joins are the ones the main process was started with. There is accordingly
+    /// no argv to validate and no terminal to request here, and no deadline, for the same
+    /// reason <see cref="ExecInteractive"/> has none.
+    /// </para>
+    /// </remarks>
+    public int Attach(string name) =>
+        backend(["attach", RunningId(name)], Timeout.InfiniteTimeSpan, SandboxConsoleMode.Interactive).Code;
+
+    /// <summary>
+    /// Both exec paths reject argv before any probe, so a usage error never reaches the
+    /// backend, and reject it in the same order: argv, then the mode's own options, then
+    /// the container's state.
+    /// </summary>
+    private static void ValidateArgv(IReadOnlyList<string> argv)
+    {
+        if (argv.Count == 0 || string.IsNullOrEmpty(argv[0]) || argv[0].StartsWith('-'))
+            throw new ConfigException("sandbox exec requires an executable (use -- before its argv)");
+    }
+
+    /// <summary>The verified ID of the owned container, which must already be running.</summary>
+    private string RunningId(string name)
+    {
         var existing = Status(name);
         if (existing.Id is null || existing.State != "running") throw Failure(name, "sandbox is not running; run sandbox create first");
-        return backend(["exec", existing.Id, .. argv], timeout, false).Code;
+        return existing.Id;
     }
 
     private string Probe(IReadOnlyList<string> argv)
     {
-        var result = backend(argv, ProbeTimeout, true);
+        var result = backend(argv, ProbeTimeout, SandboxConsoleMode.Capture);
         if (result.Code != 0) throw new WipException($"Sandbox probe failed (exit {result.Code}); existence/ownership is unknown. Retry status; no destructive recovery was attempted.");
         return result.Output;
     }

@@ -83,7 +83,7 @@ public sealed class VolumeLifecycle(SandboxSettings settings, SandboxBackend bac
         var instance = Guid.NewGuid().ToString("N");
         var candidate = BackendPrefix(settings.ResourceNamespace!, name) + instance;
         var result = backend(["volume", "create", "--label", $"{OwnerLabel}={Identity(name)}", "--label",
-            $"{PolicyLabel}={(definition.Persistent ? "true" : "false")}", "--label", $"{InstanceLabel}={instance}", candidate], MutationTimeout, false);
+            $"{PolicyLabel}={(definition.Persistent ? "true" : "false")}", "--label", $"{InstanceLabel}={instance}", candidate], MutationTimeout, SandboxConsoleMode.Stream);
         // Failed create may have left owned storage; preserve it, then recover through status.
         if (result.Code != 0) return result.Code;
         if (Find(name) != candidate) throw Failure(name, "creation outcome changed; retained storage requires investigation");
@@ -103,7 +103,7 @@ public sealed class VolumeLifecycle(SandboxSettings settings, SandboxBackend bac
         if (status.References.Count != 0) throw Failure(name, "still referenced by containers; remove every referencing container first");
         if (Find(name) != status.BackendName) throw Failure(name, "generation changed before removal; retry status");
         // WSLC also atomically rejects in-use storage. Never force or prune.
-        var result = backend(["volume", "remove", status.BackendName], MutationTimeout, false);
+        var result = backend(["volume", "remove", status.BackendName], MutationTimeout, SandboxConsoleMode.Stream);
         if (result.Code != 0) return result.Code;
         if (Find(name) is not null) throw Failure(name, "storage still exists after removal; no further deletion attempted");
         usage.Forget(status.BackendName);
@@ -182,7 +182,7 @@ public sealed class VolumeLifecycle(SandboxSettings settings, SandboxBackend bac
 
     private string Probe(IReadOnlyList<string> arguments, TimeSpan? timeout = null)
     {
-        var result = backend(arguments, timeout ?? ProbeTimeout, true);
+        var result = backend(arguments, timeout ?? ProbeTimeout, SandboxConsoleMode.Capture);
         if (result.Code != 0) throw new WipException($"Volume probe failed (exit {result.Code}); state is unknown, storage retained");
         return result.Output;
     }

@@ -31,9 +31,10 @@ public class SandboxLifecycleTests
         public int ExecCode;
         public bool LeaveResidue;
         public TimeSpan ExecTimeout;
+        public SandboxConsoleMode ExecConsole;
         public readonly string Name = SandboxLifecycle.BackendName("test", "first");
 
-        public SandboxCommandResult Run(IReadOnlyList<string> argv, TimeSpan timeout, bool capture)
+        public SandboxCommandResult Run(IReadOnlyList<string> argv, TimeSpan timeout, SandboxConsoleMode console)
         {
             Calls.Add(argv.ToArray());
             if (argv[0] == "list")
@@ -68,8 +69,8 @@ public class SandboxLifecycleTests
                 var defaultMounts = Mounts.Select(m => new { Type = m.Type, Name = m.Name, Destination = m.Destination }).ToArray();
                 return new(ProbeCode, JsonSerializer.Serialize(new[] { new { Id, Name, State, Labels = new Dictionary<string, string> { [SandboxLifecycle.OwnerLabel] = Owner }, Mounts = defaultMounts } }));
             }
-            Assert.False(capture);
-            if (argv[0] == "exec") { ExecTimeout = timeout; return new(ExecCode, ""); }
+            Assert.NotEqual(SandboxConsoleMode.Capture, console);
+            if (argv[0] is "exec" or "attach") { ExecTimeout = timeout; ExecConsole = console; return new(ExecCode, ""); }
             Assert.Equal(TimeSpan.FromMinutes(2), timeout);
             if (argv[0] == "run" && (MutationCode == 0 || LeaveResidue))
             {
@@ -123,6 +124,7 @@ public class SandboxLifecycleTests
         Assert.Equal(7, service.Exec("first", argv, TimeSpan.FromSeconds(17)));
         Assert.Equal(new[] { "exec", fake.Id }.Concat(argv), fake.Calls.Single(c => c[0] == "exec"));
         Assert.Equal(TimeSpan.FromSeconds(17), fake.ExecTimeout);
+        Assert.Equal(SandboxConsoleMode.Stream, fake.ExecConsole);
         Assert.Equal(0, service.Destroy("first"));
         Assert.Equal(0, service.Destroy("first"));
         Assert.Single(fake.Calls, c => c[0] == "run");
@@ -211,9 +213,9 @@ public class SandboxLifecycleTests
     public void UnconfirmedStopOutcomeFailsClosedWithoutRetry(string outcome)
     {
         var fake = new Fake { Exists = true };
-        SandboxCommandResult Backend(IReadOnlyList<string> argv, TimeSpan timeout, bool capture)
+        SandboxCommandResult Backend(IReadOnlyList<string> argv, TimeSpan timeout, SandboxConsoleMode console)
         {
-            var result = fake.Run(argv, timeout, capture);
+            var result = fake.Run(argv, timeout, console);
             if (argv[0] == "stop")
             {
                 if (outcome is "running" or "unknown") fake.State = outcome;
@@ -303,6 +305,80 @@ public class SandboxLifecycleTests
         fake.MutationCode = 0;
         fake.LeaveResidue = true;
         Assert.Throws<WipException>(() => service.Destroy("first"));
+    }
+
+    /// <summary>
+    /// The interactive session is the same verified-ID exec with wip's console handed over:
+    /// a terminal is requested, the deadline is gone, and the child's status still comes back.
+    /// </summary>
+    [Fact]
+    public void InteractiveExecRequestsATerminalAndRunsWithoutADeadline()
+    {
+        var fake = new Fake { Exists = true, ExecCode = 7 };
+        var service = new SandboxLifecycle(Settings(), fake.Run);
+        string[] argv = ["sh", "-c", "read line; exit 7"];
+        Assert.Equal(7, service.ExecInteractive("first", argv, tty: true));
+        Assert.Equal(new[] { "exec", "-i", "-t", fake.Id }.Concat(argv), fake.Calls.Single(c => c[0] == "exec"));
+        Assert.Equal(SandboxConsoleMode.Interactive, fake.ExecConsole);
+        Assert.Equal(Timeout.InfiniteTimeSpan, fake.ExecTimeout);
+    }
+
+    /// <summary>
+    /// Without a terminal of its own wip must not ask WSLC for one, but it must still
+    /// attach stdin: dropping -i as well would silently turn a piped script into a session
+    /// the child never receives, which is how this was first found against a real container.
+    /// </summary>
+    [Fact]
+    public void InteractiveExecWithoutATerminalKeepsTheSessionAndDropsTheTtyRequest()
+    {
+        var fake = new Fake { Exists = true };
+        var service = new SandboxLifecycle(Settings(), fake.Run);
+        Assert.Equal(0, service.ExecInteractive("first", ["sh"], tty: false));
+        Assert.Equal(["exec", "-i", fake.Id, "sh"], fake.Calls.Single(c => c[0] == "exec"));
+        Assert.Equal(SandboxConsoleMode.Interactive, fake.ExecConsole);
+        Assert.Equal(Timeout.InfiniteTimeSpan, fake.ExecTimeout);
+    }
+
+    /// <summary>
+    /// Interactive execution never creates a sandbox implicitly and rejects the same argv
+    /// the non-interactive path rejects, both before the backend is reached.
+    /// </summary>
+    [Fact]
+    public void InteractiveExecRequiresARunningSandboxAndAnExecutable()
+    {
+        var fake = new Fake();
+        var service = new SandboxLifecycle(Settings(), fake.Run);
+        Assert.Throws<WipException>(() => service.ExecInteractive("first", ["bash"], tty: true));
+        Assert.Throws<ConfigException>(() => service.ExecInteractive("first", [], tty: true));
+        Assert.Throws<ConfigException>(() => service.ExecInteractive("first", ["--help"], tty: true));
+        Assert.Throws<ConfigException>(() => service.ExecInteractive("missing", ["bash"], tty: true));
+        Assert.DoesNotContain(fake.Calls, c => c[0] is "run" or "exec");
+    }
+
+    /// <summary>
+    /// Attach joins the main process by verified ID: no argv, no deadline, and the status it
+    /// reports is the one that process ended with.
+    /// </summary>
+    [Fact]
+    public void AttachJoinsTheMainProcessByVerifiedIdWithoutArgvOrADeadline()
+    {
+        var fake = new Fake { Exists = true, ExecCode = 7 };
+        var service = new SandboxLifecycle(Settings(), fake.Run);
+        Assert.Equal(7, service.Attach("first"));
+        Assert.Equal(["attach", fake.Id], fake.Calls.Single(c => c[0] == "attach"));
+        Assert.Equal(SandboxConsoleMode.Interactive, fake.ExecConsole);
+        Assert.Equal(Timeout.InfiniteTimeSpan, fake.ExecTimeout);
+        Assert.DoesNotContain(fake.Calls, c => c[0] == "exec");
+    }
+
+    [Fact]
+    public void AttachRequiresARunningSandboxAndAKnownDefinition()
+    {
+        var fake = new Fake();
+        var service = new SandboxLifecycle(Settings(), fake.Run);
+        Assert.Throws<WipException>(() => service.Attach("first"));
+        Assert.Throws<ConfigException>(() => service.Attach("missing"));
+        Assert.DoesNotContain(fake.Calls, c => c[0] is "run" or "attach");
     }
 
     [Fact]

@@ -96,6 +96,37 @@ function Invoke-Wslc([string[]] $Arguments) {
     return Invoke-Capture -Exe $Wslc -Arguments $Arguments
 }
 
+# Drives an interactive session with no terminal to allocate: wip's stdin is a file of lines,
+# --interactive forwards them to the child, and the end of the file is the EOF that ends the
+# session. A pty is the one part this cannot cover -- GitHub Actions has no terminal, so that
+# stays a manual check.
+#
+# The lines are written with an explicit LF because PowerShell's own pipeline writes CRLF:
+# `exit 7` then reaches the shell as the argument "7`r", which it rejects as an illegal
+# number. Redirection goes through files rather than pipes so there is no reader to deadlock
+# and no dependency on a particular PowerShell edition's process API.
+function Invoke-WipWithStdin([string[]] $Arguments, [string[]] $Lines) {
+    $stem = Join-Path ([IO.Path]::GetTempPath()) ("wip-e2e-stdin-" + [guid]::NewGuid().ToString('N'))
+    $stdinPath = "$stem.in"
+    $stdoutPath = "$stem.out"
+    $stderrPath = "$stem.err"
+    [IO.File]::WriteAllText($stdinPath, (($Lines -join "`n") + "`n"))
+    try {
+        $process = Start-Process -FilePath $script:WipPath -ArgumentList $Arguments `
+            -WorkingDirectory $script:Workspace -NoNewWindow -Wait -PassThru `
+            -RedirectStandardInput $stdinPath -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+        $code = $process.ExitCode
+        $output = [IO.File]::ReadAllText($stdoutPath) + [IO.File]::ReadAllText($stderrPath)
+    }
+    finally {
+        Remove-Item $stdinPath, $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
+    }
+
+    Write-Host "`$ wip $($Arguments -join ' ')  <- $($Lines.Count) stdin line(s)  -> exit $code"
+    if ($output.Trim()) { Write-Host $output.TrimEnd() }
+    return [pscustomobject]@{ Code = $code; Output = $output }
+}
+
 function Assert-Exit($Result, [int] $Expected, [string] $What) {
     if ($Result.Code -ne $Expected) {
         throw "$What exited $($Result.Code), expected $Expected"
@@ -380,6 +411,21 @@ try {
     Assert-Exit $sandboxExec 0 'sandbox argv preservation'
     Assert-Match $sandboxExec ([regex]::Escape('literal spaces ; $()')) 'literal sandbox argument'
     Assert-Exit (Invoke-Wip @('sandbox', 'exec', 'fixture', '--', 'sh', '-c', 'exit 7')) 7 'sandbox exit code'
+
+    # The interactive transport over the real Windows -> WSLC -> container path: several
+    # lines of stdin reach the shell while it is still running, its output comes back, EOF
+    # ends it, and the status it chose is the one wip returns.
+    $interactive = Invoke-WipWithStdin `
+        @('sandbox', 'exec', 'fixture', '--interactive', '--', 'sh') `
+        @('echo first-line', 'echo second-line', 'exit 7')
+    Assert-Exit $interactive 7 'interactive sandbox exit code'
+    Assert-Match $interactive 'first-line' 'interactive stdin reached the sandbox'
+    Assert-Match $interactive 'second-line' 'interactive stdin stayed open for a second command'
+
+    # Asking for a deadline on a session that has none is a usage error, not a silent drop.
+    Assert-NonZero (Invoke-Wip @('sandbox', 'exec', 'fixture', '--interactive', '--timeout', '30', '--', 'sh')) `
+        'interactive with --timeout'
+
     Assert-Exit (Invoke-Wip @('sandbox', 'destroy', 'fixture')) 0 'sandbox destroy'
     Assert-Exit (Invoke-Wip @('sandbox', 'destroy', 'fixture')) 0 'repeated sandbox destroy'
     Assert-Match (Invoke-Wip @('sandbox', 'status', 'fixture')) 'fixture\s+not found' 'sandbox absent'
