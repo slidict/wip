@@ -60,8 +60,10 @@ configuration/journal for recovery, even without `-KeepWorkspace`.
 ## The terminal half
 
 `pty-session.ps1` covers what only exists when a terminal does: whether the container's
-shell sees a tty, the size it reads, whether a resize reaches it, and whether Ctrl-C arrives
-as an interrupt rather than as a byte of text.
+shell sees a tty, the size it reads, whether a resize reaches it, whether Ctrl-C arrives as
+an interrupt rather than as a byte of text, and whether `sandbox attach` reaches the main
+process. The fixture image's CMD ticks once a second so an attached session has something to
+show for itself; nothing else in the suite reads that output.
 
 A CI runner has no terminal, but that only means nobody hands one over — a process can create
 one. [`PtyHarness`](PtyHarness) calls `CreatePseudoConsole` (ConPTY), starts wip inside that

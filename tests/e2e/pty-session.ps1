@@ -128,6 +128,26 @@ function Invoke-PtyE2E([string] $Harness, [string] $Sandbox) {
     Assert-Match $interrupt 'GOT_SIGINT' 'Ctrl-C reaches the container as an interrupt'
     Assert-Exit $interrupt 42 'the interrupted shell status survives the pty session'
 
+    Assert-Exit (Invoke-Wip @('sandbox', 'create', $Sandbox)) 0 'sandbox running before the attach session'
+
+    # attach joins the main process instead of starting one, so the evidence that the session
+    # reached it is that process's own output -- which is why the fixture image ticks.
+    $attached = Invoke-PtySession -Harness $Harness -TimeoutSeconds 30 -Lines @(
+        'expect wip-e2e-main-tick-'
+        # Ending an attached session is the terminal going away, and Ctrl-C is that here.
+        'ctrl-c'
+        'sleep 2000'
+    ) -WipArguments @('sandbox', 'attach', $Sandbox)
+
+    # Status rather than exit code: an attached session ends through a console control event,
+    # so what wip reports is that event's status and not anything the container chose. 'ok'
+    # here means the output arrived and the session ended instead of hanging, which is what
+    # this scenario is about.
+    Assert-PtyOk $attached 'pty session (attach)'
+    Assert-Match $attached 'wip-e2e-main-tick-' 'attach reaches the sandbox main process'
+    Assert-Match (Invoke-Wip @('sandbox', 'status', $Sandbox)) ([regex]::Escape($Sandbox) + '\s+running') `
+        'the main process outlives the attached terminal'
+
     # The suite's own cleanup repeats this; destroying here keeps the section self-contained
     # and proves the fixture survived the sessions well enough to be removed by its ID.
     Assert-Exit (Invoke-Wip @('sandbox', 'destroy', $Sandbox)) 0 'destroy the fixture after the pty sessions'
