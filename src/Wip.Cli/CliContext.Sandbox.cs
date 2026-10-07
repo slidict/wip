@@ -4,7 +4,7 @@ namespace Wip.Cli;
 
 internal sealed partial class CliContext
 {
-    internal int Sandbox(string operation, string name, string[] argv, int timeoutSeconds)
+    internal int Sandbox(string operation, string name, string[] argv, int timeoutSeconds, bool interactive = false)
     {
         if (operation == "status")
         {
@@ -16,7 +16,12 @@ internal sealed partial class CliContext
         if (operation == "exec")
         {
             var lifecycle = new SandboxLifecycle(Config.SandboxResources, ResourceBackend());
-            return lifecycle.Exec(name, argv, TimeSpan.FromSeconds(timeoutSeconds));
+            // Tty() keeps the -t request honest: a terminal wip itself does not have cannot
+            // be handed on, so a piped invocation gets stdin attached without a pty rather
+            // than asking wslc for one that does not exist.
+            return interactive
+                ? lifecycle.ExecInteractive(name, argv, Tty(true))
+                : lifecycle.Exec(name, argv, TimeSpan.FromSeconds(timeoutSeconds));
         }
         if (operation == "stop")
         {

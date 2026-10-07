@@ -27,6 +27,52 @@ public class SandboxCommandTests
         Assert.Equal(["printf", "%s", "spaces ; $()", "--config", "operand", ""], parsed.GetValue(argv)!);
     }
 
+    /// <summary>
+    /// Every spelling of the flag -- including the bundled <c>-it</c> people type out of
+    /// docker habit -- has to reach the same option, and none of them may be mistaken for
+    /// the executable's own argv.
+    /// </summary>
+    [Theory]
+    [InlineData("--interactive")]
+    [InlineData("-i")]
+    [InlineData("-t")]
+    [InlineData("-it")]
+    public void InteractiveFlagParsesInEverySpellingAndLeavesArgvAlone(string flag)
+    {
+        var parsed = Program.Parse(Program.BuildRoot(), ["sandbox", "exec", "first", flag, "--", "bash", "-l"]);
+        Assert.Empty(parsed.Errors);
+        var command = parsed.CommandResult.Command;
+        var interactive = Assert.IsType<Option<bool>>(command.Options.Single(o => o.Name == "--interactive"));
+        Assert.True(parsed.GetValue(interactive));
+        var argv = Assert.IsType<Argument<string[]>>(command.Arguments.Single(a => a.Name == "argv"));
+        Assert.Equal(["bash", "-l"], parsed.GetValue(argv)!);
+    }
+
+    [Fact]
+    public void ExecIsNonInteractiveUnlessAsked()
+    {
+        var parsed = Program.Parse(Program.BuildRoot(), ["sandbox", "exec", "first", "--", "true"]);
+        Assert.Empty(parsed.Errors);
+        var interactive = Assert.IsType<Option<bool>>(
+            parsed.CommandResult.Command.Options.Single(o => o.Name == "--interactive"));
+        Assert.False(parsed.GetValue(interactive));
+    }
+
+    /// <summary>
+    /// An interactive session has no deadline, so a <c>--timeout</c> given alongside it is
+    /// reported rather than silently dropped -- the caller would otherwise believe the
+    /// session is bounded.
+    /// </summary>
+    [Fact]
+    public void TimeoutWithInteractiveIsRejected()
+    {
+        var parsed = Program.BuildRoot().Parse(["sandbox", "exec", "first", "--interactive", "--timeout", "30", "--", "bash"]);
+        var invocation = new InvocationConfiguration { EnableDefaultExceptionHandler = false };
+
+        var exception = Assert.Throws<ConfigException>(() => parsed.Invoke(invocation));
+        Assert.Contains("--interactive has no deadline", exception.Message);
+    }
+
     [Fact]
     public void MissingExecutableIsUsageError()
     {

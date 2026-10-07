@@ -65,10 +65,10 @@ public class VolumeLifecycleTests
             return name;
         }
 
-        public SandboxCommandResult Run(IReadOnlyList<string> argv, TimeSpan timeout, bool capture)
+        public SandboxCommandResult Run(IReadOnlyList<string> argv, TimeSpan timeout, SandboxConsoleMode console)
         {
             Calls.Add(argv.ToArray());
-            if (capture)
+            if (console == SandboxConsoleMode.Capture)
             {
                 Assert.InRange(timeout, TimeSpan.FromMilliseconds(1), TimeSpan.FromSeconds(10));
                 if (ProbeCode != 0) return new(ProbeCode, "");
@@ -257,9 +257,9 @@ public class VolumeLifecycleTests
         Assert.Equal(3, fake.Calls.Count(c => c[0] == "inspect"));
         Assert.All(fake.Calls.Where(c => c[0] == "inspect"), c => Assert.InRange(c.Length - 5, 1, 100));
         var clock = new Clock(); usage.Used.Clear(); fake.Calls.Clear();
-        SandboxCommandResult Slow(IReadOnlyList<string> argv, TimeSpan timeout, bool capture)
+        SandboxCommandResult Slow(IReadOnlyList<string> argv, TimeSpan timeout, SandboxConsoleMode console)
         {
-            var result = fake.Run(argv, timeout, capture);
+            var result = fake.Run(argv, timeout, console);
             if (argv[0] == "inspect") clock.Ticks += TimeSpan.FromSeconds(6).Ticks;
             return result;
         }

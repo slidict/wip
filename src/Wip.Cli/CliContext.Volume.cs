@@ -27,14 +27,21 @@ internal sealed partial class CliContext
     private SandboxBackend ResourceBackend()
     {
         var executable = Resolver.Resolve(Config.WslcCommand);
-        return (arguments, timeout, capture) =>
+        return (arguments, timeout, console) =>
         {
-            if (capture)
+            if (console == SandboxConsoleMode.Capture)
             {
                 var result = Probe([executable, .. arguments], timeout);
                 return new(result.Code, result.Output);
             }
             var runner = new CommandRunner(Interpreter, debug: Debug, quiet: Quiet);
+            if (console == SandboxConsoleMode.Interactive)
+            {
+                // The child owns the console, so there is no stream for CommandRunner to
+                // read and no deadline to enforce: the session ends when the child exits.
+                // Its exit status is still the one wip returns.
+                return new(runner.Run([executable, .. arguments], interactive: true), "");
+            }
             return new(runner.Run([executable, .. arguments], timeout: timeout), "");
         };
     }

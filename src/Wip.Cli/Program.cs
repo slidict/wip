@@ -151,9 +151,36 @@ internal static class Program
             {
                 var argv = new Argument<string[]>("argv") { Arity = ArgumentArity.OneOrMore };
                 var timeout = new Option<int>("--timeout") { DefaultValueFactory = _ => 300, Description = "Execution deadline in seconds (default: 300)" };
+                // One flag with four spellings, including the bundled -it people type out of
+                // docker habit. The two halves it bundles are not a choice the caller has to
+                // make: stdin is always attached, and a terminal is requested exactly when
+                // wip has one to give, so there is no combination left to select.
+                var interactive = new Option<bool>("--interactive", "-i", "-t", "-it")
+                {
+                    Description =
+                        "Keep stdin attached and give the child wip's console, with no deadline " +
+                        "(for a shell, REPL, debugger or other interactive CLI)",
+                };
                 command.Arguments.Add(argv);
                 command.Options.Add(timeout);
-                command.SetAction(parsed => context(parsed).Sandbox("exec", parsed.GetValue(name)!, parsed.GetValue(argv)!, parsed.GetValue(timeout)));
+                command.Options.Add(interactive);
+                command.SetAction(parsed =>
+                {
+                    var wantsInteractive = parsed.GetValue(interactive);
+
+                    // --timeout is reported rather than ignored: silently dropping it would
+                    // leave a caller believing an interactive session is bounded when the
+                    // whole point of the mode is that it is not.
+                    if (wantsInteractive && parsed.GetResult(timeout) is { Implicit: false })
+                    {
+                        throw new ConfigException(
+                            "sandbox exec --interactive has no deadline; drop --timeout, " +
+                            "or drop --interactive to run with one");
+                    }
+
+                    return context(parsed).Sandbox(
+                        "exec", parsed.GetValue(name)!, parsed.GetValue(argv)!, parsed.GetValue(timeout), wantsInteractive);
+                });
             }
             else
             {

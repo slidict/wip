@@ -96,6 +96,26 @@ function Invoke-Wslc([string[]] $Arguments) {
     return Invoke-Capture -Exe $Wslc -Arguments $Arguments
 }
 
+# Feeds lines to wip's stdin, which is how an interactive session can be driven with no
+# terminal to allocate: the pipeline is wip's stdin, so --interactive forwards it to the
+# child, and the pipeline closing is the EOF that ends the session. A pty is the one part
+# this cannot cover -- GitHub Actions has no terminal, so that stays a manual check.
+function Invoke-WipWithStdin([string[]] $Arguments, [string[]] $Lines) {
+    $previous = $PWD
+    if ($script:Workspace) { Set-Location $script:Workspace }
+    try {
+        $output = $Lines | & $script:WipPath @Arguments 2>&1 | Out-String
+        $code = $LASTEXITCODE
+    }
+    finally {
+        Set-Location $previous
+    }
+
+    Write-Host "$ $($Arguments -join ' ')  <- $($Lines.Count) stdin line(s)  -> exit $code"
+    if ($output.Trim()) { Write-Host $output.TrimEnd() }
+    return [pscustomobject]@{ Code = $code; Output = $output }
+}
+
 function Assert-Exit($Result, [int] $Expected, [string] $What) {
     if ($Result.Code -ne $Expected) {
         throw "$What exited $($Result.Code), expected $Expected"
@@ -380,6 +400,21 @@ try {
     Assert-Exit $sandboxExec 0 'sandbox argv preservation'
     Assert-Match $sandboxExec ([regex]::Escape('literal spaces ; $()')) 'literal sandbox argument'
     Assert-Exit (Invoke-Wip @('sandbox', 'exec', 'fixture', '--', 'sh', '-c', 'exit 7')) 7 'sandbox exit code'
+
+    # The interactive transport over the real Windows -> WSLC -> container path: several
+    # lines of stdin reach the shell while it is still running, its output comes back, EOF
+    # ends it, and the status it chose is the one wip returns.
+    $interactive = Invoke-WipWithStdin `
+        @('sandbox', 'exec', 'fixture', '--interactive', '--', 'sh') `
+        @('printf first-line\n', 'printf second-line\n', 'exit 7')
+    Assert-Exit $interactive 7 'interactive sandbox exit code'
+    Assert-Match $interactive 'first-line' 'interactive stdin reached the sandbox'
+    Assert-Match $interactive 'second-line' 'interactive stdin stayed open for a second command'
+
+    # Asking for a deadline on a session that has none is a usage error, not a silent drop.
+    Assert-NonZero (Invoke-Wip @('sandbox', 'exec', 'fixture', '--interactive', '--timeout', '30', '--', 'sh')) `
+        'interactive with --timeout'
+
     Assert-Exit (Invoke-Wip @('sandbox', 'destroy', 'fixture')) 0 'sandbox destroy'
     Assert-Exit (Invoke-Wip @('sandbox', 'destroy', 'fixture')) 0 'repeated sandbox destroy'
     Assert-Match (Invoke-Wip @('sandbox', 'status', 'fixture')) 'fixture\s+not found' 'sandbox absent'
