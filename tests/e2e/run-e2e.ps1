@@ -96,22 +96,33 @@ function Invoke-Wslc([string[]] $Arguments) {
     return Invoke-Capture -Exe $Wslc -Arguments $Arguments
 }
 
-# Feeds lines to wip's stdin, which is how an interactive session can be driven with no
-# terminal to allocate: the pipeline is wip's stdin, so --interactive forwards it to the
-# child, and the pipeline closing is the EOF that ends the session. A pty is the one part
-# this cannot cover -- GitHub Actions has no terminal, so that stays a manual check.
+# Drives an interactive session with no terminal to allocate: wip's stdin is a file of lines,
+# --interactive forwards them to the child, and the end of the file is the EOF that ends the
+# session. A pty is the one part this cannot cover -- GitHub Actions has no terminal, so that
+# stays a manual check.
+#
+# The lines are written with an explicit LF because PowerShell's own pipeline writes CRLF:
+# `exit 7` then reaches the shell as the argument "7`r", which it rejects as an illegal
+# number. Redirection goes through files rather than pipes so there is no reader to deadlock
+# and no dependency on a particular PowerShell edition's process API.
 function Invoke-WipWithStdin([string[]] $Arguments, [string[]] $Lines) {
-    $previous = $PWD
-    if ($script:Workspace) { Set-Location $script:Workspace }
+    $stem = Join-Path ([IO.Path]::GetTempPath()) ("wip-e2e-stdin-" + [guid]::NewGuid().ToString('N'))
+    $stdinPath = "$stem.in"
+    $stdoutPath = "$stem.out"
+    $stderrPath = "$stem.err"
+    [IO.File]::WriteAllText($stdinPath, (($Lines -join "`n") + "`n"))
     try {
-        $output = $Lines | & $script:WipPath @Arguments 2>&1 | Out-String
-        $code = $LASTEXITCODE
+        $process = Start-Process -FilePath $script:WipPath -ArgumentList $Arguments `
+            -WorkingDirectory $script:Workspace -NoNewWindow -Wait -PassThru `
+            -RedirectStandardInput $stdinPath -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+        $code = $process.ExitCode
+        $output = [IO.File]::ReadAllText($stdoutPath) + [IO.File]::ReadAllText($stderrPath)
     }
     finally {
-        Set-Location $previous
+        Remove-Item $stdinPath, $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
     }
 
-    Write-Host "$ $($Arguments -join ' ')  <- $($Lines.Count) stdin line(s)  -> exit $code"
+    Write-Host "`$ wip $($Arguments -join ' ')  <- $($Lines.Count) stdin line(s)  -> exit $code"
     if ($output.Trim()) { Write-Host $output.TrimEnd() }
     return [pscustomobject]@{ Code = $code; Output = $output }
 }
@@ -406,7 +417,7 @@ try {
     # ends it, and the status it chose is the one wip returns.
     $interactive = Invoke-WipWithStdin `
         @('sandbox', 'exec', 'fixture', '--interactive', '--', 'sh') `
-        @('printf first-line\n', 'printf second-line\n', 'exit 7')
+        @('echo first-line', 'echo second-line', 'exit 7')
     Assert-Exit $interactive 7 'interactive sandbox exit code'
     Assert-Match $interactive 'first-line' 'interactive stdin reached the sandbox'
     Assert-Match $interactive 'second-line' 'interactive stdin stayed open for a second command'
