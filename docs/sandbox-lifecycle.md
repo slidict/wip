@@ -135,10 +135,12 @@ wip sandbox attach first
   pseudo console, attach reaches the main process and the session behaves normally.
 - **The main process outlives the terminal.** Ending an attached session — Ctrl-C, or the
   terminal going away — does not stop the sandbox: the image's CMD runs as PID 1, which
-  ignores SIGINT unless it handles it. Asserted in CI. What the session itself reports is the
-  control event's own status rather than anything the container chose, so an attached
-  session's exit code is not a status to read meaning into.
-- **Exit code.** The status the main process ended with, unchanged.
+  ignores SIGINT unless it handles it. Asserted in CI.
+- **Exit code, depending on who ended the session.** If the main process ends on its own while
+  you are attached, its status is what comes back unchanged (measured: a CMD exiting 9 returns
+  9). If you end the session instead, what comes back is that control event's status —
+  `STATUS_CONTROL_C_EXIT`, not something the container chose — which is why the e2e scenario
+  asserts the output and the sandbox's state rather than the exit code.
 
 Unit tests pin the argv WSLC receives — `exec -i -t <id> …` with a terminal, `exec -i <id> …`
 without one, `attach <id>` with neither argv nor flags — the absence of a deadline on both,
