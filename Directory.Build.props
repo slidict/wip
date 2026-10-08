@@ -13,7 +13,7 @@
   </PropertyGroup>
 
   <PropertyGroup>
-    <Version>2.10.0</Version>
+    <Version>2.11.0</Version>
     <Authors>wip contributors</Authors>
     <Product>wip</Product>
     <Description>A developer-friendly CLI wrapper for Microsoft WSLC.</Description>
