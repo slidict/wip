@@ -23,10 +23,10 @@ long-running host process from the intended Herdr pane:
 wip sandbox relay NAME --upstream HERDR_SOCKET_PATH
 ```
 
-The relay idempotently creates `/run/wip/herdr/report.fifo` inside the sandbox with
+The relay idempotently creates `/run/wip/report.fifo` inside the sandbox with
 `mkfifo -m 600`, owned by the sandbox CLI user. On reuse, verify it is a FIFO with
 that owner and mode 0600; refuse a regular file, symlink or unsafe permissions.
-The host relay runs `wip sandbox exec NAME -- cat /run/wip/herdr/report.fifo`
+The host relay runs `wip sandbox exec NAME -- cat /run/wip/report.fifo`
 and reads one JSON line per report from stdout. When cat exits, the reader must
 reopen the FIFO by starting cat again while the relay remains active.
 
