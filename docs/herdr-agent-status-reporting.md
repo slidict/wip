@@ -1,7 +1,7 @@
 # Herdr agent status reporting from sandboxes
 
 Design contract updated from real-host measurements; the TCP relay changes below
-still require implementation and connectivity verification.
+are gated on connectivity and off-host reachability verification before implementation.
 
 ## Goals and non-goals
 
@@ -20,7 +20,11 @@ Opt in per sandbox with `report_relay: true` in `wip.yml`. The sandbox-to-host l
 must use TCP at `host.docker.internal:PORT`. Windows wip cannot create an AF_UNIX
 socket reachable by a Linux container through a bind-mounted Windows directory.
 Drop `/run/wip/herdr`, its socket mount, overlap reservation and mount-mismatch
-checks: the directory has no remaining reporting purpose.
+checks: the container directory has no remaining reporting purpose. The relay binds
+an ephemeral TCP port (`PORT`, selected by the OS) and publishes the chosen host
+and port in a host-side state file under the sandbox relay directory, readable only
+by the host user. `wip sandbox exec` reads that file to discover the endpoint;
+there is no port argument. The host-side directory is never mounted in the container.
 
 Start the separate, long-running host process with:
 
@@ -29,10 +33,18 @@ wip sandbox relay NAME --upstream HERDR_SOCKET_PATH
 ```
 
 The upstream argument identifies a Windows named pipe, not a Unix socket. For each
-exec, wip generates a cryptographically random shared secret, registers it with
-that relay for the launch lifetime, and exports:
+exec, wip generates a cryptographically random shared secret. Relay and exec run
+as the same host user and communicate over a host-only Windows named pipe with
+an owner-only ACL. This control channel carries exactly two operations:
+`register token` and `revoke token`; it is never exposed to the sandbox.
 
-- `WIP_REPORT_SOCKET`: the TCP endpoint `host.docker.internal:PORT` (legacy variable name).
+Exec registers the token and waits for success before starting the child, then
+revokes it when the child exits, including abnormal exit. A relay restart invalidates
+every outstanding token. If registration fails, exec launches the command with no
+relay environment variables at all rather than failing the interactive launch.
+After successful registration, exec exports:
+
+- `WIP_REPORT_ENDPOINT`: the host and port read from the relay state file.
 - `WIP_REPORT_SOURCE`: `wip:SANDBOX`, using the sandbox name.
 - `WIP_REPORT_TOKEN`: the per-launch shared secret.
 - `HERDR_PANE_ID`: passed through from the host when present.
@@ -45,7 +57,16 @@ launches share that source but have separate tokens. The shim requires `--agent`
 
 ## Wire protocol
 
-Use UTF-8 JSON Lines over TCP. The proposed first line authenticates the connection:
+Use UTF-8 JSON Lines over the approved TCP transport. Sending a bearer token in
+cleartext lets an observer on the path reuse it for the launch lifetime. Before
+implementing the TCP leg, prove the relay bind address is not reachable from off
+the host. If it is reachable, require TLS or equivalent per-message authentication
+that prevents interception and replay; the cleartext bearer-token exchange is not
+acceptable. Connectivity and reachability are still **UNVERIFIED** because the
+check needs a listening host port. Implementation of the TCP leg must not proceed
+until that check is done and the required protection is established.
+
+On an approved transport, the first JSON line authenticates the connection:
 
 ```json
 {"token":"<WIP_REPORT_TOKEN>"}
@@ -131,21 +152,26 @@ continues when explicit reports are unavailable; relay loss must not fabricate `
 
 ## Acceptance procedure
 
-1. Opt in, start the host relay with the named-pipe upstream, and open a listening
-   TCP port on the Windows host. From the container, resolve `host.docker.internal`
-   and test an inbound connection. This connectivity step is still unverified.
-2. Launch each CLI interactively. Check endpoint, source, token and optional pane
+1. Before TCP implementation, use a host listening-port probe to test container
+   connectivity through `host.docker.internal` and reachability from off the host.
+   Record the results; if off-host reachable, require TLS or equivalent per-message
+   authentication before proceeding. These checks are still unverified.
+2. Once the gate passes, opt in and start the relay with the named-pipe upstream.
+   Verify its ephemeral endpoint state file and control pipe are owner-only. Launch
+   each CLI interactively. Check endpoint, source, token and optional pane
    variables; confirm tokens differ per exec, private-volume mounts and ownership
    rules are unchanged, and no host pipe, discovery file or credentials were added.
 3. Reject missing, wrong and expired tokens without any upstream call. Try unknown
    methods, extra top-level fields, invalid shapes and lines over 16 KiB; verify
    `relay_refused`. Supply another source and verify it is replaced by `wip:SANDBOX`.
 4. Against real Herdr, send `pane.report_agent` with verified params and observe
-   `working ↁEblocked ↁEworking ↁEidle`, success and blank-ID rejection responses.
+   `working -> blocked -> working -> idle`, success and blank-ID rejection responses.
    Trigger a real approval hook without screen scraping. Verify session params and
    sequence behavior separately before claiming session integration works.
-5. Run concurrent launches, end one and verify its token is revoked. Disconnect the
-   relay and launch without opt-in or pane context. Verify hooks finish within two
+5. Run concurrent launches; verify register precedes child start and normal or
+   abnormal child exit revokes its token. Restart the relay and verify all tokens
+   expire. Force registration failure and verify the child starts with no relay
+   environment variables. Disconnect the relay and launch without opt-in or pane context. Verify hooks finish within two
    seconds, fallback remains available, and input, Ctrl-C, terminal sizing and child
    exit status match existing execution. Confirm members cannot create/destroy sandboxes.
 
@@ -159,5 +185,6 @@ The real methods are `pane.report_agent` and `pane.report_agent_session`; the
 report params and response shapes above were measured against real Herdr.
 
 The container's default gateway is `172.17.0.1`; `host.docker.internal` resolves to
-the host LAN address, not loopback. Whether the host actually accepts an inbound
-connection from the container is **UNVERIFIED**: it requires a listening host port.
+the host LAN address, not loopback. Container-to-host connectivity and off-host
+reachability are both **UNVERIFIED**: they require a listening host port. They are
+an implementation gate for the TCP leg, as defined above.
