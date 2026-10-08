@@ -1,3 +1,4 @@
+using System.IO.Pipes;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
@@ -21,7 +22,8 @@ public sealed record ReportRelayDecision(bool Accepted, string? Forward, string?
 /// </para>
 /// <para>
 /// The relay also stamps <c>params.source</c> with its own source id, so one sandbox cannot
-/// report under another's name.
+/// report under another's name. Every other param, <c>pane_id</c> included, passes through
+/// for Herdr to validate.
 /// </para>
 /// </remarks>
 public static class ReportRelay
@@ -42,8 +44,8 @@ public static class ReportRelay
 
     public static readonly IReadOnlySet<string> AllowedMethods = new HashSet<string>(StringComparer.Ordinal)
     {
-        "report-agent",
-        "report-agent-session",
+        "pane.report_agent",
+        "pane.report_agent_session",
     };
 
     /// <summary>Longest accepted line; reports are small, so anything bigger is refused.</summary>
@@ -189,7 +191,7 @@ public sealed class ReportRelayServer(string source, ReportUpstream upstream)
                 {
                     reply = await upstream(decision.Forward!, cancellation);
                 }
-                catch (Exception e) when (e is IOException or SocketException)
+                catch (Exception e) when (e is IOException or SocketException or UnauthorizedAccessException)
                 {
                     reply = ReportRelay.ErrorLine(decision.Id, "herdr is unreachable");
                 }
@@ -240,17 +242,48 @@ public sealed class ReportRelayServer(string source, ReportUpstream upstream)
         }
     }
 
-    /// <summary>Herdr's socket API: one request line out, one reply line back, per connection.</summary>
+    private static readonly TimeSpan PipeConnectTimeout = TimeSpan.FromSeconds(5);
+
+    /// <summary>The transport Herdr listens on for this host.</summary>
+    public static ReportUpstream ForHost(string herdrSocketPath) =>
+        OperatingSystem.IsWindows() ? NamedPipe(herdrSocketPath) : UnixSocket(herdrSocketPath);
+
+    /// <summary>
+    /// Herdr on Windows: <c>HERDR_SOCKET_PATH</c> names a regular file (pid:nonce), not a
+    /// socket, and its literal value is the name of the named pipe Herdr serves.
+    /// </summary>
+    public static ReportUpstream NamedPipe(string herdrSocketPath) => async (line, cancellation) =>
+    {
+        await using var pipe = new NamedPipeClientStream(".", herdrSocketPath, PipeDirection.InOut, PipeOptions.Asynchronous);
+        try
+        {
+            // Without a timeout a missing pipe is waited for indefinitely rather than refused.
+            await pipe.ConnectAsync((int)PipeConnectTimeout.TotalMilliseconds, cancellation);
+        }
+        catch (TimeoutException e)
+        {
+            throw new IOException("herdr pipe did not accept the connection", e);
+        }
+        return await ExchangeAsync(pipe, line, cancellation);
+    };
+
+    /// <summary>Herdr on Linux and macOS: an AF_UNIX socket at <c>HERDR_SOCKET_PATH</c>.</summary>
     public static ReportUpstream UnixSocket(string herdrSocketPath) => async (line, cancellation) =>
     {
         using var socket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
         await socket.ConnectAsync(new UnixDomainSocketEndPoint(herdrSocketPath), cancellation);
         await using var stream = new NetworkStream(socket, ownsSocket: false);
-        var bytes = Encoding.UTF8.GetBytes(line + "\n");
-        await stream.WriteAsync(bytes, cancellation);
+        return await ExchangeAsync(stream, line, cancellation);
+    };
+
+    /// <summary>Herdr's API: one request line out, one reply line back, per connection.</summary>
+    private static async Task<string> ExchangeAsync(Stream stream, string line, CancellationToken cancellation)
+    {
+        await stream.WriteAsync(Encoding.UTF8.GetBytes(line + "\n"), cancellation);
+        await stream.FlushAsync(cancellation);
         using var reader = new StreamReader(stream, new UTF8Encoding(false), false, 4096, leaveOpen: true);
         return await ReadLineAsync(reader, cancellation) ?? throw new IOException("herdr closed the connection without a reply");
-    };
+    }
 
     /// <summary>
     /// Reads one line, stopping one character past <see cref="ReportRelay.MaxLineBytes"/> so a

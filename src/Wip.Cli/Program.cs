@@ -192,9 +192,9 @@ internal static class Program
         var relayName = new Argument<string>("name");
         var relayUpstream = new Option<string?>("--upstream")
         {
-            Description = "Herdr's socket path (default: HERDR_SOCKET_PATH)",
+            Description = "Herdr's socket path, or pipe name on Windows (default: HERDR_SOCKET_PATH)",
         };
-        var relay = new Command("relay", "Relay a sandbox's agent reports to Herdr (host only; report-agent and report-agent-session only)")
+        var relay = new Command("relay", "Relay a sandbox's agent reports to Herdr (host only; pane.report_agent and pane.report_agent_session only)")
         {
             relayName,
             relayUpstream,

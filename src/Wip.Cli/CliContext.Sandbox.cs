@@ -106,7 +106,7 @@ internal sealed partial class CliContext
         Directory.CreateDirectory(directory);
         using var cancellation = new CancellationTokenSource();
         Console.CancelKeyPress += (_, e) => { e.Cancel = true; cancellation.Cancel(); };
-        var server = new ReportRelayServer(ReportRelay.SourceId(name), ReportRelayServer.UnixSocket(herdr));
+        var server = new ReportRelayServer(ReportRelay.SourceId(name), ReportRelayServer.ForHost(herdr));
         server.ListenAsync(Path.Combine(directory, ReportRelay.SocketName), cancellation.Token).GetAwaiter().GetResult();
         return 0;
     }

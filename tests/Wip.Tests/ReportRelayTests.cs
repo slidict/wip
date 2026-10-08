@@ -1,3 +1,4 @@
+using System.IO.Pipes;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
@@ -10,11 +11,13 @@ public class ReportRelayTests
     private const string Source = "wip:first";
 
     [Theory]
-    [InlineData("report-agent")]
-    [InlineData("report-agent-session")]
+    [InlineData("pane.report_agent")]
+    [InlineData("pane.report_agent_session")]
     public void AllowedMethodsAreForwardedWithTheRelaySource(string method)
     {
-        var decision = ReportRelay.Filter($$$"""{"id":"r1","method":"{{{method}}}","params":{"pane_id":"1-2","state":"working"}}""", Source);
+        var decision = ReportRelay.Filter($$$"""
+            {"id":"r1","method":"{{{method}}}","params":{"pane_id":"1-2","agent":"claude","state":"working","seq":3,"agent_session_id":"s-1"}}
+            """, Source);
 
         Assert.True(decision.Accepted);
         using var forwarded = JsonDocument.Parse(decision.Forward!);
@@ -22,7 +25,10 @@ public class ReportRelayTests
         Assert.Equal(method, forwarded.RootElement.GetProperty("method").GetString());
         var parameters = forwarded.RootElement.GetProperty("params");
         Assert.Equal("1-2", parameters.GetProperty("pane_id").GetString());
+        Assert.Equal("claude", parameters.GetProperty("agent").GetString());
         Assert.Equal("working", parameters.GetProperty("state").GetString());
+        Assert.Equal(3, parameters.GetProperty("seq").GetInt32());
+        Assert.Equal("s-1", parameters.GetProperty("agent_session_id").GetString());
         Assert.Equal(Source, parameters.GetProperty("source").GetString());
     }
 
@@ -30,7 +36,7 @@ public class ReportRelayTests
     [Fact]
     public void SpoofedSourceIsReplaced()
     {
-        var decision = ReportRelay.Filter("""{"method":"report-agent","params":{"source":"wip:other"}}""", Source);
+        var decision = ReportRelay.Filter("""{"method":"pane.report_agent","params":{"source":"wip:other"}}""", Source);
 
         Assert.True(decision.Accepted);
         using var forwarded = JsonDocument.Parse(decision.Forward!);
@@ -43,15 +49,19 @@ public class ReportRelayTests
     [InlineData("""{"id":"r1","method":"pane.send_input","params":{"pane_id":"1-1","text":"rm -rf /"}}""")]
     [InlineData("""{"id":"r1","method":"pane.read","params":{}}""")]
     [InlineData("""{"id":"r1","method":"ping"}""")]
-    [InlineData("""{"id":"r1","method":"REPORT-AGENT"}""")]
-    [InlineData("""{"id":"r1","method":"report-agent ","params":{}}""")]
+    [InlineData("""{"id":"r1","method":"PANE.REPORT_AGENT","params":{}}""")]
+    [InlineData("""{"id":"r1","method":"pane.report_agent ","params":{}}""")]
+    [InlineData("""{"id":"r1","method":"report-agent","params":{}}""")]
+    [InlineData("""{"id":"r1","method":"report-agent-session","params":{}}""")]
+    [InlineData("""{"id":"r1","method":"pane.report-agent","params":{}}""")]
+    [InlineData("""{"id":"r1","method":"report_agent","params":{}}""")]
     [InlineData("""{"id":"r1","params":{}}""")]
-    [InlineData("""{"id":"r1","method":["report-agent"]}""")]
-    [InlineData("""{"id":"r1","method":"report-agent","params":[]}""")]
-    [InlineData("""{"id":"r1","method":"report-agent","subscribe":true}""")]
-    [InlineData("""{"id":7,"method":"report-agent"}""")]
-    [InlineData("""[{"method":"report-agent"}]""")]
-    [InlineData("""{"method":"report-agent"}{"method":"pane.read"}""")]
+    [InlineData("""{"id":"r1","method":["pane.report_agent"]}""")]
+    [InlineData("""{"id":"r1","method":"pane.report_agent","params":[]}""")]
+    [InlineData("""{"id":"r1","method":"pane.report_agent","subscribe":true}""")]
+    [InlineData("""{"id":7,"method":"pane.report_agent"}""")]
+    [InlineData("""[{"method":"pane.report_agent"}]""")]
+    [InlineData("""{"method":"pane.report_agent"}{"method":"pane.read"}""")]
     [InlineData("not json")]
     public void EverythingElseIsRefused(string line)
     {
@@ -66,7 +76,7 @@ public class ReportRelayTests
     public void OversizedMessageIsRefused()
     {
         var padding = new string('x', ReportRelay.MaxLineBytes);
-        Assert.False(ReportRelay.Filter($$$"""{"method":"report-agent","params":{"note":"{{{padding}}}"}}""", Source).Accepted);
+        Assert.False(ReportRelay.Filter($$$"""{"method":"pane.report_agent","params":{"note":"{{{padding}}}"}}""", Source).Accepted);
     }
 
     [Fact]
@@ -95,9 +105,9 @@ public class ReportRelayTests
         var server = new ReportRelayServer(Source, (line, _) =>
         {
             forwarded.Add(line);
-            return Task.FromResult("""{"id":"ok","result":{}}""");
+            return Task.FromResult("""{"id":"b","result":{"type":"ok"}}""");
         });
-        var input = "{\"id\":\"a\",\"method\":\"pane.read\"}\n\n{\"id\":\"b\",\"method\":\"report-agent\",\"params\":{}}\r\n";
+        var input = "{\"id\":\"a\",\"method\":\"pane.read\"}\n\n{\"id\":\"b\",\"method\":\"pane.report_agent\",\"params\":{}}\r\n";
         var stream = new DuplexStream(input);
 
         await server.ServeAsync(stream, TestContext.Current.CancellationToken);
@@ -109,15 +119,56 @@ public class ReportRelayTests
             Assert.Equal("a", refused.RootElement.GetProperty("id").GetString());
             Assert.Equal("relay_refused", refused.RootElement.GetProperty("error").GetProperty("code").GetString());
         }
-        Assert.Equal("""{"id":"ok","result":{}}""", replies[1]);
-        Assert.Equal(["""{"id":"b","method":"report-agent","params":{"source":"wip:first"}}"""], forwarded);
+        Assert.Equal("""{"id":"b","result":{"type":"ok"}}""", replies[1]);
+        Assert.Equal(["""{"id":"b","method":"pane.report_agent","params":{"source":"wip:first"}}"""], forwarded);
+    }
+
+    /// <summary>
+    /// Herdr blanks the id on errors; the relay hands the reply back as-is rather than
+    /// re-shaping it, so the sandbox sees exactly what Herdr said.
+    /// </summary>
+    [Fact]
+    public async Task HerdrErrorWithBlankedIdIsPassedBackUnchanged()
+    {
+        const string herdrError = """{"id":"","error":{"code":"invalid_request","message":"missing field `state`"}}""";
+        var server = new ReportRelayServer(Source, (_, _) => Task.FromResult(herdrError));
+        var stream = new DuplexStream("{\"id\":\"b\",\"method\":\"pane.report_agent\",\"params\":{\"pane_id\":\"1-2\"}}\n");
+
+        await server.ServeAsync(stream, TestContext.Current.CancellationToken);
+
+        Assert.Equal(herdrError + "\n", stream.Written);
+    }
+
+    /// <summary>
+    /// Herdr on Windows serves a named pipe named by HERDR_SOCKET_PATH. .NET maps the same
+    /// API onto a unix socket elsewhere, so the client is exercised here on any host.
+    /// </summary>
+    [Fact]
+    public async Task NamedPipeUpstreamExchangesOneLine()
+    {
+        var pipeName = "wip-relay-" + Guid.NewGuid().ToString("N")[..12];
+        var cancellation = TestContext.Current.CancellationToken;
+        await using var herdr = new NamedPipeServerStream(pipeName, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+        var herdrTask = Task.Run(async () =>
+        {
+            await herdr.WaitForConnectionAsync(cancellation);
+            using var reader = new StreamReader(herdr, leaveOpen: true);
+            var request = await reader.ReadLineAsync(cancellation);
+            await herdr.WriteAsync(Encoding.UTF8.GetBytes("{\"id\":\"b\",\"result\":{\"type\":\"ok\"}}\n"), cancellation);
+            return request;
+        }, cancellation);
+
+        var reply = await ReportRelayServer.NamedPipe(pipeName)("{\"id\":\"b\",\"method\":\"pane.report_agent\",\"params\":{}}", cancellation);
+
+        Assert.Equal("{\"id\":\"b\",\"result\":{\"type\":\"ok\"}}", reply);
+        Assert.Equal("{\"id\":\"b\",\"method\":\"pane.report_agent\",\"params\":{}}", await herdrTask);
     }
 
     [Fact]
     public async Task UnreachableHerdrIsReportedToTheSandbox()
     {
         var server = new ReportRelayServer(Source, (_, _) => throw new SocketException((int)SocketError.ConnectionRefused));
-        var stream = new DuplexStream("{\"id\":\"b\",\"method\":\"report-agent\"}\n");
+        var stream = new DuplexStream("{\"id\":\"b\",\"method\":\"pane.report_agent\"}\n");
 
         await server.ServeAsync(stream, TestContext.Current.CancellationToken);
 
@@ -159,7 +210,7 @@ public class ReportRelayTests
                 await using var stream = new NetworkStream(connection);
                 using var reader = new StreamReader(stream);
                 received.Add((await reader.ReadLineAsync(cancellation.Token))!);
-                await stream.WriteAsync(Encoding.UTF8.GetBytes("{\"id\":\"b\",\"result\":{}}\n"), cancellation.Token);
+                await stream.WriteAsync(Encoding.UTF8.GetBytes("{\"id\":\"b\",\"result\":{\"type\":\"ok\"}}\n"), cancellation.Token);
             }, cancellation.Token);
 
             var server = new ReportRelayServer(Source, ReportRelayServer.UnixSocket(herdrPath));
@@ -171,13 +222,13 @@ public class ReportRelayTests
             await using var clientStream = new NetworkStream(client);
             using var clientReader = new StreamReader(clientStream);
             await clientStream.WriteAsync(Encoding.UTF8.GetBytes(
-                "{\"id\":\"a\",\"method\":\"workspace.create\"}\n{\"id\":\"b\",\"method\":\"report-agent-session\",\"params\":{\"pane_id\":\"1-2\"}}\n"),
+                "{\"id\":\"a\",\"method\":\"workspace.create\"}\n{\"id\":\"b\",\"method\":\"pane.report_agent_session\",\"params\":{\"pane_id\":\"1-2\"}}\n"),
                 cancellation.Token);
 
             Assert.Contains("relay_refused", await clientReader.ReadLineAsync(cancellation.Token));
-            Assert.Equal("{\"id\":\"b\",\"result\":{}}", await clientReader.ReadLineAsync(cancellation.Token));
+            Assert.Equal("{\"id\":\"b\",\"result\":{\"type\":\"ok\"}}", await clientReader.ReadLineAsync(cancellation.Token));
             await herdrTask;
-            Assert.Equal(["{\"id\":\"b\",\"method\":\"report-agent-session\",\"params\":{\"pane_id\":\"1-2\",\"source\":\"wip:first\"}}"], received);
+            Assert.Equal(["{\"id\":\"b\",\"method\":\"pane.report_agent_session\",\"params\":{\"pane_id\":\"1-2\",\"source\":\"wip:first\"}}"], received);
 
             await cancellation.CancelAsync();
             await relayTask;
