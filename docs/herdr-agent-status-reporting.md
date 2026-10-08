@@ -1,6 +1,7 @@
 # Herdr agent status reporting from sandboxes
 
-Design proposal; no relay or hook integration is implemented by this document.
+Design contract updated from real-host measurements; the TCP relay changes below
+still require implementation and connectivity verification.
 
 ## Goals and non-goals
 
@@ -15,12 +16,11 @@ remains a fallback.
 
 ## Transport and identity
 
-Opt in per sandbox with `report_relay: true` in `wip.yml`. Mount the dedicated
-relay directory read-only at `/run/wip/herdr`; its socket is
-`/run/wip/herdr/report.sock`, never Herdr's own host socket. Config loading rejects
-any declared mount or volume overlapping `/run/wip/herdr`. Provision the mount
-through the authorized host lifecycle; exec cannot change container mounts. An
-existing container whose relay mount does not match `report_relay` is an error.
+Opt in per sandbox with `report_relay: true` in `wip.yml`. The sandbox-to-host leg
+must use TCP at `host.docker.internal:PORT`. Windows wip cannot create an AF_UNIX
+socket reachable by a Linux container through a bind-mounted Windows directory.
+Drop `/run/wip/herdr`, its socket mount, overlap reservation and mount-mismatch
+checks: the directory has no remaining reporting purpose.
 
 Start the separate, long-running host process with:
 
@@ -28,45 +28,65 @@ Start the separate, long-running host process with:
 wip sandbox relay NAME --upstream HERDR_SOCKET_PATH
 ```
 
-Wip exports these values into the sandbox:
+The upstream argument identifies a Windows named pipe, not a Unix socket. For each
+exec, wip generates a cryptographically random shared secret, registers it with
+that relay for the launch lifetime, and exports:
 
-- `WIP_REPORT_SOCKET`: `/run/wip/herdr/report.sock`.
+- `WIP_REPORT_SOCKET`: the TCP endpoint `host.docker.internal:PORT` (legacy variable name).
 - `WIP_REPORT_SOURCE`: `wip:SANDBOX`, using the sandbox name.
+- `WIP_REPORT_TOKEN`: the per-launch shared secret.
 - `HERDR_PANE_ID`: passed through from the host when present.
 
-These values are identifiers, not credentials. The relay stamps `params.source`
-itself as `wip:SANDBOX`, so a sandbox cannot report under another source name.
-Concurrent launches in the same sandbox share that source. The shim requires
-`--agent` (for example `claude-code`, `codex` or `agy`); labels are display
-metadata, not authorization.
+Only the token is a credential; never log it or persist it in shared configuration.
+Revoke it when exec ends. The relay stamps `params.source` itself as
+`wip:SANDBOX`, so a sandbox cannot report under another source name. Concurrent
+launches share that source but have separate tokens. The shim requires `--agent`
+(for example `claude-code`, `codex` or `agy`); labels are display metadata.
 
 ## Wire protocol
 
-Use UTF-8 JSON Lines over the socket: one request object and one response object
-per line, no banners. Requests contain only `id` (optional string), `method`, and
-`params` (object); any other top-level field is refused. Allowed methods are
-`report-agent` and `report-agent-session`.
+Use UTF-8 JSON Lines over TCP. The proposed first line authenticates the connection:
 
 ```json
-{"id":"r1","method":"report-agent","params":{"pane":"pane-7","agent":"claude-code","state":"blocked","seq":3}}
-{"id":"r2","method":"report-agent-session","params":{"pane":"pane-7","agent":"claude-code","session":"session-abc","seq":4}}
+{"token":"<WIP_REPORT_TOKEN>"}
 ```
 
-The session method associates an opaque CLI session ID with the source; it does
-not include prompts, transcripts, credentials or host paths. The relay forwards
-allowed requests to the upstream socket after stamping `params.source`, never
-using shell evaluation. The illustrative params above need real Herdr verification.
+The relay must refuse missing, wrong or expired tokens before forwarding anything;
+this authentication frame is consumed locally and never sent to Herdr. Require
+it within two seconds. After authentication, each request contains only `id`
+(optional string), `method`, and `params` (object); refuse other top-level fields.
+Allow only `pane.report_agent` and `pane.report_agent_session`, kept together in
+`ReportRelay.AllowedMethods`.
 
-Upstream responses are returned to the client. A local refusal has this shape:
+```json
+{"id":"r1","method":"pane.report_agent","params":{"pane_id":"pane-7","agent":"claude-code","state":"blocked","seq":3}}
+```
+
+After the relay stamps `source`, verified `pane.report_agent` params are required
+`pane_id`, `source`, `agent`, `state`, with optional `message`, `seq`,
+`agent_session_id`, `agent_session_path`. State is exactly
+`idle|working|blocked|unknown`. Herdr ignores unknown params fields. The session
+method name is verified; its params contract is not established by these measurements.
+Do not guess a session payload. Send no prompts, transcripts or credentials.
+
+Forward allowed requests to the named pipe using structured JSON, never shell
+evaluation. Return upstream responses unchanged. Measured Herdr responses are:
+
+```json
+{"id":"r1","result":{"type":"ok"}}
+{"id":"","error":{"code":"invalid_request","message":"..."}}
+```
+
+Herdr blanks the ID on rejection, so clients cannot rely on it for error correlation.
+A local relay refusal remains distinct:
 
 ```json
 {"id":"r1","error":{"code":"relay_refused","message":"Unsupported method"}}
 ```
 
-Limit each line to 16 KiB. Refuse invalid request shapes, unsupported methods and
-oversized lines with `relay_refused`. State reporting uses
-`idle|working|blocked|unknown`; sequence handling and successful response semantics
-belong to the upstream Herdr contract and need verification.
+Limit each line to 16 KiB. Refuse invalid shapes, unsupported methods and oversized
+lines with `relay_refused`; unauthenticated connections are refused and closed.
+Sequence ordering semantics still require verification against Herdr.
 
 ## In-sandbox shim
 
@@ -77,59 +97,67 @@ herdr-report report-agent --agent claude-code --state blocked --seq 3
 herdr-report report-agent-session --agent claude-code --session session-abc --seq 4
 ```
 
-Pane, source and socket come only from the environment above; there are no target,
-raw-command or general API overrides. CLI hooks supply the sequence, coordinated
-per sandbox source. A Claude Code approval hook reports `blocked`, a resume event reports
-`working`, and a completion event reports `idle`. Report sessions only when the CLI
-provides an actual session ID; never guess one from terminal output.
+These shim subcommands map to the dotted upstream method names; session argument
+mapping needs its verified params contract before implementation. Pane, source,
+endpoint and token come only from the environment above; there are no target,
+raw-command or general API overrides. The shim authenticates each connection.
+CLI hooks coordinate sequences per sandbox source. An approval hook reports
+`blocked`, a resume event reports `working`, and a completion event reports `idle`.
+Report sessions only when the CLI provides an actual session ID; never guess one
+from terminal output.
 
 ## Security boundary and fallback
 
-The dedicated socket grants access only to the allowed reporting methods. Restrict
-socket access to the intended sandbox; the relay controls the source identity.
-Treat all sandbox messages as untrusted advisory status: processes in the same
-sandbox can impersonate its agent label. No host Herdr socket, Docker socket, host
-credential or general host API is mounted or passed through.
+Binding the relay to a LAN-visible address without a token would let anything on
+the LAN report agent state. Require a valid per-launch token on every connection
+and restrict access to the two allowed methods. The relay controls source identity.
+Treat sandbox messages as untrusted advisory status: processes able to read the
+launch token can impersonate its agent label. No host Herdr pipe, discovery file,
+Docker socket, host credential or general host API is exposed inside the sandbox;
+only the restricted relay token is passed to the child.
 
 The `wip.yml` ownership classes remain unchanged: members cannot create or destroy
 their own sandbox; configuration and authentication remain in member-private volumes.
 The relay grants no lifecycle or volume permissions and stores no CLI auth data.
 
 Without `report_relay: true`, existing interactive launches remain unchanged.
-`HERDR_PANE_ID` is optional; pass it through only when present. An opted-in mount
-mismatch is an error, not a silent fallback. An unavailable relay or upstream must
-not prevent normal interactive command execution. The shim returns success without output
-when reporting is unavailable, including a disconnected relay or a two-second timeout.
-Invalid local arguments or rejected requests return nonzero; hooks must treat those
-errors as advisory. Reporting never changes stdin, TTY behavior, signal handling or
-the interactive command's exit status. Screen scraping continues when explicit
-reports are unavailable; relay loss must not fabricate `idle`.
+`HERDR_PANE_ID` is optional; pass it through only when present. An unavailable relay
+or upstream must not prevent normal interactive command execution. The shim returns
+success without output when reporting is unavailable, including a disconnected
+relay or a two-second timeout. Invalid local arguments or rejected requests return
+nonzero; hooks treat those errors as advisory. Reporting never changes stdin, TTY
+behavior, signal handling or the interactive command's exit status. Screen scraping
+continues when explicit reports are unavailable; relay loss must not fabricate `idle`.
 
 ## Acceptance procedure
 
-1. On a supported host, opt in with `report_relay: true`, provision the sandbox
-   through the authorized lifecycle, and start `wip sandbox relay NAME --upstream
-   HERDR_SOCKET_PATH`. Launch each CLI with `wip sandbox exec NAME --interactive`.
-   Check the read-only directory, socket and exported values; confirm private-volume
-   mounts and ownership rules are unchanged and no host API sockets or credentials
-   were added. Check overlapping mounts fail config load and mount mismatches fail.
-2. With a test upstream, send both allowed methods and verify `params.source` is
-   always `wip:SANDBOX`, even if supplied differently. Check forwarded responses.
-   Against real Herdr, verify session and `working ↁEblocked ↁEworking ↁEidle`
-   reports, sequencing and an approval hook without screen scraping.
-3. Try unknown methods, extra top-level fields, invalid request shapes and lines
-   over 16 KiB. Verify `id` plus `error.code: relay_refused` and no upstream call.
-4. Run concurrent launches; verify their shared sandbox source and coordinated
-   sequences. Stop the relay and verify reporting becomes unavailable.
-5. Launch without opt-in or pane context, then disconnect the relay during a session.
-   Verify hooks finish within two seconds, fallback detection remains available,
-   and shell input, Ctrl-C, terminal sizing and child exit status match existing
-   interactive execution. Confirm a member still cannot create/destroy a sandbox.
+1. Opt in, start the host relay with the named-pipe upstream, and open a listening
+   TCP port on the Windows host. From the container, resolve `host.docker.internal`
+   and test an inbound connection. This connectivity step is still unverified.
+2. Launch each CLI interactively. Check endpoint, source, token and optional pane
+   variables; confirm tokens differ per exec, private-volume mounts and ownership
+   rules are unchanged, and no host pipe, discovery file or credentials were added.
+3. Reject missing, wrong and expired tokens without any upstream call. Try unknown
+   methods, extra top-level fields, invalid shapes and lines over 16 KiB; verify
+   `relay_refused`. Supply another source and verify it is replaced by `wip:SANDBOX`.
+4. Against real Herdr, send `pane.report_agent` with verified params and observe
+   `working ↁEblocked ↁEworking ↁEidle`, success and blank-ID rejection responses.
+   Trigger a real approval hook without screen scraping. Verify session params and
+   sequence behavior separately before claiming session integration works.
+5. Run concurrent launches, end one and verify its token is revoked. Disconnect the
+   relay and launch without opt-in or pane context. Verify hooks finish within two
+   seconds, fallback remains available, and input, Ctrl-C, terminal sizing and child
+   exit status match existing execution. Confirm members cannot create/destroy sandboxes.
 
-## Open questions
+## Measured host facts and remaining verification
 
-- The upstream socket request shape and exact method names `report-agent` and
-  `report-agent-session` are not yet verified against real Herdr. Both names live
-  in the single constant `ReportRelay.AllowedMethods`.
-- Can a Windows AF_UNIX socket path be bind-mounted through the wslc VM into the
-  container at all? This is not yet verified.
+On Windows, `HERDR_SOCKET_PATH` points to a 25-byte regular file containing
+`pid:nonce`. Herdr's real IPC is a Windows named pipe whose name is the literal
+value of `HERDR_SOCKET_PATH`; the file is not an AF_UNIX listener.
+
+The real methods are `pane.report_agent` and `pane.report_agent_session`; the
+report params and response shapes above were measured against real Herdr.
+
+The container's default gateway is `172.17.0.1`; `host.docker.internal` resolves to
+the host LAN address, not loopback. Whether the host actually accepts an inbound
+connection from the container is **UNVERIFIED**: it requires a listening host port.
