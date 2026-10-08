@@ -57,6 +57,25 @@ public static class ReportRelay
 
     public static string SourceId(string sandbox) => "wip:" + sandbox;
 
+    private const UnixFileMode OwnerOnlyDirectory = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute;
+    internal const UnixFileMode OwnerOnlyFile = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+
+    /// <summary>
+    /// Creates the relay directory and sets it to 0700 explicitly, whatever the umask, so no
+    /// other local user can reach the socket inside it. On Windows the directory ACL applies.
+    /// </summary>
+    public static void EnsurePrivateDirectory(string directory)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            Directory.CreateDirectory(directory);
+            return;
+        }
+        Directory.CreateDirectory(directory, OwnerOnlyDirectory);
+        // CreateDirectory's mode is masked by the umask and skipped for an existing directory.
+        File.SetUnixFileMode(directory, OwnerOnlyDirectory);
+    }
+
     /// <summary>
     /// Variables an exec into a relay-enabled sandbox exports: the socket path, the source id,
     /// and the pass-through variables the host actually has. Values with control characters
@@ -162,8 +181,13 @@ public delegate Task<string> ReportUpstream(string line, CancellationToken cance
 /// Listens on the relay socket and answers each line: refused lines get an error line back,
 /// accepted ones are forwarded through <see cref="ReportUpstream"/>.
 /// </summary>
-public sealed class ReportRelayServer(string source, ReportUpstream upstream)
+public sealed class ReportRelayServer(string sandbox, ReportUpstream upstream)
 {
+    /// <summary>How long Herdr gets to accept, read and answer one report.</summary>
+    public static readonly TimeSpan UpstreamTimeout = TimeSpan.FromSeconds(5);
+
+    private readonly string _source = ReportRelay.SourceId(sandbox);
+
     /// <summary>Handles one connection until the peer closes it or sends an oversized line.</summary>
     public async Task ServeAsync(Stream stream, CancellationToken cancellation)
     {
@@ -179,7 +203,7 @@ public sealed class ReportRelayServer(string source, ReportUpstream upstream)
                 return;
             }
             if (line.Trim().Length == 0) continue;
-            var decision = ReportRelay.Filter(line, source);
+            var decision = ReportRelay.Filter(line, _source);
             string reply;
             if (!decision.Accepted)
             {
@@ -203,13 +227,18 @@ public sealed class ReportRelayServer(string source, ReportUpstream upstream)
     /// <summary>Accepts connections on <paramref name="socketPath"/> until cancelled.</summary>
     public async Task ListenAsync(string socketPath, CancellationToken cancellation)
     {
-        // The directory is wip's own, so a socket left by an earlier relay is stale.
+        ReportRelay.EnsurePrivateDirectory(Path.GetDirectoryName(Path.GetFullPath(socketPath))!);
+        // Held for the relay's whole life: only the holder may treat the socket as its own.
+        using var instance = AcquireInstanceLock(socketPath);
+        // The lock is ours, so a socket still at the path was left by a relay that is gone.
         if (File.Exists(socketPath)) File.Delete(socketPath);
         using var listener = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
         listener.Bind(new UnixDomainSocketEndPoint(socketPath));
-        listener.Listen(16);
         try
         {
+            // Bind's mode is 0777 minus the umask; set it rather than trust that.
+            if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(socketPath, ReportRelay.OwnerOnlyFile);
+            listener.Listen(16);
             while (!cancellation.IsCancellationRequested)
             {
                 Socket client;
@@ -238,11 +267,30 @@ public sealed class ReportRelayServer(string source, ReportUpstream upstream)
         }
         finally
         {
+            // Still under the instance lock, so this socket is the one this relay bound.
             try { File.Delete(socketPath); } catch (IOException) { }
         }
     }
 
-    private static readonly TimeSpan PipeConnectTimeout = TimeSpan.FromSeconds(5);
+    /// <summary>
+    /// An exclusive lock beside the socket (<c>flock</c> on Unix, a share-none handle on
+    /// Windows), so a second relay for the same sandbox refuses to start instead of
+    /// replacing the live socket under the first.
+    /// </summary>
+    private FileStream AcquireInstanceLock(string socketPath)
+    {
+        var lockPath = socketPath + ".lock";
+        var options = new FileStreamOptions { Mode = FileMode.OpenOrCreate, Access = FileAccess.ReadWrite, Share = FileShare.None };
+        if (!OperatingSystem.IsWindows()) options.UnixCreateMode = ReportRelay.OwnerOnlyFile;
+        try
+        {
+            return new FileStream(lockPath, options);
+        }
+        catch (IOException e)
+        {
+            throw new WipException($"Sandbox {sandbox}: a report relay is already running ({lockPath} is locked); stop it before starting another", e);
+        }
+    }
 
     /// <summary>The transport Herdr listens on for this host.</summary>
     public static ReportUpstream ForHost(string herdrSocketPath) =>
@@ -252,29 +300,42 @@ public sealed class ReportRelayServer(string source, ReportUpstream upstream)
     /// Herdr on Windows: <c>HERDR_SOCKET_PATH</c> names a regular file (pid:nonce), not a
     /// socket, and its literal value is the name of the named pipe Herdr serves.
     /// </summary>
-    public static ReportUpstream NamedPipe(string herdrSocketPath) => async (line, cancellation) =>
-    {
-        await using var pipe = new NamedPipeClientStream(".", herdrSocketPath, PipeDirection.InOut, PipeOptions.Asynchronous);
-        try
+    public static ReportUpstream NamedPipe(string herdrSocketPath, TimeSpan? timeout = null) => (line, cancellation) =>
+        WithDeadlineAsync(timeout ?? UpstreamTimeout, cancellation, async deadline =>
         {
-            // Without a timeout a missing pipe is waited for indefinitely rather than refused.
-            await pipe.ConnectAsync((int)PipeConnectTimeout.TotalMilliseconds, cancellation);
-        }
-        catch (TimeoutException e)
-        {
-            throw new IOException("herdr pipe did not accept the connection", e);
-        }
-        return await ExchangeAsync(pipe, line, cancellation);
-    };
+            await using var pipe = new NamedPipeClientStream(".", herdrSocketPath, PipeDirection.InOut, PipeOptions.Asynchronous);
+            await pipe.ConnectAsync(deadline);
+            return await ExchangeAsync(pipe, line, deadline);
+        });
 
     /// <summary>Herdr on Linux and macOS: an AF_UNIX socket at <c>HERDR_SOCKET_PATH</c>.</summary>
-    public static ReportUpstream UnixSocket(string herdrSocketPath) => async (line, cancellation) =>
+    public static ReportUpstream UnixSocket(string herdrSocketPath, TimeSpan? timeout = null) => (line, cancellation) =>
+        WithDeadlineAsync(timeout ?? UpstreamTimeout, cancellation, async deadline =>
+        {
+            using var socket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
+            await socket.ConnectAsync(new UnixDomainSocketEndPoint(herdrSocketPath), deadline);
+            await using var stream = new NetworkStream(socket, ownsSocket: false);
+            return await ExchangeAsync(stream, line, deadline);
+        });
+
+    /// <summary>
+    /// Bounds connect, write and read together, so a Herdr that accepts but never answers
+    /// costs one timeout rather than a connection held until the relay stops. The timeout
+    /// surfaces as an <see cref="IOException"/>, which the relay reports as unreachable.
+    /// </summary>
+    private static async Task<string> WithDeadlineAsync(TimeSpan timeout, CancellationToken cancellation, Func<CancellationToken, Task<string>> exchange)
     {
-        using var socket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
-        await socket.ConnectAsync(new UnixDomainSocketEndPoint(herdrSocketPath), cancellation);
-        await using var stream = new NetworkStream(socket, ownsSocket: false);
-        return await ExchangeAsync(stream, line, cancellation);
-    };
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+        deadline.CancelAfter(timeout);
+        try
+        {
+            return await exchange(deadline.Token);
+        }
+        catch (OperationCanceledException e) when (!cancellation.IsCancellationRequested)
+        {
+            throw new IOException($"herdr did not answer within {timeout.TotalSeconds:0.###} seconds", e);
+        }
+    }
 
     /// <summary>Herdr's API: one request line out, one reply line back, per connection.</summary>
     private static async Task<string> ExchangeAsync(Stream stream, string line, CancellationToken cancellation)

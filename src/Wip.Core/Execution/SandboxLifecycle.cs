@@ -6,7 +6,8 @@ using Wip.Configuration;
 namespace Wip.Execution;
 
 public sealed record SandboxCommandResult(int Code, string Output);
-public sealed record SandboxMount(string Type, string Name, string Destination);
+/// <param name="Source">Host path of a bind mount; empty when the backend does not report one.</param>
+public sealed record SandboxMount(string Type, string Name, string Destination, string Source = "", bool ReadOnly = false);
 public sealed record SandboxStatus(string Name, string BackendName, string? Id, string State, IReadOnlyList<SandboxMount>? Mounts = null)
 {
     public IReadOnlyList<SandboxMount> Mounts { get; init; } = Mounts ?? [];
@@ -99,7 +100,7 @@ public sealed class SandboxLifecycle(SandboxSettings settings, SandboxBackend ba
         if (existing.Id is not null)
         {
             VerifyExistingMounts(name, existing, volumeDefs);
-            VerifyRelayMount(name, existing, definition);
+            VerifyRelayMount(name, existing, relayDirectory);
             if (existing.State == "running")
             {
                 if (volumeDefs.Count != 0 && volumes is not null)
@@ -273,13 +274,32 @@ public sealed class SandboxLifecycle(SandboxSettings settings, SandboxBackend ba
     /// A container created before <c>report_relay</c> was toggled has the wrong mounts, and
     /// mounts cannot change after creation, so the mismatch is reported rather than ignored.
     /// </summary>
-    private static void VerifyRelayMount(string name, SandboxStatus existing, SandboxDefinition definition)
+    /// <remarks>
+    /// A bind at the relay path is accepted only when it is read-only and its source is the
+    /// configured directory: a writable bind would let the sandbox write into the host
+    /// directory, and another source would put a different socket in front of the CLI.
+    /// </remarks>
+    private static void VerifyRelayMount(string name, SandboxStatus existing, string? relayDirectory)
     {
-        var mounted = existing.Mounts.Any(m =>
+        var binds = existing.Mounts.Where(m =>
             string.Equals(m.Type, "bind", StringComparison.OrdinalIgnoreCase) &&
-            string.Equals(m.Destination, ReportRelay.MountPath, StringComparison.Ordinal));
-        if (mounted != definition.ReportRelay)
+            string.Equals(m.Destination, ReportRelay.MountPath, StringComparison.Ordinal)).ToArray();
+        var matches = relayDirectory is null
+            ? binds.Length == 0
+            : binds.Length == 1 && binds[0].ReadOnly && SameHostPath(binds[0].Source, relayDirectory);
+        if (!matches)
             throw Failure(name, "existing container report relay mount does not match report_relay; run sandbox destroy, confirm absence, then sandbox create");
+    }
+
+    /// <summary>
+    /// Compares the configured directory with the source the backend reports, ignoring
+    /// separator style and a trailing separator, and case on Windows.
+    /// </summary>
+    private static bool SameHostPath(string reported, string configured)
+    {
+        static string Normalize(string path) => path.Replace('\\', '/').TrimEnd('/');
+        return string.Equals(Normalize(reported), Normalize(configured),
+            OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
     }
 
     private IReadOnlyList<VolumeDefinition> ValidateVolumes(string name, SandboxDefinition definition)
@@ -480,7 +500,11 @@ public sealed class SandboxLifecycle(SandboxSettings settings, SandboxBackend ba
             var destination = (Text(mount, "Destination") ?? Text(mount, "Target") ?? "").TrimEnd('/');
             if (destination.Length == 0 && (Text(mount, "Destination") == "/" || Text(mount, "Target") == "/"))
                 destination = "/";
-            result.Add(new(type, name, destination));
+            var source = Text(mount, "Source") ?? "";
+            // Docker reports RW; accept an explicit ReadOnly too. Absent both, assume writable.
+            var readOnly = (mount.TryGetProperty("RW", out var rw) && rw.ValueKind == JsonValueKind.False) ||
+                (mount.TryGetProperty("ReadOnly", out var ro) && ro.ValueKind == JsonValueKind.True);
+            result.Add(new(type, name, destination, source, readOnly));
         }
         return result;
     }

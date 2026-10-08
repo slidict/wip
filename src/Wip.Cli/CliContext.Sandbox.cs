@@ -42,7 +42,7 @@ internal sealed partial class CliContext
         if (operation == "create")
         {
             // The bind source must exist before wslc mounts it; the relay creates the socket later.
-            if (definition.ReportRelay) Directory.CreateDirectory(RelayDirectory(name));
+            if (definition.ReportRelay) ReportRelay.EnsurePrivateDirectory(RelayDirectory(name));
             needsVolumes = definition.Volumes.Count > 0;
         }
         else if (operation == "destroy")
@@ -103,10 +103,9 @@ internal sealed partial class CliContext
         if (string.IsNullOrWhiteSpace(herdr))
             throw new ConfigException("sandbox relay needs Herdr's socket: pass --upstream or set HERDR_SOCKET_PATH");
         var directory = RelayDirectory(name);
-        Directory.CreateDirectory(directory);
         using var cancellation = new CancellationTokenSource();
         Console.CancelKeyPress += (_, e) => { e.Cancel = true; cancellation.Cancel(); };
-        var server = new ReportRelayServer(ReportRelay.SourceId(name), ReportRelayServer.ForHost(herdr));
+        var server = new ReportRelayServer(name, ReportRelayServer.ForHost(herdr));
         server.ListenAsync(Path.Combine(directory, ReportRelay.SocketName), cancellation.Token).GetAwaiter().GetResult();
         return 0;
     }

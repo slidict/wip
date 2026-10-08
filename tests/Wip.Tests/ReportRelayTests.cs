@@ -1,6 +1,7 @@
 using System.IO.Pipes;
 using System.Net.Sockets;
 using System.Text;
+using System.Runtime.Versioning;
 using System.Text.Json;
 using Wip.Execution;
 
@@ -102,7 +103,7 @@ public class ReportRelayTests
     public async Task ServerAnswersEveryLineAndForwardsOnlyAllowedOnes()
     {
         var forwarded = new List<string>();
-        var server = new ReportRelayServer(Source, (line, _) =>
+        var server = new ReportRelayServer("first", (line, _) =>
         {
             forwarded.Add(line);
             return Task.FromResult("""{"id":"b","result":{"type":"ok"}}""");
@@ -131,7 +132,7 @@ public class ReportRelayTests
     public async Task HerdrErrorWithBlankedIdIsPassedBackUnchanged()
     {
         const string herdrError = """{"id":"","error":{"code":"invalid_request","message":"missing field `state`"}}""";
-        var server = new ReportRelayServer(Source, (_, _) => Task.FromResult(herdrError));
+        var server = new ReportRelayServer("first", (_, _) => Task.FromResult(herdrError));
         var stream = new DuplexStream("{\"id\":\"b\",\"method\":\"pane.report_agent\",\"params\":{\"pane_id\":\"1-2\"}}\n");
 
         await server.ServeAsync(stream, TestContext.Current.CancellationToken);
@@ -167,7 +168,7 @@ public class ReportRelayTests
     [Fact]
     public async Task UnreachableHerdrIsReportedToTheSandbox()
     {
-        var server = new ReportRelayServer(Source, (_, _) => throw new SocketException((int)SocketError.ConnectionRefused));
+        var server = new ReportRelayServer("first", (_, _) => throw new SocketException((int)SocketError.ConnectionRefused));
         var stream = new DuplexStream("{\"id\":\"b\",\"method\":\"pane.report_agent\"}\n");
 
         await server.ServeAsync(stream, TestContext.Current.CancellationToken);
@@ -179,7 +180,7 @@ public class ReportRelayTests
     public async Task UnterminatedOversizedLineClosesTheConnection()
     {
         var forwarded = 0;
-        var server = new ReportRelayServer(Source, (_, _) => { forwarded++; return Task.FromResult("{}"); });
+        var server = new ReportRelayServer("first", (_, _) => { forwarded++; return Task.FromResult("{}"); });
         var stream = new DuplexStream(new string('x', ReportRelay.MaxLineBytes * 2));
 
         await server.ServeAsync(stream, TestContext.Current.CancellationToken);
@@ -213,7 +214,7 @@ public class ReportRelayTests
                 await stream.WriteAsync(Encoding.UTF8.GetBytes("{\"id\":\"b\",\"result\":{\"type\":\"ok\"}}\n"), cancellation.Token);
             }, cancellation.Token);
 
-            var server = new ReportRelayServer(Source, ReportRelayServer.UnixSocket(herdrPath));
+            var server = new ReportRelayServer("first", ReportRelayServer.UnixSocket(herdrPath));
             var relayTask = server.ListenAsync(relayPath, cancellation.Token);
             while (!File.Exists(relayPath)) await Task.Delay(10, cancellation.Token);
 
@@ -238,6 +239,203 @@ public class ReportRelayTests
         {
             directory.Delete(recursive: true);
         }
+    }
+
+    private static readonly ReportUpstream Ok = (_, _) => Task.FromResult("""{"id":"b","result":{"type":"ok"}}""");
+
+    private static async Task<string?> ReportAsync(string socketPath, CancellationToken cancellation)
+    {
+        using var client = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
+        await client.ConnectAsync(new UnixDomainSocketEndPoint(socketPath), cancellation);
+        await using var stream = new NetworkStream(client);
+        using var reader = new StreamReader(stream);
+        await stream.WriteAsync(Encoding.UTF8.GetBytes("{\"id\":\"b\",\"method\":\"pane.report_agent\",\"params\":{}}\n"), cancellation);
+        return await reader.ReadLineAsync(cancellation);
+    }
+
+    /// <summary>
+    /// The socket and its directory get owner-only modes set explicitly, not whatever the
+    /// umask leaves, so another local user cannot report under this sandbox's source.
+    /// </summary>
+    [Fact]
+    [UnsupportedOSPlatform("windows")]
+    public async Task ListenerSetsOwnerOnlyModesRegardlessOfExistingPermissions()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "unix file modes do not apply on Windows");
+        var cancellation = TestContext.Current.CancellationToken;
+        var parent = Directory.CreateTempSubdirectory("wip-relay-");
+        try
+        {
+            var directory = Path.Combine(parent.FullName, "first");
+            Directory.CreateDirectory(directory);
+            File.SetUnixFileMode(directory, (UnixFileMode)0b111_111_111);
+            var socketPath = Path.Combine(directory, ReportRelay.SocketName);
+            using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+
+            var relay = new ReportRelayServer("first", Ok).ListenAsync(socketPath, stop.Token);
+
+            Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute, File.GetUnixFileMode(directory));
+            Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(socketPath));
+            Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(socketPath + ".lock"));
+            await stop.CancelAsync();
+            await relay;
+        }
+        finally
+        {
+            parent.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
+    [UnsupportedOSPlatform("windows")]
+    public void EnsurePrivateDirectoryTightensAnExistingDirectory()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "unix file modes do not apply on Windows");
+        var directory = Directory.CreateTempSubdirectory("wip-relay-");
+        try
+        {
+            File.SetUnixFileMode(directory.FullName, (UnixFileMode)0b111_101_101);
+            ReportRelay.EnsurePrivateDirectory(directory.FullName);
+            Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute, File.GetUnixFileMode(directory.FullName));
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// A second relay for the same sandbox must not take the socket from a live one; it
+    /// refuses, the first keeps serving, and only the first removes the socket on exit.
+    /// </summary>
+    [Fact]
+    public async Task SecondInstanceIsRefusedAndTheFirstKeepsItsSocket()
+    {
+        var cancellation = TestContext.Current.CancellationToken;
+        var directory = Directory.CreateTempSubdirectory("wip-relay-");
+        try
+        {
+            var socketPath = Path.Combine(directory.FullName, ReportRelay.SocketName);
+            using var stopFirst = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+            var first = new ReportRelayServer("first", Ok).ListenAsync(socketPath, stopFirst.Token);
+
+            var refused = await Assert.ThrowsAsync<WipException>(() =>
+                new ReportRelayServer("first", Ok).ListenAsync(socketPath, cancellation));
+
+            Assert.Contains("Sandbox first", refused.Message);
+            Assert.Contains("already running", refused.Message);
+            Assert.True(File.Exists(socketPath));
+            Assert.Equal("""{"id":"b","result":{"type":"ok"}}""", await ReportAsync(socketPath, cancellation));
+
+            await stopFirst.CancelAsync();
+            await first;
+            Assert.False(File.Exists(socketPath));
+
+            // Once the first has stopped, the lock is free again.
+            using var stopThird = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+            var third = new ReportRelayServer("first", Ok).ListenAsync(socketPath, stopThird.Token);
+            Assert.Equal("""{"id":"b","result":{"type":"ok"}}""", await ReportAsync(socketPath, cancellation));
+            await stopThird.CancelAsync();
+            await third;
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task StaleSocketFromAGoneRelayIsReplaced()
+    {
+        var cancellation = TestContext.Current.CancellationToken;
+        var directory = Directory.CreateTempSubdirectory("wip-relay-");
+        try
+        {
+            var socketPath = Path.Combine(directory.FullName, ReportRelay.SocketName);
+            // .NET unlinks a socket it bound when disposed, so a crashed relay's leftover is
+            // stood in for by a plain file at the path; either way nothing holds the lock.
+            File.WriteAllText(socketPath, "");
+            using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+
+            var relay = new ReportRelayServer("first", Ok).ListenAsync(socketPath, stop.Token);
+
+            Assert.Equal("""{"id":"b","result":{"type":"ok"}}""", await ReportAsync(socketPath, cancellation));
+            await stop.CancelAsync();
+            await relay;
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// A Herdr that accepts and then never answers costs one deadline, reported as
+    /// unreachable, not a connection held until the relay stops.
+    /// </summary>
+    [Fact]
+    public async Task UnixSocketUpstreamThatNeverRepliesTimesOutAsUnreachable()
+    {
+        var cancellation = TestContext.Current.CancellationToken;
+        var directory = Directory.CreateTempSubdirectory("wip-relay-");
+        try
+        {
+            var herdrPath = Path.Combine(directory.FullName, "h.sock");
+            using var herdr = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
+            herdr.Bind(new UnixDomainSocketEndPoint(herdrPath));
+            herdr.Listen(4);
+            var accepted = new List<Socket>();
+            var silent = Task.Run(async () =>
+            {
+                while (true) accepted.Add(await herdr.AcceptAsync(cancellation));
+            }, cancellation);
+            var upstream = ReportRelayServer.UnixSocket(herdrPath, TimeSpan.FromMilliseconds(200));
+
+            await Assert.ThrowsAsync<IOException>(() => upstream("{}", cancellation));
+
+            var stream = new DuplexStream("{\"id\":\"b\",\"method\":\"pane.report_agent\",\"params\":{}}\n");
+            await new ReportRelayServer("first", upstream).ServeAsync(stream, cancellation);
+            Assert.Contains("herdr is unreachable", stream.Written);
+            Assert.Contains("\"id\":\"b\"", stream.Written);
+            foreach (var socket in accepted) socket.Dispose();
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task NamedPipeUpstreamThatNeverRepliesTimesOutAsUnreachable()
+    {
+        var cancellation = TestContext.Current.CancellationToken;
+        var pipeName = "wip-relay-" + Guid.NewGuid().ToString("N")[..12];
+        await using var herdr = new NamedPipeServerStream(pipeName, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+        var accepting = herdr.WaitForConnectionAsync(cancellation);
+        var upstream = ReportRelayServer.NamedPipe(pipeName, TimeSpan.FromMilliseconds(200));
+
+        var stream = new DuplexStream("{\"id\":\"b\",\"method\":\"pane.report_agent\",\"params\":{}}\n");
+        await new ReportRelayServer("first", upstream).ServeAsync(stream, cancellation);
+
+        await accepting;
+        Assert.Contains("herdr is unreachable", stream.Written);
+    }
+
+    /// <summary>The deadline covers connect too: a pipe nobody serves is not waited on forever.</summary>
+    [Fact]
+    public async Task NamedPipeUpstreamWithNoServerTimesOut()
+    {
+        var upstream = ReportRelayServer.NamedPipe("wip-relay-absent-" + Guid.NewGuid().ToString("N")[..12], TimeSpan.FromMilliseconds(200));
+        await Assert.ThrowsAsync<IOException>(() => upstream("{}", TestContext.Current.CancellationToken));
+    }
+
+    /// <summary>Stopping the relay is not a Herdr failure, so it is not reported as one.</summary>
+    [Fact]
+    public async Task RelayShutdownCancelsTheUpstreamCallRatherThanTimingOut()
+    {
+        var upstream = ReportRelayServer.NamedPipe("wip-relay-absent-" + Guid.NewGuid().ToString("N")[..12], TimeSpan.FromMinutes(5));
+        using var stop = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => upstream("{}", stop.Token));
     }
 
     /// <summary>Reads from a fixed input and records what is written back.</summary>
