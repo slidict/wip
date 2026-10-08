@@ -52,20 +52,54 @@ public static class ReportRelay
     public const int MaxLineBytes = 16 * 1024;
 
     /// <summary>
-    /// Creates the FIFO idempotently: owner-only directory and FIFO, and a refusal rather
-    /// than a replacement when something else already sits at the path. Fixed text, so no
-    /// value from the config or the host is ever interpolated into the shell.
+    /// Creates the FIFO idempotently, owned by the sandbox exec user -- the user the CLI runs
+    /// as, since neither passes a user -- with mode 0600 in a 0700 directory of that owner.
+    /// An existing FIFO is reused only with exactly that owner and mode; a symlink, a
+    /// non-FIFO, or a FIFO or directory with another owner or mode is refused, never fixed
+    /// up. Fixed text: no value from the config or the host is interpolated into the shell.
     /// </summary>
-    public const string CreateFifoScript =
-        "umask 077 && mkdir -p " + FifoDirectory + " && chmod 700 " + FifoDirectory + " && " +
-        "if [ -e " + FifoPath + " ] && [ ! -p " + FifoPath + " ]; then " +
-        "echo '" + FifoPath + " exists and is not a FIFO' >&2; exit 1; fi && " +
-        "{ [ -p " + FifoPath + " ] || mkfifo -m 600 " + FifoPath + "; } && chmod 600 " + FifoPath;
+    public static readonly string CreateFifoScript = string.Join(" ; ",
+        "umask 077",
+        "u=$(id -u)",
+        "if [ -L @DIR@ ]; then echo '@DIR@ is a symlink' >&2; exit 1; fi",
+        "mkdir -p @DIR@ || exit 1",
+        "if [ \"$(stat -c %u @DIR@)\" != \"$u\" ]; then echo \"@DIR@ is not owned by uid $u\" >&2; exit 1; fi",
+        "chmod 700 @DIR@ || exit 1",
+        "if [ -L @FIFO@ ] || { [ -e @FIFO@ ] && [ ! -p @FIFO@ ]; }; then echo '@FIFO@ exists and is not a FIFO' >&2; exit 1; fi",
+        "if [ -p @FIFO@ ]; then m=$(stat -c '%u %a' @FIFO@); if [ \"$m\" != \"$u 600\" ]; then echo \"@FIFO@ has owner/mode $m, expected $u 600\" >&2; exit 1; fi; " +
+            "else mkfifo -m 600 @FIFO@ && chown \"$u:$(id -g)\" @FIFO@ || exit 1; fi")
+        .Replace("@FIFO@", FifoPath, StringComparison.Ordinal)
+        .Replace("@DIR@", FifoDirectory, StringComparison.Ordinal);
 
-    /// <summary>Reads the FIFO until its writers close it; fails if it is not a FIFO.</summary>
-    public static readonly IReadOnlyList<string> ReadFifoCommand = ["sh", "-c", "[ -p " + FifoPath + " ] && exec cat " + FifoPath];
+    /// <summary>Reads the FIFO until its writers close it; fails if it is not a FIFO or is a symlink.</summary>
+    public static readonly IReadOnlyList<string> ReadFifoCommand = ["sh", "-c", "[ -p " + FifoPath + " ] && [ ! -L " + FifoPath + " ] && exec cat " + FifoPath];
 
     public static string SourceId(string sandbox) => "wip:" + sandbox;
+
+    /// <summary>Host-side lock for a sandbox's relay, beside the config under <c>.wip</c>.</summary>
+    public static string LockPath(string configDirectory, string sandbox) =>
+        Path.Combine(configDirectory, ".wip", "report-relay", sandbox + ".lock");
+
+    /// <summary>
+    /// Takes the exclusive per-sandbox relay lock (<c>flock</c> on Unix, a share-none handle
+    /// on Windows), held by the caller for the relay's whole life. A FIFO write reaches only
+    /// one reader, so a second relay would split reports between them -- and stamp them with
+    /// its own pane -- which is why it refuses to start instead.
+    /// </summary>
+    public static FileStream AcquireRelayLock(string lockPath, string sandbox)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(lockPath))!);
+        var options = new FileStreamOptions { Mode = FileMode.OpenOrCreate, Access = FileAccess.ReadWrite, Share = FileShare.None };
+        if (!OperatingSystem.IsWindows()) options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+        try
+        {
+            return new FileStream(lockPath, options);
+        }
+        catch (IOException e)
+        {
+            throw new WipException($"Sandbox {sandbox}: a report relay is already running ({lockPath} is locked); stop it before starting another", e);
+        }
+    }
 
     /// <summary>
     /// Variables an exec into a relay-enabled sandbox exports: the FIFO path, the source id,
@@ -237,22 +271,47 @@ public sealed class ReportRelayServer(string sandbox, string paneId, ReportUpstr
 
     /// <summary>
     /// Reads the FIFO until cancelled. A read that ends cleanly -- every writer closed the
-    /// FIFO, so <c>cat</c> saw EOF -- is reopened at once. A failed one waits
-    /// <paramref name="retryDelay"/> and re-creates the FIFO first, so a recreated sandbox
-    /// gets it back.
+    /// FIFO, so <c>cat</c> saw EOF -- is reopened at once.
     /// </summary>
-    public async Task RunAsync(ReportFifoReader reader, Func<CancellationToken, Task> ensureFifo, TimeSpan retryDelay, CancellationToken cancellation)
+    /// <remarks>
+    /// Only the first <paramref name="ensureFifo"/> fails fast, so a misconfiguration is
+    /// reported at once. After that, a failed read or a <see cref="WipException"/> -- the
+    /// sandbox stopped, a status probe failed -- is retried after a backoff that starts at
+    /// <paramref name="retryDelay"/> and doubles up to <paramref name="maxRetryDelay"/>,
+    /// re-creating the FIFO first, so a restarted or recreated sandbox gets it back. A clean
+    /// read resets the backoff.
+    /// </remarks>
+    public async Task RunAsync(ReportFifoReader reader, Func<CancellationToken, Task> ensureFifo, TimeSpan retryDelay,
+        CancellationToken cancellation, TimeSpan? maxRetryDelay = null)
     {
+        var ceiling = maxRetryDelay ?? TimeSpan.FromSeconds(30);
         try
         {
             await ensureFifo(cancellation);
+            var delay = retryDelay;
+            var recreate = false;
             while (!cancellation.IsCancellationRequested)
             {
-                var code = await reader(line => HandleLineAsync(line, cancellation), cancellation);
-                if (code == 0 || cancellation.IsCancellationRequested) continue;
-                log($"report relay {sandbox}: FIFO reader exited {code}; reopening");
-                await Task.Delay(retryDelay, cancellation);
-                await ensureFifo(cancellation);
+                try
+                {
+                    if (recreate) await ensureFifo(cancellation);
+                    recreate = false;
+                    var code = await reader(line => HandleLineAsync(line, cancellation), cancellation);
+                    if (code == 0 || cancellation.IsCancellationRequested)
+                    {
+                        delay = retryDelay;
+                        continue;
+                    }
+                    log($"report relay {sandbox}: FIFO reader exited {code}; retrying in {delay.TotalSeconds:0.###}s");
+                }
+                catch (Exception e) when (e is WipException or IOException or System.ComponentModel.Win32Exception or InvalidOperationException
+                    && !cancellation.IsCancellationRequested)
+                {
+                    log($"report relay {sandbox}: {e.Message}; retrying in {delay.TotalSeconds:0.###}s");
+                }
+                recreate = true;
+                await Task.Delay(delay, cancellation);
+                delay = TimeSpan.FromTicks(Math.Min(delay.Ticks * 2, ceiling.Ticks));
             }
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested)

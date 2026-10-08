@@ -145,42 +145,93 @@ public class ReportRelayTests
     [Fact]
     public void FifoCommandsUseOnlyTheFixedPath()
     {
-        Assert.Equal(["sh", "-c", "[ -p /run/wip/report.fifo ] && exec cat /run/wip/report.fifo"], ReportRelay.ReadFifoCommand);
+        Assert.Equal(["sh", "-c", "[ -p /run/wip/report.fifo ] && [ ! -L /run/wip/report.fifo ] && exec cat /run/wip/report.fifo"],
+            ReportRelay.ReadFifoCommand);
         Assert.Contains("mkfifo -m 600 /run/wip/report.fifo", ReportRelay.CreateFifoScript);
-        Assert.DoesNotContain("$", ReportRelay.CreateFifoScript);
+        Assert.DoesNotContain("@", ReportRelay.CreateFifoScript);
     }
 
+    /// <summary>The create script with the fixed directory swapped for <paramref name="directory"/>.</summary>
+    private static string CreateFifoScriptIn(string directory) =>
+        ReportRelay.CreateFifoScript.Replace(ReportRelay.FifoDirectory, directory, StringComparison.Ordinal);
+
     /// <summary>
-    /// The create script, run under the sandbox's sh with the fixed directory swapped for a
-    /// temporary one: owner-only modes, idempotent, and a refusal to replace a non-FIFO.
+    /// The create script under the sandbox's sh: a FIFO owned by the exec user, mode 0600 in a
+    /// 0700 directory, and running it again reuses that FIFO.
     /// </summary>
     [Fact]
     [System.Runtime.Versioning.UnsupportedOSPlatform("windows")]
-    public void CreateFifoScriptIsIdempotentOwnerOnlyAndRefusesANonFifo()
+    public void CreateFifoScriptMakesAnOwnerOnlyFifoIdempotently()
     {
         Assert.SkipWhen(OperatingSystem.IsWindows(), "the script runs under a Linux /bin/sh");
         var parent = Directory.CreateTempSubdirectory("wip-fifo-");
         try
         {
             var directory = Path.Combine(parent.FullName, "wip");
-            var script = ReportRelay.CreateFifoScript.Replace(ReportRelay.FifoDirectory, directory, StringComparison.Ordinal);
             var fifo = Path.Combine(directory, "report.fifo");
 
-            Assert.Equal(0, Sh(script));
-            Assert.Equal(0, Sh(script));
-            Assert.Equal(0, Sh($"[ -p '{fifo}' ]"));
+            Assert.Equal(0, Sh(CreateFifoScriptIn(directory)));
+            Assert.Equal(0, Sh(CreateFifoScriptIn(directory)));
+
+            Assert.Equal(0, Sh($"[ -p '{fifo}' ] && [ \"$(stat -c %u '{fifo}')\" = \"$(id -u)\" ]"));
             Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute, File.GetUnixFileMode(directory));
             Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(fifo));
-
-            File.Delete(fifo);
-            File.WriteAllText(fifo, "keep");
-            Assert.NotEqual(0, Sh(script));
-            Assert.Equal("keep", File.ReadAllText(fifo));
         }
         finally
         {
             parent.Delete(recursive: true);
         }
+    }
+
+    /// <summary>
+    /// What sits at the FIFO path is reused only as created: anything else is refused and
+    /// left exactly as found, never re-moded or replaced. (The script may still tighten its
+    /// own directory to 0700; only the directory's type and owner are compared.)
+    /// </summary>
+    [Theory]
+    [InlineData("regular file", "printf keep > \"$f\"")]
+    [InlineData("symlink to a FIFO", "mkfifo -m 600 \"$d/../elsewhere\" && ln -s \"$d/../elsewhere\" \"$f\"")]
+    [InlineData("FIFO with mode 0644", "mkfifo -m 644 \"$f\"")]
+    [InlineData("FIFO with mode 0666", "mkfifo -m 600 \"$f\" && chmod 666 \"$f\"")]
+    [InlineData("FIFO owned by another user", "mkfifo -m 600 \"$f\" && chown 4242 \"$f\"")]
+    [InlineData("directory owned by another user", "chown 4242 \"$d\"")]
+    [InlineData("directory that is a symlink", "rmdir \"$d\" && mkdir \"$d.real\" && ln -s \"$d.real\" \"$d\"")]
+    public void CreateFifoScriptRefusesAnythingButItsOwnFifo(string what, string setup)
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "the script runs under a Linux /bin/sh");
+        Assert.SkipWhen(setup.Contains("chown", StringComparison.Ordinal) && !IsRoot(), "changing a file's owner needs root");
+        var parent = Directory.CreateTempSubdirectory("wip-fifo-");
+        try
+        {
+            var directory = Path.Combine(parent.FullName, "wip");
+            var fifo = Path.Combine(directory, "report.fifo");
+            Directory.CreateDirectory(directory);
+            Assert.Equal(0, Sh($"d='{directory}'; f='{fifo}'; {setup}"));
+            var before = Describe(directory, fifo);
+
+            Assert.NotEqual(0, Sh(CreateFifoScriptIn(directory)));
+
+            Assert.Equal(before, Describe(directory, fifo));
+            Assert.True(before.Length > 0, what);
+        }
+        finally
+        {
+            Sh($"chown -R \"$(id -u)\" '{parent.FullName}' 2>/dev/null");
+            parent.Delete(recursive: true);
+        }
+    }
+
+    private static bool IsRoot() => Sh("[ \"$(id -u)\" = 0 ]") == 0;
+
+    private static string Describe(string directory, string fifo)
+    {
+        var start = new ProcessStartInfo("/bin/sh") { RedirectStandardOutput = true, RedirectStandardError = true };
+        start.ArgumentList.Add("-c");
+        start.ArgumentList.Add($"stat -c '%F %u' '{directory}'; stat -c '%F %u %a' '{fifo}' 2>&1; [ -L '{fifo}' ] && echo symlink; [ -f '{fifo}' ] && cat '{fifo}'");
+        using var process = Process.Start(start)!;
+        var output = process.StandardOutput.ReadToEnd();
+        process.WaitForExit();
+        return output;
     }
 
     private static int Sh(string script)
@@ -316,12 +367,128 @@ public class ReportRelayTests
         Assert.Contains("FIFO reader exited 1", Assert.Single(recorder.Logged));
     }
 
+    /// <summary>
+    /// The sandbox stopping makes the reader and the FIFO re-creation throw rather than
+    /// return a code; the relay backs off and keeps trying, and resumes once it is back.
+    /// </summary>
+    [Fact]
+    public async Task ReaderRecoversAfterTheSandboxGoesAwayAndComesBack()
+    {
+        var recorder = new Recorder();
+        using var stop = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        var running = true;
+        var reads = 0;
+        var ensured = 0;
+        var delays = new List<TimeSpan>();
+
+        await recorder.Server().RunAsync(async (onLine, _) =>
+        {
+            reads++;
+            if (!running) throw new WipException("Sandbox first: sandbox is not running; run sandbox create first");
+            if (reads == 1)
+            {
+                await onLine("""{"id":"before","method":"pane.report_agent"}""");
+                running = false;
+                return 137;
+            }
+            await onLine("""{"id":"after","method":"pane.report_agent"}""");
+            await stop.CancelAsync();
+            return 0;
+        }, _ =>
+        {
+            ensured++;
+            if (ensured > 1 && !running)
+            {
+                if (ensured == 3) running = true;
+                throw new WipException("Sandbox probe failed (exit 1)");
+            }
+            return Task.CompletedTask;
+        }, TimeSpan.FromMilliseconds(5), stop.Token, maxRetryDelay: TimeSpan.FromMilliseconds(20));
+
+        Assert.Equal(["before", "after"], recorder.Forwarded.Select(f => JsonDocument.Parse(f).RootElement.GetProperty("id").GetString()));
+        Assert.Equal(4, ensured);
+        Assert.Contains(recorder.Logged, l => l.Contains("FIFO reader exited 137"));
+        Assert.Contains(recorder.Logged, l => l.Contains("Sandbox probe failed"));
+        Assert.All(recorder.Logged, l => Assert.Contains("retrying in", l));
+    }
+
+    [Fact]
+    public async Task BackoffDoublesToItsCeilingAndResetsAfterACleanRead()
+    {
+        var recorder = new Recorder();
+        using var stop = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        var codes = new Queue<int>([1, 1, 1, 1, 0, 1, 0]);
+
+        await recorder.Server().RunAsync((_, _) =>
+        {
+            var code = codes.Dequeue();
+            if (codes.Count == 0) stop.Cancel();
+            return Task.FromResult(code);
+        }, _ => Task.CompletedTask, TimeSpan.FromMilliseconds(2), stop.Token, maxRetryDelay: TimeSpan.FromMilliseconds(8));
+
+        Assert.Equal(["0.002s", "0.004s", "0.008s", "0.008s", "0.002s"],
+            recorder.Logged.Select(l => l[(l.LastIndexOf(' ') + 1)..]));
+    }
+
+    /// <summary>Only the first FIFO creation fails fast, so a misconfiguration is reported at once.</summary>
     [Fact]
     public async Task FifoCreationFailureStopsTheRelay()
     {
         var recorder = new Recorder();
         await Assert.ThrowsAsync<WipException>(() => recorder.Server().RunAsync(
             (_, _) => Task.FromResult(0), _ => throw new WipException("no FIFO"), TimeSpan.Zero, TestContext.Current.CancellationToken));
+    }
+
+    /// <summary>
+    /// A second relay for the same sandbox refuses to start while the first holds the lock,
+    /// so no report is split between two readers or stamped with the wrong pane.
+    /// </summary>
+    [Fact]
+    public void SecondRelayForTheSameSandboxRefusesToStart()
+    {
+        var directory = Directory.CreateTempSubdirectory("wip-relay-");
+        try
+        {
+            var path = ReportRelay.LockPath(directory.FullName, "first");
+            Assert.Equal(Path.Combine(directory.FullName, ".wip", "report-relay", "first.lock"), path);
+
+            using (ReportRelay.AcquireRelayLock(path, "first"))
+            {
+                var refused = Assert.Throws<WipException>(() => ReportRelay.AcquireRelayLock(path, "first"));
+                Assert.Contains("Sandbox first", refused.Message);
+                Assert.Contains("already running", refused.Message);
+
+                // The lock is per sandbox: another sandbox's relay is unaffected.
+                using var other = ReportRelay.AcquireRelayLock(ReportRelay.LockPath(directory.FullName, "second"), "second");
+            }
+
+            // Released when the first relay exits.
+            using var again = ReportRelay.AcquireRelayLock(path, "first");
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
+    [System.Runtime.Versioning.UnsupportedOSPlatform("windows")]
+    public void RelayLockFileIsOwnerOnly()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "unix file modes do not apply on Windows");
+        var directory = Directory.CreateTempSubdirectory("wip-relay-");
+        try
+        {
+            var path = ReportRelay.LockPath(directory.FullName, "first");
+            using (ReportRelay.AcquireRelayLock(path, "first"))
+            {
+                Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(path));
+            }
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
     }
 
     /// <summary>

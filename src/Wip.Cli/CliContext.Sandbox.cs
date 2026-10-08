@@ -106,6 +106,8 @@ internal sealed partial class CliContext
         if (string.IsNullOrWhiteSpace(pane) || pane.Any(char.IsControl))
             throw new ConfigException($"sandbox relay needs {ReportRelay.PaneVariable}: run it from the Herdr pane the sandbox's CLI reports for");
 
+        // Held until the relay exits: one relay per sandbox, so no report goes to a second reader.
+        using var relayLock = ReportRelay.AcquireRelayLock(ReportRelay.LockPath(ConfigDirectory, name), name);
         var lifecycle = Lifecycle();
         var executable = Resolver.Resolve(Config.WslcCommand);
         using var cancellation = new CancellationTokenSource();
