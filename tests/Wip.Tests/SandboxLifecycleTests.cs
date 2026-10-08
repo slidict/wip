@@ -63,10 +63,10 @@ public class SandboxLifecycleTests
                 if (match.Id is not null)
                 {
                     var cName = Containers.First(kv => kv.Value == match).Key;
-                    var mountsObj = match.Mounts.Select(m => new { Type = m.Type, Name = m.Name, Destination = m.Destination, Source = m.Source, RW = !m.ReadOnly }).ToArray();
+                    var mountsObj = match.Mounts.Select(m => new { Type = m.Type, Name = m.Name, Destination = m.Destination }).ToArray();
                     return new(ProbeCode, JsonSerializer.Serialize(new[] { new { Id = inspectId, Name = cName, match.State, Labels = new Dictionary<string, string> { [SandboxLifecycle.OwnerLabel] = match.Owner }, Mounts = mountsObj } }));
                 }
-                var defaultMounts = Mounts.Select(m => new { Type = m.Type, Name = m.Name, Destination = m.Destination, Source = m.Source, RW = !m.ReadOnly }).ToArray();
+                var defaultMounts = Mounts.Select(m => new { Type = m.Type, Name = m.Name, Destination = m.Destination }).ToArray();
                 return new(ProbeCode, JsonSerializer.Serialize(new[] { new { Id, Name, State, Labels = new Dictionary<string, string> { [SandboxLifecycle.OwnerLabel] = Owner }, Mounts = defaultMounts } }));
             }
             Assert.NotEqual(SandboxConsoleMode.Capture, console);
@@ -91,9 +91,7 @@ public class SandboxLifecycleTests
                         var mType = parts.FirstOrDefault(p => p.StartsWith("type="))?[5..] ?? "volume";
                         var mSrc = parts.FirstOrDefault(p => p.StartsWith("source="))?[7..] ?? "";
                         var mTgt = parts.FirstOrDefault(p => p.StartsWith("target="))?[7..] ?? "";
-                        mounts.Add(mType == "bind"
-                            ? new(mType, "", mTgt, mSrc, parts.Contains("readonly"))
-                            : new(mType, mSrc, mTgt));
+                        mounts.Add(new(mType, mSrc, mTgt));
                     }
                 }
                 Mounts = mounts;
@@ -988,154 +986,51 @@ public class SandboxLifecycleTests
     }
 
     private const string RelaySuffix = "\n    report_relay: true";
-    private const string RelayDirectory = "/host/project/.wip/report-relay/first";
 
     private static readonly KeyValuePair<string, string>[] RelayEnvironment =
     [
-        new("WIP_REPORT_SOCKET", "/run/wip/herdr/report.sock"),
+        new("WIP_REPORT_FIFO", "/run/wip/report.fifo"),
         new("HERDR_PANE_ID", "1-2"),
     ];
 
     /// <summary>
-    /// Without the relay, create keeps its exact argv and needs no relay directory, so
-    /// existing wip.yml files see no change.
+    /// The FIFO is created by the relay at run time, so report_relay adds no mount and
+    /// create keeps its exact argv either way.
     /// </summary>
     [Fact]
-    public void CreateWithoutRelayAddsNoBindMount()
+    public void CreateIsTheSameWithOrWithoutTheRelay()
     {
-        var fake = new Fake();
-        Assert.Equal(0, new SandboxLifecycle(Settings(), fake.Run).Create("first"));
-        Assert.Equal(["run", "--name", fake.Name, "-d", "--label", $"{SandboxLifecycle.OwnerLabel}=v1:test:sandbox:first", "fixture:latest"],
-            fake.Calls.Single(c => c[0] == "run"));
+        var plain = new Fake();
+        var relay = new Fake();
+        Assert.Equal(0, new SandboxLifecycle(Settings(), plain.Run).Create("first"));
+        Assert.Equal(0, new SandboxLifecycle(Settings(RelaySuffix), relay.Run).Create("first"));
+        string[] expected = ["run", "--name", plain.Name, "-d", "--label", $"{SandboxLifecycle.OwnerLabel}=v1:test:sandbox:first", "fixture:latest"];
+        Assert.Equal(expected, plain.Calls.Single(c => c[0] == "run"));
+        Assert.Equal(expected, relay.Calls.Single(c => c[0] == "run"));
     }
 
+    /// <summary>Toggling report_relay no longer needs a recreate: there is no mount to mismatch.</summary>
     [Fact]
-    public void CreateWithRelayBindsTheHostDirectoryReadOnlyAtTheFixedPath()
+    public void ExistingContainerIsReusedWhenTheRelayIsEnabled()
     {
-        var fake = new Fake();
-        var service = new SandboxLifecycle(Settings(RelaySuffix), fake.Run, reportRelayDirectory: _ => RelayDirectory);
-        Assert.Equal(0, service.Create("first"));
-        var run = fake.Calls.Single(c => c[0] == "run");
-        var mount = run[Array.IndexOf(run, "--mount") + 1];
-        Assert.Equal($"type=bind,source={RelayDirectory},target=/run/wip/herdr,readonly", mount);
-        Assert.Equal("fixture:latest", run[^1]);
-        // Restarting the same container accepts its relay mount.
-        Assert.Equal(0, service.Create("first"));
-        Assert.Single(fake.Calls, c => c[0] == "run");
-    }
-
-    [Fact]
-    public void CreateWithRelayRefusesWithoutADirectoryOrWithAnUnsafeOne()
-    {
-        var fake = new Fake();
-        Assert.Throws<ConfigException>(() => new SandboxLifecycle(Settings(RelaySuffix), fake.Run).Create("first"));
-        Assert.Throws<ConfigException>(() =>
-            new SandboxLifecycle(Settings(RelaySuffix), fake.Run, reportRelayDirectory: _ => "/a,readonly=false").Create("first"));
-        Assert.Empty(fake.Calls);
-    }
-
-    /// <summary>Mounts are fixed at creation, so toggling report_relay needs a recreate.</summary>
-    [Fact]
-    public void ExistingContainerWhoseRelayMountDisagreesWithConfigIsReported()
-    {
-        var withoutMount = new Fake { Exists = true };
-        Assert.Throws<WipException>(() =>
-            new SandboxLifecycle(Settings(RelaySuffix), withoutMount.Run, reportRelayDirectory: _ => RelayDirectory).Create("first"));
-
-        var withMount = new Fake { Exists = true, Mounts = [new("bind", "", "/run/wip/herdr", RelayDirectory, ReadOnly: true)] };
-        Assert.Throws<WipException>(() => new SandboxLifecycle(Settings(), withMount.Run).Create("first"));
-        Assert.DoesNotContain(withoutMount.Calls.Concat(withMount.Calls), c => c[0] is "run" or "start" or "remove");
-    }
-
-    /// <summary>
-    /// Only the read-only bind of the configured directory is reused: a writable bind lets
-    /// the sandbox write into the host directory, and another source is another socket.
-    /// </summary>
-    [Theory]
-    [InlineData(RelayDirectory, false)]
-    [InlineData("/host/elsewhere", true)]
-    [InlineData("/host/project/.wip/report-relay/second", true)]
-    [InlineData("", true)]
-    public void ExistingRelayBindMustBeReadOnlyAndFromTheConfiguredDirectory(string source, bool readOnly)
-    {
-        var fake = new Fake { Exists = true, Mounts = [new("bind", "", "/run/wip/herdr", source, readOnly)] };
-        var service = new SandboxLifecycle(Settings(RelaySuffix), fake.Run, reportRelayDirectory: _ => RelayDirectory);
-
-        Assert.Throws<WipException>(() => service.Create("first"));
+        var fake = new Fake { Exists = true };
+        Assert.Equal(0, new SandboxLifecycle(Settings(RelaySuffix), fake.Run).Create("first"));
         Assert.DoesNotContain(fake.Calls, c => c[0] is "run" or "start" or "remove");
     }
 
     [Fact]
-    public void ExistingRelayBindIsReusedWhenItMatchesAndAcceptsTrailingSeparator()
+    public void ExecArgumentsTargetTheVerifiedRunningContainer()
     {
-        var fake = new Fake { Exists = true, Mounts = [new("bind", "", "/run/wip/herdr", RelayDirectory + "/", ReadOnly: true)] };
-        Assert.Equal(0, new SandboxLifecycle(Settings(RelaySuffix), fake.Run, reportRelayDirectory: _ => RelayDirectory).Create("first"));
-        Assert.DoesNotContain(fake.Calls, c => c[0] is "run" or "start" or "remove");
-    }
+        var fake = new Fake { Exists = true };
+        var service = new SandboxLifecycle(Settings(), fake.Run);
+        Assert.Equal(["exec", fake.Id, "cat", "/run/wip/report.fifo"], service.ExecArguments("first", ["cat", "/run/wip/report.fifo"]));
+        Assert.DoesNotContain(fake.Calls, c => c[0] == "exec");
 
-    [Fact]
-    public void DuplicateRelayBindsAreRefused()
-    {
-        var fake = new Fake
-        {
-            Exists = true,
-            Mounts = [new("bind", "", "/run/wip/herdr", RelayDirectory, true), new("bind", "", "/run/wip/herdr", "/host/elsewhere", true)],
-        };
-        Assert.Throws<WipException>(() =>
-            new SandboxLifecycle(Settings(RelaySuffix), fake.Run, reportRelayDirectory: _ => RelayDirectory).Create("first"));
-    }
-
-    /// <summary>
-    /// wslc's inspect gives each mount exactly Destination, Name, ReadWrite, Source and Type
-    /// (measured on a live container), with no RW or ReadOnly.
-    /// </summary>
-    [Theory]
-    [InlineData(false, true)]
-    [InlineData(true, false)]
-    public void StatusReadsWslcReadWriteFlag(bool readWrite, bool expectedReadOnly)
-    {
-        var fake = new Fake
-        {
-            Exists = true,
-            InspectOutput = $$"""
-                [{"Id":"backend-id","Name":"{{SandboxLifecycle.BackendName("test", "first")}}","State":"running",
-                  "Labels":{"{{SandboxLifecycle.OwnerLabel}}":"v1:test:sandbox:first"},
-                  "Mounts":[{"Destination":"/run/wip/herdr","Name":"","ReadWrite":{{(readWrite ? "true" : "false")}},"Source":"/host/a","Type":"bind"}]}]
-                """,
-        };
-
-        var mount = Assert.Single(new SandboxLifecycle(Settings(), fake.Run).Status("first").Mounts);
-
-        Assert.Equal(new SandboxMount("bind", "", "/run/wip/herdr", "/host/a", expectedReadOnly), mount);
-    }
-
-    /// <summary>Docker's inspect reports RW; the read-only state is what the relay check relies on.</summary>
-    [Fact]
-    public void StatusKeepsBindSourceAndReadOnlyState()
-    {
-        var fake = new Fake
-        {
-            Exists = true,
-            InspectOutput = $$"""
-                [{"Id":"backend-id","Name":"{{SandboxLifecycle.BackendName("test", "first")}}","State":"running",
-                  "Labels":{"{{SandboxLifecycle.OwnerLabel}}":"v1:test:sandbox:first"},
-                  "Mounts":[{"Type":"bind","Source":"/host/a","Destination":"/run/wip/herdr/","RW":false},
-                            {"Type":"bind","Source":"/host/b","Destination":"/b","RW":true},
-                            {"Type":"bind","Source":"/host/c","Destination":"/c","ReadOnly":true},
-                            {"Type":"bind","Source":"/host/d","Destination":"/d"}]}]
-                """,
-        };
-
-        var mounts = new SandboxLifecycle(Settings(), fake.Run).Status("first").Mounts;
-
-        Assert.Equal(
-            [
-                new SandboxMount("bind", "", "/run/wip/herdr", "/host/a", true),
-                new SandboxMount("bind", "", "/b", "/host/b", false),
-                new SandboxMount("bind", "", "/c", "/host/c", true),
-                new SandboxMount("bind", "", "/d", "/host/d", false),
-            ],
-            mounts);
+        fake.State = "exited";
+        Assert.Throws<WipException>(() => service.ExecArguments("first", ["cat"]));
+        var calls = fake.Calls.Count;
+        Assert.Throws<ConfigException>(() => service.ExecArguments("first", ["--help"]));
+        Assert.Equal(calls, fake.Calls.Count);
     }
 
     [Fact]
@@ -1144,7 +1039,7 @@ public class SandboxLifecycleTests
         var fake = new Fake { Exists = true };
         var service = new SandboxLifecycle(Settings(), fake.Run);
         Assert.Equal(0, service.Exec("first", ["true"], TimeSpan.FromSeconds(5), RelayEnvironment));
-        Assert.Equal(["exec", "-e", "WIP_REPORT_SOCKET=/run/wip/herdr/report.sock", "-e", "HERDR_PANE_ID=1-2", fake.Id, "true"],
+        Assert.Equal(["exec", "-e", "WIP_REPORT_FIFO=/run/wip/report.fifo", "-e", "HERDR_PANE_ID=1-2", fake.Id, "true"],
             fake.Calls.Single(c => c[0] == "exec"));
     }
 
@@ -1158,7 +1053,7 @@ public class SandboxLifecycleTests
         string[] prefix = tty ? ["exec", "-i", "-t"] : ["exec", "-i"];
 
         Assert.Equal(0, service.ExecInteractive("first", ["sh"], tty, RelayEnvironment));
-        Assert.Equal(prefix.Concat(["-e", "WIP_REPORT_SOCKET=/run/wip/herdr/report.sock", "-e", "HERDR_PANE_ID=1-2", fake.Id, "sh"]),
+        Assert.Equal(prefix.Concat(["-e", "WIP_REPORT_FIFO=/run/wip/report.fifo", "-e", "HERDR_PANE_ID=1-2", fake.Id, "sh"]),
             fake.Calls.Single(c => c[0] == "exec"));
 
         fake.Calls.Clear();

@@ -1,0 +1,150 @@
+#!/bin/sh
+# herdr-report: reports this sandbox's agent state to Herdr through the wip report relay.
+#
+# Runs inside the sandbox and writes one JSON line into the report FIFO, which the host's
+# `wip sandbox relay` reads. POSIX sh because the repo has no JavaScript toolchain; it runs
+# under busybox sh.
+#
+#   herdr-report report-agent --agent NAME --state idle|working|blocked|unknown [--seq N] [--message TEXT]
+#   herdr-report report-agent-session --agent NAME --session ID [--seq N]
+#
+# The FIFO path comes only from the environment (WIP_REPORT_FIFO), and the relay stamps
+# the pane and source itself. No argument chooses the target, the method or any other part
+# of the Herdr API.
+#
+# The FIFO is one-way, so there is no reply and no refusal to report. Exit status: 0 once
+# the line is written, and also, silently, when reporting is unavailable (no
+# WIP_REPORT_FIFO, no FIFO there, or no reader within two seconds), so a CLI hook never
+# breaks for lack of a relay. 2 for invalid arguments.
+
+set -u
+
+HERDR_REPORT_DEADLINE=2
+# A write of at most PIPE_BUF bytes (4096 on Linux) is atomic, so concurrent reports from
+# one sandbox never interleave within a line.
+HERDR_REPORT_MAX_LINE=4096
+
+herdr_report_usage() {
+    cat <<'EOF'
+usage: herdr-report report-agent --agent NAME --state idle|working|blocked|unknown [--seq N] [--message TEXT]
+       herdr-report report-agent-session --agent NAME --session ID [--seq N]
+EOF
+}
+
+herdr_report_fail() {
+    printf 'herdr-report: %s\n' "$1" >&2
+    exit 2
+}
+
+# Control characters cannot appear in any value: they would break the one-line framing.
+herdr_report_check_text() {
+    case $2 in
+        '') herdr_report_fail "$1 must not be empty" ;;
+        *[[:cntrl:]]*) herdr_report_fail "$1 must not contain control characters" ;;
+    esac
+}
+
+# A JSON string body: backslash and quote escaped; control characters were refused above.
+herdr_report_json_string() {
+    printf '"%s"' "$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g')"
+}
+
+# The single transport: writes one line into the FIFO. Opening a FIFO blocks until the
+# relay is reading it, which is why the caller bounds this by the deadline.
+herdr_report_transport() {
+    printf '%s\n' "$2" >"$1"
+}
+
+# Kills a process and its descendants, children first, so a write cut off at the deadline
+# leaves nothing running behind the hook. Without pgrep only the process itself is killed.
+herdr_report_kill_tree() {
+    for herdr_report_child in $(pgrep -P "$1" 2>/dev/null); do
+        herdr_report_kill_tree "$herdr_report_child"
+    done
+    kill "$1" 2>/dev/null
+}
+
+# Runs the transport bounded by the deadline. Its outcome is not reported: there is no
+# reply to read, and a write that cannot finish in time means the relay is unavailable.
+herdr_report_send() {
+    ( herdr_report_transport "$1" "$2" ) &
+    herdr_report_pid=$!
+    ( sleep "$HERDR_REPORT_DEADLINE"; herdr_report_kill_tree "$herdr_report_pid" ) >/dev/null 2>&1 &
+    herdr_report_watch=$!
+    wait "$herdr_report_pid"
+    herdr_report_kill_tree "$herdr_report_watch"
+}
+
+herdr_report_main() {
+    [ $# -gt 0 ] || { herdr_report_usage >&2; exit 2; }
+    command=$1
+    shift
+    case $command in
+        -h|--help) herdr_report_usage; exit 0 ;;
+        report-agent) method=pane.report_agent; allowed=' --agent --state --seq --message ' ;;
+        report-agent-session) method=pane.report_agent_session; allowed=' --agent --session --seq ' ;;
+        *) herdr_report_fail "unknown subcommand: $command" ;;
+    esac
+
+    agent= state= seq= message= session= seen=' '
+    while [ $# -gt 0 ]; do
+        flag=$1
+        case $allowed in
+            *" $flag "*) ;;
+            *) herdr_report_fail "unknown argument for $command: $flag" ;;
+        esac
+        case $seen in *" $flag "*) herdr_report_fail "$flag given more than once" ;; esac
+        seen="$seen$flag "
+        [ $# -ge 2 ] || herdr_report_fail "$flag needs a value"
+        case $flag in
+            --agent) agent=$2 ;;
+            --state) state=$2 ;;
+            --seq) seq=$2 ;;
+            --message) message=$2 ;;
+            --session) session=$2 ;;
+        esac
+        shift 2
+    done
+
+    herdr_report_check_text --agent "$agent"
+    if [ "$method" = pane.report_agent ]; then
+        case $state in
+            idle|working|blocked|unknown) ;;
+            *) herdr_report_fail "--state must be idle, working, blocked or unknown" ;;
+        esac
+        case $seen in *' --message '*) herdr_report_check_text --message "$message" ;; esac
+    else
+        herdr_report_check_text --session "$session"
+    fi
+    case $seen in
+        *' --seq '*)
+            # Digits only and no leading zero, so it is a valid JSON number.
+            case $seq in ''|*[!0-9]*|0?*) herdr_report_fail "--seq must be a non-negative integer" ;; esac
+            [ ${#seq} -le 15 ] || herdr_report_fail "--seq is too large"
+            ;;
+    esac
+
+    if [ "$method" = pane.report_agent_session ]; then
+        # Herdr requires pane_id here (measured; the relay stamps it), but the rest of its
+        # required params are unenumerated, and the doc forbids guessing. Nothing is sent.
+        printf 'herdr-report: report-agent-session is not available yet: its params are not fully enumerated; nothing was sent\n' >&2
+        exit 2
+    fi
+
+    # Reporting is unavailable without the FIFO: succeed silently. Never create a file in
+    # its place.
+    fifo=${WIP_REPORT_FIFO:-}
+    [ -n "$fifo" ] && [ -p "$fifo" ] || exit 0
+
+    params="\"agent\":$(herdr_report_json_string "$agent"),\"state\":\"$state\""
+    [ -z "$seq" ] || params="$params,\"seq\":$seq"
+    case $seen in *' --message '*) params="$params,\"message\":$(herdr_report_json_string "$message")" ;; esac
+    request="{\"id\":\"herdr-report-$$\",\"method\":\"$method\",\"params\":{$params}}"
+    [ "$(printf '%s\n' "$request" | wc -c)" -le "$HERDR_REPORT_MAX_LINE" ] || herdr_report_fail "report is longer than $HERDR_REPORT_MAX_LINE bytes"
+
+    # stderr is discarded: the shell announces a job killed at the deadline ("Terminated").
+    herdr_report_send "$fifo" "$request" 2>/dev/null
+    exit 0
+}
+
+herdr_report_main "$@"

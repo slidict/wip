@@ -5,8 +5,8 @@ namespace Wip.Configuration;
 
 public sealed record VolumeDefinition(string Name, bool Persistent, string Mount);
 /// <param name="ReportRelay">
-/// Opt-in: bind the host's report relay directory into the sandbox so its CLI can report
-/// agent state through <see cref="Execution.ReportRelay"/>. Off unless declared.
+/// Opt-in: execs export the report FIFO's path so the sandbox's CLI can report agent state
+/// through <see cref="Execution.ReportRelay"/>. Off unless declared.
 /// </param>
 public sealed record SandboxDefinition(string Name, string Image, IReadOnlyList<string> Volumes, bool ReportRelay = false);
 
@@ -71,10 +71,6 @@ public sealed partial class SandboxSettings
                     throw new ConfigException($"sandboxes.{name}.report_relay must explicitly be true or false");
                 reportRelay = relay;
             }
-            // The relay mount is wip's own; a declared volume must neither shadow it nor be
-            // shadowed by it, so member-private storage never shares a path with the socket.
-            if (reportRelay && references.Any(v => Overlaps(byName[v].Mount, Execution.ReportRelay.MountPath)))
-                throw new ConfigException($"sandboxes.{name} has a volume overlapping {Execution.ReportRelay.MountPath}");
             sandboxes.Add(new SandboxDefinition(name, image, references.AsReadOnly(), reportRelay));
         }
         string? resourceNamespace = null;
@@ -107,11 +103,6 @@ public sealed partial class SandboxSettings
         foreach (var (key, value) in values) result[key] = value;
         return result;
     }
-
-    private static bool Overlaps(string mount, string reserved) =>
-        mount == "/" || mount == reserved ||
-        reserved.StartsWith(mount + "/", StringComparison.Ordinal) ||
-        mount.StartsWith(reserved + "/", StringComparison.Ordinal);
 
     private static List<object?> Sequence(OrderedDictionary<string, object?> raw, string key) =>
         !raw.ContainsKey(key) ? [] : RubyValue.AsSequence(raw[key]) ?? throw new ConfigException($"{key} must be a sequence");

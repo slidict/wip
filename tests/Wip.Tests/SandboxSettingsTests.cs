@@ -76,9 +76,6 @@ public class SandboxSettingsTests
     [InlineData("sandboxes: [{name: box, image: tool, volumes: data}]")]
     [InlineData("sandboxes: [{name: box, image: tool, report_relay: 'true'}]")]
     [InlineData("sandboxes: [{name: box, image: tool, report_relay: null}]")]
-    [InlineData("volumes: [{name: data, persistent: true, mount: /run/wip/herdr}]\nsandboxes: [{name: box, image: tool, volumes: [data], report_relay: true}]")]
-    [InlineData("volumes: [{name: data, persistent: true, mount: /run/wip/herdr/x}]\nsandboxes: [{name: box, image: tool, volumes: [data], report_relay: true}]")]
-    [InlineData("volumes: [{name: data, persistent: true, mount: /run}]\nsandboxes: [{name: box, image: tool, volumes: [data], report_relay: true}]")]
     public void InvalidResourcesFailAtConfigLoad(string yaml) => Assert.Throws<ConfigException>(() => Load("resource_namespace: example\n" + yaml));
 
     [Fact]
