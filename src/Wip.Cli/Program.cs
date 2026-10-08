@@ -189,6 +189,18 @@ internal static class Program
             }
             sandbox.Subcommands.Add(command);
         }
+        var relayName = new Argument<string>("name");
+        var relayUpstream = new Option<string?>("--upstream")
+        {
+            Description = "Herdr's socket path, or pipe name on Windows (default: HERDR_SOCKET_PATH)",
+        };
+        var relay = new Command("relay", "Relay a sandbox's agent reports to Herdr (host only; pane.report_agent and pane.report_agent_session only)")
+        {
+            relayName,
+            relayUpstream,
+        };
+        relay.SetAction(parsed => context(parsed).SandboxRelay(parsed.GetValue(relayName)!, parsed.GetValue(relayUpstream)));
+        sandbox.Subcommands.Add(relay);
         yield return sandbox;
         var volume = new Command("volume", "Manage declared storage and reconcile ephemeral use cycles");
         foreach (var operation in new[] { "create", "status", "destroy", "reconcile" })

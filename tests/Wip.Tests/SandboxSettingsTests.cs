@@ -74,6 +74,11 @@ public class SandboxSettingsTests
     [InlineData("sandboxes: {box: {image: tool}}")]
     [InlineData("volumes: [data]")]
     [InlineData("sandboxes: [{name: box, image: tool, volumes: data}]")]
+    [InlineData("sandboxes: [{name: box, image: tool, report_relay: 'true'}]")]
+    [InlineData("sandboxes: [{name: box, image: tool, report_relay: null}]")]
+    [InlineData("volumes: [{name: data, persistent: true, mount: /run/wip/herdr}]\nsandboxes: [{name: box, image: tool, volumes: [data], report_relay: true}]")]
+    [InlineData("volumes: [{name: data, persistent: true, mount: /run/wip/herdr/x}]\nsandboxes: [{name: box, image: tool, volumes: [data], report_relay: true}]")]
+    [InlineData("volumes: [{name: data, persistent: true, mount: /run}]\nsandboxes: [{name: box, image: tool, volumes: [data], report_relay: true}]")]
     public void InvalidResourcesFailAtConfigLoad(string yaml) => Assert.Throws<ConfigException>(() => Load("resource_namespace: example\n" + yaml));
 
     [Fact]
@@ -113,5 +118,24 @@ public class SandboxSettingsTests
         Assert.Contains("resource_namespace must", error.Message);
         Assert.DoesNotContain("resources.resource_namespace", error.Message);
         Assert.Equal("example", Load(Sample).SandboxResources.ResourceNamespace);
+    }
+
+    [Fact]
+    public void ReportRelayIsOptInAndRoundTripsOnlyWhenEnabled()
+    {
+        var config = Load("""
+            resource_namespace: example
+            volumes: [{name: state, persistent: true, mount: /root/.claude}, {name: runtime, persistent: false, mount: /run/wip/other}]
+            sandboxes:
+              - {name: first, image: tool, volumes: [state, runtime], report_relay: true}
+              - {name: second, image: tool, report_relay: false}
+              - {name: third, image: tool}
+            """);
+        Assert.Equal([true, false, false], config.SandboxResources.Sandboxes.Select(s => s.ReportRelay));
+        var mappings = config.SandboxResources.ToMapping()["sandboxes"] as List<object?>;
+        Assert.Equal(true, RubyValue.AsMapping(mappings![0])!["report_relay"]);
+        Assert.False(RubyValue.AsMapping(mappings[1])!.ContainsKey("report_relay"));
+        Assert.False(RubyValue.AsMapping(mappings[2])!.ContainsKey("report_relay"));
+        Assert.DoesNotContain(Load(Sample).SandboxResources.Sandboxes, s => s.ReportRelay);
     }
 }
