@@ -41,8 +41,6 @@ internal sealed partial class CliContext
         bool needsVolumes;
         if (operation == "create")
         {
-            // The bind source must exist before wslc mounts it; the relay creates the socket later.
-            if (definition.ReportRelay) ReportRelay.EnsurePrivateDirectory(RelayDirectory(name));
             needsVolumes = definition.Volumes.Count > 0;
         }
         else if (operation == "destroy")
@@ -91,8 +89,9 @@ internal sealed partial class CliContext
     }
 
     /// <summary>
-    /// Runs the host side of a sandbox's report relay until interrupted. Only the host runs
-    /// this: the sandbox gets the socket, never wip.yml or Herdr's own socket.
+    /// Runs the host side of a sandbox's report relay until interrupted: creates the report
+    /// FIFO inside the sandbox, reads it through <c>sandbox exec</c>, and forwards what the
+    /// filter allows to Herdr. Only the host runs this; the sandbox never sees Herdr's pipe.
     /// </summary>
     internal int SandboxRelay(string name, string? upstream)
     {
@@ -102,24 +101,59 @@ internal sealed partial class CliContext
         var herdr = upstream ?? System.Environment.GetEnvironmentVariable("HERDR_SOCKET_PATH");
         if (string.IsNullOrWhiteSpace(herdr))
             throw new ConfigException("sandbox relay needs Herdr's socket: pass --upstream or set HERDR_SOCKET_PATH");
-        var directory = RelayDirectory(name);
+        // The relay, not the sandbox, says which pane a report is about.
+        var pane = System.Environment.GetEnvironmentVariable(ReportRelay.PaneVariable);
+        if (string.IsNullOrWhiteSpace(pane) || pane.Any(char.IsControl))
+            throw new ConfigException($"sandbox relay needs {ReportRelay.PaneVariable}: run it from the Herdr pane the sandbox's CLI reports for");
+
+        var lifecycle = Lifecycle();
+        var executable = Resolver.Resolve(Config.WslcCommand);
         using var cancellation = new CancellationTokenSource();
         Console.CancelKeyPress += (_, e) => { e.Cancel = true; cancellation.Cancel(); };
-        var server = new ReportRelayServer(name, ReportRelayServer.ForHost(herdr));
-        server.ListenAsync(Path.Combine(directory, ReportRelay.SocketName), cancellation.Token).GetAwaiter().GetResult();
+        var server = new ReportRelayServer(name, pane, ReportRelayServer.ForHost(herdr), Console.Error.WriteLine);
+        server.RunAsync(
+            (onLine, token) => ReadFifoAsync(executable, lifecycle.ExecArguments(name, ReportRelay.ReadFifoCommand), onLine, token),
+            _ =>
+            {
+                var code = lifecycle.Exec(name, ["sh", "-c", ReportRelay.CreateFifoScript], TimeSpan.FromSeconds(30));
+                if (code != 0) throw new WipException($"Sandbox {name}: could not create the report FIFO (exit {code})");
+                return Task.CompletedTask;
+            },
+            TimeSpan.FromSeconds(1),
+            cancellation.Token).GetAwaiter().GetResult();
         return 0;
     }
 
+    /// <summary>One <c>cat</c> of the FIFO, streamed line by line until every writer has closed it.</summary>
+    private static async Task<int> ReadFifoAsync(string executable, IReadOnlyList<string> arguments, Func<string, Task> onLine, CancellationToken cancellation)
+    {
+        var start = new System.Diagnostics.ProcessStartInfo(executable)
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardInput = true,
+            StandardOutputEncoding = new System.Text.UTF8Encoding(false),
+        };
+        foreach (var argument in arguments) start.ArgumentList.Add(argument);
+        using var process = System.Diagnostics.Process.Start(start)
+            ?? throw new WipException("could not start the report FIFO reader");
+        process.StandardInput.Close();
+        using var stop = cancellation.Register(() =>
+        {
+            try { process.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
+        });
+        await ReportRelay.PumpLinesAsync(process.StandardOutput, onLine, cancellation);
+        await process.WaitForExitAsync(cancellation);
+        return process.ExitCode;
+    }
+
     private SandboxLifecycle Lifecycle(IVolumeLifecycle? volumes = null) =>
-        new(Config.SandboxResources, ResourceBackend(), volumes, RelayDirectory);
+        new(Config.SandboxResources, ResourceBackend(), volumes);
 
     private SandboxDefinition Definition(string name) =>
         Config.SandboxResources.Sandboxes.SingleOrDefault(s => s.Name == name)
             ?? throw new ConfigException($"Unknown sandbox: {name}");
 
     private string ConfigDirectory => Path.GetDirectoryName(Path.GetFullPath(Config.Path ?? "wip.yml"))!;
-
-    private string RelayDirectory(string name) => ReportRelay.HostDirectory(ConfigDirectory, name);
 
     /// <summary>Null unless the sandbox opted into the relay, so other execs are unchanged.</summary>
     private IReadOnlyList<KeyValuePair<string, string>>? ExecEnvironment(string name)

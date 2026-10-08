@@ -1,7 +1,7 @@
+using System.Diagnostics;
 using System.IO.Pipes;
 using System.Net.Sockets;
 using System.Text;
-using System.Runtime.Versioning;
 using System.Text.Json;
 using Wip.Execution;
 
@@ -10,44 +10,85 @@ namespace Wip.Tests;
 public class ReportRelayTests
 {
     private const string Source = "wip:first";
+    private const string Pane = "pane-7";
+    private const string Ok = """{"id":"b","result":{"type":"ok"}}""";
+
+    private static readonly string ShimPath = Path.Combine(
+        Path.GetDirectoryName(GoldenCorpus.Root)!, "..", "scripts", "herdr-report");
+
+    private sealed class Recorder
+    {
+        public readonly List<string> Forwarded = [];
+        public readonly List<string> Logged = [];
+        public string Reply = Ok;
+
+        public ReportRelayServer Server(ReportUpstream? upstream = null) => new("first", Pane, upstream ?? ((line, _) =>
+        {
+            lock (Forwarded) Forwarded.Add(line);
+            return Task.FromResult(Reply);
+        }), message => { lock (Logged) Logged.Add(message); });
+    }
 
     [Theory]
     [InlineData("pane.report_agent")]
     [InlineData("pane.report_agent_session")]
-    public void AllowedMethodsAreForwardedWithTheRelaySource(string method)
+    public void AllowedMethodsAreForwardedWithTheRelayPaneAndSource(string method)
     {
         var decision = ReportRelay.Filter($$$"""
-            {"id":"r1","method":"{{{method}}}","params":{"pane_id":"1-2","agent":"claude","state":"working","seq":3,"agent_session_id":"s-1"}}
-            """, Source);
+            {"id":"r1","method":"{{{method}}}","params":{"agent":"claude","state":"working","seq":3,"agent_session_id":"s-1"}}
+            """, Source, Pane);
 
         Assert.True(decision.Accepted);
         using var forwarded = JsonDocument.Parse(decision.Forward!);
         Assert.Equal("r1", forwarded.RootElement.GetProperty("id").GetString());
         Assert.Equal(method, forwarded.RootElement.GetProperty("method").GetString());
         var parameters = forwarded.RootElement.GetProperty("params");
-        Assert.Equal("1-2", parameters.GetProperty("pane_id").GetString());
-        Assert.Equal("claude", parameters.GetProperty("agent").GetString());
-        Assert.Equal("working", parameters.GetProperty("state").GetString());
-        Assert.Equal(3, parameters.GetProperty("seq").GetInt32());
-        Assert.Equal("s-1", parameters.GetProperty("agent_session_id").GetString());
+        Assert.Equal(["agent", "state", "seq", "agent_session_id", "pane_id", "source"], parameters.EnumerateObject().Select(p => p.Name));
+        Assert.Equal(Pane, parameters.GetProperty("pane_id").GetString());
         Assert.Equal(Source, parameters.GetProperty("source").GetString());
+        Assert.Equal(3, parameters.GetProperty("seq").GetInt32());
+    }
+
+    [Fact]
+    public void MissingParamsStillGetPaneAndSource()
+    {
+        var decision = ReportRelay.Filter("""{"method":"pane.report_agent"}""", Source, Pane);
+        Assert.Equal("""{"method":"pane.report_agent","params":{"pane_id":"pane-7","source":"wip:first"}}""", decision.Forward);
     }
 
     /// <summary>A sandbox cannot report under another sandbox's name.</summary>
     [Fact]
     public void SpoofedSourceIsReplaced()
     {
-        var decision = ReportRelay.Filter("""{"method":"pane.report_agent","params":{"source":"wip:other"}}""", Source);
+        var decision = ReportRelay.Filter("""{"method":"pane.report_agent","params":{"source":"wip:other"}}""", Source, Pane);
 
         Assert.True(decision.Accepted);
         using var forwarded = JsonDocument.Parse(decision.Forward!);
-        var parameters = forwarded.RootElement.GetProperty("params");
-        Assert.Equal(Source, parameters.GetProperty("source").GetString());
-        Assert.Single(parameters.EnumerateObject());
+        Assert.Equal(Source, forwarded.RootElement.GetProperty("params").GetProperty("source").GetString());
+    }
+
+    /// <summary>
+    /// The pane is the relay's to say. A line naming any pane -- another one, the relay's
+    /// own, or a non-string -- is refused rather than rewritten.
+    /// </summary>
+    [Theory]
+    [InlineData("""{"id":"r1","method":"pane.report_agent","params":{"pane_id":"pane-1","agent":"a","state":"idle"}}""")]
+    [InlineData("""{"id":"r1","method":"pane.report_agent","params":{"pane_id":"pane-7","agent":"a","state":"idle"}}""")]
+    [InlineData("""{"id":"r1","method":"pane.report_agent","params":{"pane_id":null}}""")]
+    [InlineData("""{"id":"r1","method":"pane.report_agent","params":{"pane_id":7}}""")]
+    [InlineData("""{"id":"r1","method":"pane.report_agent_session","params":{"pane_id":"pane-1","agent":"a"}}""")]
+    public void SandboxSuppliedPaneIdIsRefused(string line)
+    {
+        var decision = ReportRelay.Filter(line, Source, Pane);
+
+        Assert.False(decision.Accepted);
+        Assert.Null(decision.Forward);
+        Assert.Equal("r1", decision.Id);
+        Assert.Contains("pane_id", decision.Error);
     }
 
     [Theory]
-    [InlineData("""{"id":"r1","method":"pane.send_input","params":{"pane_id":"1-1","text":"rm -rf /"}}""")]
+    [InlineData("""{"id":"r1","method":"pane.send_input","params":{"text":"rm -rf /"}}""")]
     [InlineData("""{"id":"r1","method":"pane.read","params":{}}""")]
     [InlineData("""{"id":"r1","method":"ping"}""")]
     [InlineData("""{"id":"r1","method":"PANE.REPORT_AGENT","params":{}}""")]
@@ -60,13 +101,15 @@ public class ReportRelayTests
     [InlineData("""{"id":"r1","method":["pane.report_agent"]}""")]
     [InlineData("""{"id":"r1","method":"pane.report_agent","params":[]}""")]
     [InlineData("""{"id":"r1","method":"pane.report_agent","subscribe":true}""")]
+    [InlineData("""{"id":"r1","method":"pane.report_agent","token":"t"}""")]
     [InlineData("""{"id":7,"method":"pane.report_agent"}""")]
     [InlineData("""[{"method":"pane.report_agent"}]""")]
     [InlineData("""{"method":"pane.report_agent"}{"method":"pane.read"}""")]
+    [InlineData("""{"token":"secret"}""")]
     [InlineData("not json")]
     public void EverythingElseIsRefused(string line)
     {
-        var decision = ReportRelay.Filter(line, Source);
+        var decision = ReportRelay.Filter(line, Source, Pane);
 
         Assert.False(decision.Accepted);
         Assert.Null(decision.Forward);
@@ -77,11 +120,11 @@ public class ReportRelayTests
     public void OversizedMessageIsRefused()
     {
         var padding = new string('x', ReportRelay.MaxLineBytes);
-        Assert.False(ReportRelay.Filter($$$"""{"method":"pane.report_agent","params":{"note":"{{{padding}}}"}}""", Source).Accepted);
+        Assert.False(ReportRelay.Filter($$$"""{"method":"pane.report_agent","params":{"note":"{{{padding}}}"}}""", Source, Pane).Accepted);
     }
 
     [Fact]
-    public void ExecEnvironmentExportsSocketSourceAndPresentPassThroughOnly()
+    public void ExecEnvironmentExportsFifoSourceAndPresentPassThroughOnly()
     {
         var host = new Dictionary<string, string> { ["HERDR_PANE_ID"] = "1-2", ["HERDR_SOCKET_PATH"] = "/host/herdr.sock" };
 
@@ -89,55 +132,251 @@ public class ReportRelayTests
 
         Assert.Equal(
             [
-                new(ReportRelay.SocketVariable, "/run/wip/herdr/report.sock"),
-                new(ReportRelay.SourceVariable, Source),
+                new("WIP_REPORT_FIFO", "/run/wip/report.fifo"),
+                new("WIP_REPORT_SOURCE", Source),
                 new("HERDR_PANE_ID", "1-2"),
             ],
             environment);
-        Assert.DoesNotContain(environment, e => e.Key == "HERDR_SOCKET_PATH");
         Assert.Equal(2, ReportRelay.ExecEnvironment("first", _ => null).Count);
         Assert.Equal(2, ReportRelay.ExecEnvironment("first", _ => "1-2\n-e X=1").Count);
     }
 
+    /// <summary>The FIFO helper text is fixed: the read command and the create script name only the fixed path.</summary>
     [Fact]
-    public async Task ServerAnswersEveryLineAndForwardsOnlyAllowedOnes()
+    public void FifoCommandsUseOnlyTheFixedPath()
     {
-        var forwarded = new List<string>();
-        var server = new ReportRelayServer("first", (line, _) =>
-        {
-            forwarded.Add(line);
-            return Task.FromResult("""{"id":"b","result":{"type":"ok"}}""");
-        });
-        var input = "{\"id\":\"a\",\"method\":\"pane.read\"}\n\n{\"id\":\"b\",\"method\":\"pane.report_agent\",\"params\":{}}\r\n";
-        var stream = new DuplexStream(input);
-
-        await server.ServeAsync(stream, TestContext.Current.CancellationToken);
-
-        var replies = stream.Written.Split('\n', StringSplitOptions.RemoveEmptyEntries);
-        Assert.Equal(2, replies.Length);
-        using (var refused = JsonDocument.Parse(replies[0]))
-        {
-            Assert.Equal("a", refused.RootElement.GetProperty("id").GetString());
-            Assert.Equal("relay_refused", refused.RootElement.GetProperty("error").GetProperty("code").GetString());
-        }
-        Assert.Equal("""{"id":"b","result":{"type":"ok"}}""", replies[1]);
-        Assert.Equal(["""{"id":"b","method":"pane.report_agent","params":{"source":"wip:first"}}"""], forwarded);
+        Assert.Equal(["sh", "-c", "[ -p /run/wip/report.fifo ] && exec cat /run/wip/report.fifo"], ReportRelay.ReadFifoCommand);
+        Assert.Contains("mkfifo -m 600 /run/wip/report.fifo", ReportRelay.CreateFifoScript);
+        Assert.DoesNotContain("$", ReportRelay.CreateFifoScript);
     }
 
     /// <summary>
-    /// Herdr blanks the id on errors; the relay hands the reply back as-is rather than
-    /// re-shaping it, so the sandbox sees exactly what Herdr said.
+    /// The create script, run under the sandbox's sh with the fixed directory swapped for a
+    /// temporary one: owner-only modes, idempotent, and a refusal to replace a non-FIFO.
     /// </summary>
     [Fact]
-    public async Task HerdrErrorWithBlankedIdIsPassedBackUnchanged()
+    [System.Runtime.Versioning.UnsupportedOSPlatform("windows")]
+    public void CreateFifoScriptIsIdempotentOwnerOnlyAndRefusesANonFifo()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "the script runs under a Linux /bin/sh");
+        var parent = Directory.CreateTempSubdirectory("wip-fifo-");
+        try
+        {
+            var directory = Path.Combine(parent.FullName, "wip");
+            var script = ReportRelay.CreateFifoScript.Replace(ReportRelay.FifoDirectory, directory, StringComparison.Ordinal);
+            var fifo = Path.Combine(directory, "report.fifo");
+
+            Assert.Equal(0, Sh(script));
+            Assert.Equal(0, Sh(script));
+            Assert.Equal(0, Sh($"[ -p '{fifo}' ]"));
+            Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute, File.GetUnixFileMode(directory));
+            Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(fifo));
+
+            File.Delete(fifo);
+            File.WriteAllText(fifo, "keep");
+            Assert.NotEqual(0, Sh(script));
+            Assert.Equal("keep", File.ReadAllText(fifo));
+        }
+        finally
+        {
+            parent.Delete(recursive: true);
+        }
+    }
+
+    private static int Sh(string script)
+    {
+        using var process = Process.Start(new ProcessStartInfo("/bin/sh") { ArgumentList = { "-c", script }, RedirectStandardError = true })!;
+        process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        return process.ExitCode;
+    }
+
+    [Fact]
+    public async Task PumpSplitsLinesAndKeepsAnUnterminatedLast()
+    {
+        var lines = new List<string>();
+        await ReportRelay.PumpLinesAsync(new StringReader("a\r\nb\n\nc"), line => { lines.Add(line); return Task.CompletedTask; },
+            TestContext.Current.CancellationToken);
+        Assert.Equal(["a", "b", "", "c"], lines);
+    }
+
+    /// <summary>An oversized line is passed on cut short, for the filter to refuse, and the rest is skipped.</summary>
+    [Fact]
+    public async Task PumpCutsAnOversizedLineAndRecoversAtTheNextNewline()
+    {
+        var lines = new List<string>();
+        var input = new string('x', ReportRelay.MaxLineBytes * 3) + "\nnext\n";
+        await ReportRelay.PumpLinesAsync(new StringReader(input), line => { lines.Add(line); return Task.CompletedTask; },
+            TestContext.Current.CancellationToken);
+        Assert.Equal(2, lines.Count);
+        Assert.Equal(ReportRelay.MaxLineBytes + 1, lines[0].Length);
+        Assert.False(ReportRelay.Filter(lines[0], Source, Pane).Accepted);
+        Assert.Equal("next", lines[1]);
+    }
+
+    [Fact]
+    public async Task HandleLineForwardsAcceptedLinesOnly()
+    {
+        var recorder = new Recorder();
+        var server = recorder.Server();
+        var cancellation = TestContext.Current.CancellationToken;
+
+        await server.HandleLineAsync("""{"id":"a","method":"pane.read"}""", cancellation);
+        await server.HandleLineAsync("""{"id":"p","method":"pane.report_agent","params":{"pane_id":"pane-1"}}""", cancellation);
+        await server.HandleLineAsync("   ", cancellation);
+        await server.HandleLineAsync("""{"id":"b","method":"pane.report_agent","params":{"agent":"a","state":"idle"}}""", cancellation);
+
+        Assert.Equal(["""{"id":"b","method":"pane.report_agent","params":{"agent":"a","state":"idle","pane_id":"pane-7","source":"wip:first"}}"""],
+            recorder.Forwarded);
+        Assert.Equal(2, recorder.Logged.Count);
+        Assert.Contains("refused a:", recorder.Logged[0]);
+        Assert.Contains("refused p: pane_id", recorder.Logged[1]);
+    }
+
+    /// <summary>The sandbox gets no reply over a FIFO, so Herdr's rejection is logged on the host.</summary>
+    [Fact]
+    public async Task HerdrRejectionIsLoggedUnchanged()
     {
         const string herdrError = """{"id":"","error":{"code":"invalid_request","message":"missing field `state`"}}""";
-        var server = new ReportRelayServer("first", (_, _) => Task.FromResult(herdrError));
-        var stream = new DuplexStream("{\"id\":\"b\",\"method\":\"pane.report_agent\",\"params\":{\"pane_id\":\"1-2\"}}\n");
+        var recorder = new Recorder { Reply = herdrError };
 
-        await server.ServeAsync(stream, TestContext.Current.CancellationToken);
+        await recorder.Server().HandleLineAsync("""{"id":"b","method":"pane.report_agent","params":{}}""", TestContext.Current.CancellationToken);
 
-        Assert.Equal(herdrError + "\n", stream.Written);
+        Assert.Single(recorder.Forwarded);
+        Assert.Equal(["report relay first: herdr answered " + herdrError], recorder.Logged);
+    }
+
+    [Fact]
+    public async Task UnreachableHerdrIsLoggedNotThrown()
+    {
+        var recorder = new Recorder();
+        var server = recorder.Server((_, _) => throw new SocketException((int)SocketError.ConnectionRefused));
+
+        await server.HandleLineAsync("""{"id":"b","method":"pane.report_agent"}""", TestContext.Current.CancellationToken);
+
+        Assert.Contains("herdr is unreachable", Assert.Single(recorder.Logged));
+    }
+
+    [Fact]
+    public async Task SuccessIsNotLogged()
+    {
+        var recorder = new Recorder();
+        await recorder.Server().HandleLineAsync("""{"id":"b","method":"pane.report_agent"}""", TestContext.Current.CancellationToken);
+        Assert.Empty(recorder.Logged);
+    }
+
+    /// <summary>
+    /// Each <c>cat</c> ends when the FIFO's writers close it; the relay reopens it at once
+    /// without re-creating the FIFO.
+    /// </summary>
+    [Fact]
+    public async Task ReaderIsReopenedAfterEof()
+    {
+        var recorder = new Recorder();
+        using var stop = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        var reads = 0;
+        var ensured = 0;
+        string[][] batches =
+        [
+            ["""{"id":"1","method":"pane.report_agent"}"""],
+            ["""{"id":"2","method":"pane.report_agent"}""", """{"id":"3","method":"pane.report_agent"}"""],
+            ["""{"id":"4","method":"pane.report_agent"}"""],
+        ];
+
+        await recorder.Server().RunAsync(async (onLine, _) =>
+        {
+            var batch = batches[reads++];
+            foreach (var line in batch) await onLine(line);
+            if (reads == batches.Length) await stop.CancelAsync();
+            return 0;
+        }, _ => { ensured++; return Task.CompletedTask; }, TimeSpan.FromSeconds(30), stop.Token);
+
+        Assert.Equal(3, reads);
+        Assert.Equal(1, ensured);
+        Assert.Equal(["1", "2", "3", "4"], recorder.Forwarded.Select(f => JsonDocument.Parse(f).RootElement.GetProperty("id").GetString()));
+    }
+
+    /// <summary>A failed reader -- the sandbox stopped, the FIFO gone -- waits, re-creates the FIFO, then reopens.</summary>
+    [Fact]
+    public async Task FailedReaderRecreatesTheFifoBeforeReopening()
+    {
+        var recorder = new Recorder();
+        using var stop = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        var codes = new Queue<int>([1, 0]);
+        var ensured = 0;
+
+        await recorder.Server().RunAsync((_, _) =>
+        {
+            var code = codes.Dequeue();
+            if (codes.Count == 0) stop.Cancel();
+            return Task.FromResult(code);
+        }, _ => { ensured++; return Task.CompletedTask; }, TimeSpan.FromMilliseconds(10), stop.Token);
+
+        Assert.Equal(2, ensured);
+        Assert.Contains("FIFO reader exited 1", Assert.Single(recorder.Logged));
+    }
+
+    [Fact]
+    public async Task FifoCreationFailureStopsTheRelay()
+    {
+        var recorder = new Recorder();
+        await Assert.ThrowsAsync<WipException>(() => recorder.Server().RunAsync(
+            (_, _) => Task.FromResult(0), _ => throw new WipException("no FIFO"), TimeSpan.Zero, TestContext.Current.CancellationToken));
+    }
+
+    /// <summary>
+    /// The real path on Linux: the shim writes into a real FIFO, <c>cat</c> reads it the way
+    /// <c>sandbox exec</c> does, and the reader is reopened after each EOF.
+    /// </summary>
+    [Fact]
+    public async Task ShimLinesThroughARealFifoSurviveReopening()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "mkfifo and the shim need Linux");
+        var cancellation = TestContext.Current.CancellationToken;
+        var directory = Directory.CreateTempSubdirectory("wip-fifo-");
+        try
+        {
+            var fifo = Path.Combine(directory.FullName, "report.fifo");
+            Assert.Equal(0, Sh($"mkfifo -m 600 '{fifo}'"));
+            var recorder = new Recorder();
+            using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+            stop.CancelAfter(TimeSpan.FromSeconds(60));
+            var opened = 0;
+
+            var relay = recorder.Server().RunAsync(async (onLine, token) =>
+            {
+                Interlocked.Increment(ref opened);
+                using var cat = Process.Start(new ProcessStartInfo("cat") { ArgumentList = { fifo }, RedirectStandardOutput = true })!;
+                using var kill = token.Register(() => { try { cat.Kill(); } catch (InvalidOperationException) { } });
+                await ReportRelay.PumpLinesAsync(cat.StandardOutput, onLine, token);
+                await cat.WaitForExitAsync(token);
+                return cat.ExitCode;
+            }, _ => Task.CompletedTask, TimeSpan.FromSeconds(1), stop.Token);
+
+            string[] states = ["working", "blocked", "idle"];
+            for (var i = 0; i < states.Length; i++)
+            {
+                using var shim = Process.Start(new ProcessStartInfo("/bin/sh")
+                {
+                    ArgumentList = { ShimPath, "report-agent", "--agent", "claude-code", "--state", states[i] },
+                    Environment = { ["WIP_REPORT_FIFO"] = fifo },
+                })!;
+                await shim.WaitForExitAsync(cancellation);
+                Assert.Equal(0, shim.ExitCode);
+                while (recorder.Forwarded.Count < i + 1) await Task.Delay(10, cancellation);
+            }
+
+            await stop.CancelAsync();
+            await relay;
+            Assert.Equal(states, recorder.Forwarded.Select(f =>
+                JsonDocument.Parse(f).RootElement.GetProperty("params").GetProperty("state").GetString()));
+            Assert.All(recorder.Forwarded, f => Assert.Contains("\"pane_id\":\"pane-7\",\"source\":\"wip:first\"", f));
+            Assert.True(opened >= 3, $"reader opened {opened} times");
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
     }
 
     /// <summary>
@@ -155,148 +394,39 @@ public class ReportRelayTests
             await herdr.WaitForConnectionAsync(cancellation);
             using var reader = new StreamReader(herdr, leaveOpen: true);
             var request = await reader.ReadLineAsync(cancellation);
-            await herdr.WriteAsync(Encoding.UTF8.GetBytes("{\"id\":\"b\",\"result\":{\"type\":\"ok\"}}\n"), cancellation);
+            await herdr.WriteAsync(Encoding.UTF8.GetBytes(Ok + "\n"), cancellation);
             return request;
         }, cancellation);
 
         var reply = await ReportRelayServer.NamedPipe(pipeName)("{\"id\":\"b\",\"method\":\"pane.report_agent\",\"params\":{}}", cancellation);
 
-        Assert.Equal("{\"id\":\"b\",\"result\":{\"type\":\"ok\"}}", reply);
+        Assert.Equal(Ok, reply);
         Assert.Equal("{\"id\":\"b\",\"method\":\"pane.report_agent\",\"params\":{}}", await herdrTask);
     }
 
     [Fact]
-    public async Task UnreachableHerdrIsReportedToTheSandbox()
+    public async Task UnixSocketUpstreamExchangesOneLine()
     {
-        var server = new ReportRelayServer("first", (_, _) => throw new SocketException((int)SocketError.ConnectionRefused));
-        var stream = new DuplexStream("{\"id\":\"b\",\"method\":\"pane.report_agent\"}\n");
-
-        await server.ServeAsync(stream, TestContext.Current.CancellationToken);
-
-        Assert.Contains("herdr is unreachable", stream.Written);
-    }
-
-    [Fact]
-    public async Task UnterminatedOversizedLineClosesTheConnection()
-    {
-        var forwarded = 0;
-        var server = new ReportRelayServer("first", (_, _) => { forwarded++; return Task.FromResult("{}"); });
-        var stream = new DuplexStream(new string('x', ReportRelay.MaxLineBytes * 2));
-
-        await server.ServeAsync(stream, TestContext.Current.CancellationToken);
-
-        Assert.Contains("message too large", stream.Written);
-        Assert.Equal(0, forwarded);
-    }
-
-    /// <summary>The real path: sandbox client -> relay socket -> Herdr's socket, both unix sockets.</summary>
-    [Fact]
-    public async Task RelaysOverUnixSocketsEndToEnd()
-    {
+        var cancellation = TestContext.Current.CancellationToken;
         var directory = Directory.CreateTempSubdirectory("wip-relay-");
         try
         {
             var herdrPath = Path.Combine(directory.FullName, "h.sock");
-            var relayPath = Path.Combine(directory.FullName, ReportRelay.SocketName);
-            using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
-            cancellation.CancelAfter(TimeSpan.FromSeconds(30));
-            var received = new List<string>();
-
             using var herdr = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
             herdr.Bind(new UnixDomainSocketEndPoint(herdrPath));
             herdr.Listen(1);
             var herdrTask = Task.Run(async () =>
             {
-                using var connection = await herdr.AcceptAsync(cancellation.Token);
+                using var connection = await herdr.AcceptAsync(cancellation);
                 await using var stream = new NetworkStream(connection);
                 using var reader = new StreamReader(stream);
-                received.Add((await reader.ReadLineAsync(cancellation.Token))!);
-                await stream.WriteAsync(Encoding.UTF8.GetBytes("{\"id\":\"b\",\"result\":{\"type\":\"ok\"}}\n"), cancellation.Token);
-            }, cancellation.Token);
+                var request = await reader.ReadLineAsync(cancellation);
+                await stream.WriteAsync(Encoding.UTF8.GetBytes(Ok + "\n"), cancellation);
+                return request;
+            }, cancellation);
 
-            var server = new ReportRelayServer("first", ReportRelayServer.UnixSocket(herdrPath));
-            var relayTask = server.ListenAsync(relayPath, cancellation.Token);
-            while (!File.Exists(relayPath)) await Task.Delay(10, cancellation.Token);
-
-            using var client = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
-            await client.ConnectAsync(new UnixDomainSocketEndPoint(relayPath), cancellation.Token);
-            await using var clientStream = new NetworkStream(client);
-            using var clientReader = new StreamReader(clientStream);
-            await clientStream.WriteAsync(Encoding.UTF8.GetBytes(
-                "{\"id\":\"a\",\"method\":\"workspace.create\"}\n{\"id\":\"b\",\"method\":\"pane.report_agent_session\",\"params\":{\"pane_id\":\"1-2\"}}\n"),
-                cancellation.Token);
-
-            Assert.Contains("relay_refused", await clientReader.ReadLineAsync(cancellation.Token));
-            Assert.Equal("{\"id\":\"b\",\"result\":{\"type\":\"ok\"}}", await clientReader.ReadLineAsync(cancellation.Token));
-            await herdrTask;
-            Assert.Equal(["{\"id\":\"b\",\"method\":\"pane.report_agent_session\",\"params\":{\"pane_id\":\"1-2\",\"source\":\"wip:first\"}}"], received);
-
-            await cancellation.CancelAsync();
-            await relayTask;
-            Assert.False(File.Exists(relayPath));
-        }
-        finally
-        {
-            directory.Delete(recursive: true);
-        }
-    }
-
-    private static readonly ReportUpstream Ok = (_, _) => Task.FromResult("""{"id":"b","result":{"type":"ok"}}""");
-
-    private static async Task<string?> ReportAsync(string socketPath, CancellationToken cancellation)
-    {
-        using var client = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
-        await client.ConnectAsync(new UnixDomainSocketEndPoint(socketPath), cancellation);
-        await using var stream = new NetworkStream(client);
-        using var reader = new StreamReader(stream);
-        await stream.WriteAsync(Encoding.UTF8.GetBytes("{\"id\":\"b\",\"method\":\"pane.report_agent\",\"params\":{}}\n"), cancellation);
-        return await reader.ReadLineAsync(cancellation);
-    }
-
-    /// <summary>
-    /// The socket and its directory get owner-only modes set explicitly, not whatever the
-    /// umask leaves, so another local user cannot report under this sandbox's source.
-    /// </summary>
-    [Fact]
-    [UnsupportedOSPlatform("windows")]
-    public async Task ListenerSetsOwnerOnlyModesRegardlessOfExistingPermissions()
-    {
-        Assert.SkipWhen(OperatingSystem.IsWindows(), "unix file modes do not apply on Windows");
-        var cancellation = TestContext.Current.CancellationToken;
-        var parent = Directory.CreateTempSubdirectory("wip-relay-");
-        try
-        {
-            var directory = Path.Combine(parent.FullName, "first");
-            Directory.CreateDirectory(directory);
-            File.SetUnixFileMode(directory, (UnixFileMode)0b111_111_111);
-            var socketPath = Path.Combine(directory, ReportRelay.SocketName);
-            using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
-
-            var relay = new ReportRelayServer("first", Ok).ListenAsync(socketPath, stop.Token);
-
-            Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute, File.GetUnixFileMode(directory));
-            Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(socketPath));
-            Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(socketPath + ".lock"));
-            await stop.CancelAsync();
-            await relay;
-        }
-        finally
-        {
-            parent.Delete(recursive: true);
-        }
-    }
-
-    [Fact]
-    [UnsupportedOSPlatform("windows")]
-    public void EnsurePrivateDirectoryTightensAnExistingDirectory()
-    {
-        Assert.SkipWhen(OperatingSystem.IsWindows(), "unix file modes do not apply on Windows");
-        var directory = Directory.CreateTempSubdirectory("wip-relay-");
-        try
-        {
-            File.SetUnixFileMode(directory.FullName, (UnixFileMode)0b111_101_101);
-            ReportRelay.EnsurePrivateDirectory(directory.FullName);
-            Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute, File.GetUnixFileMode(directory.FullName));
+            Assert.Equal(Ok, await ReportRelayServer.UnixSocket(herdrPath)("{}", cancellation));
+            Assert.Equal("{}", await herdrTask);
         }
         finally
         {
@@ -305,73 +435,8 @@ public class ReportRelayTests
     }
 
     /// <summary>
-    /// A second relay for the same sandbox must not take the socket from a live one; it
-    /// refuses, the first keeps serving, and only the first removes the socket on exit.
-    /// </summary>
-    [Fact]
-    public async Task SecondInstanceIsRefusedAndTheFirstKeepsItsSocket()
-    {
-        var cancellation = TestContext.Current.CancellationToken;
-        var directory = Directory.CreateTempSubdirectory("wip-relay-");
-        try
-        {
-            var socketPath = Path.Combine(directory.FullName, ReportRelay.SocketName);
-            using var stopFirst = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
-            var first = new ReportRelayServer("first", Ok).ListenAsync(socketPath, stopFirst.Token);
-
-            var refused = await Assert.ThrowsAsync<WipException>(() =>
-                new ReportRelayServer("first", Ok).ListenAsync(socketPath, cancellation));
-
-            Assert.Contains("Sandbox first", refused.Message);
-            Assert.Contains("already running", refused.Message);
-            Assert.True(File.Exists(socketPath));
-            Assert.Equal("""{"id":"b","result":{"type":"ok"}}""", await ReportAsync(socketPath, cancellation));
-
-            await stopFirst.CancelAsync();
-            await first;
-            Assert.False(File.Exists(socketPath));
-
-            // Once the first has stopped, the lock is free again.
-            using var stopThird = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
-            var third = new ReportRelayServer("first", Ok).ListenAsync(socketPath, stopThird.Token);
-            Assert.Equal("""{"id":"b","result":{"type":"ok"}}""", await ReportAsync(socketPath, cancellation));
-            await stopThird.CancelAsync();
-            await third;
-        }
-        finally
-        {
-            directory.Delete(recursive: true);
-        }
-    }
-
-    [Fact]
-    public async Task StaleSocketFromAGoneRelayIsReplaced()
-    {
-        var cancellation = TestContext.Current.CancellationToken;
-        var directory = Directory.CreateTempSubdirectory("wip-relay-");
-        try
-        {
-            var socketPath = Path.Combine(directory.FullName, ReportRelay.SocketName);
-            // .NET unlinks a socket it bound when disposed, so a crashed relay's leftover is
-            // stood in for by a plain file at the path; either way nothing holds the lock.
-            File.WriteAllText(socketPath, "");
-            using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
-
-            var relay = new ReportRelayServer("first", Ok).ListenAsync(socketPath, stop.Token);
-
-            Assert.Equal("""{"id":"b","result":{"type":"ok"}}""", await ReportAsync(socketPath, cancellation));
-            await stop.CancelAsync();
-            await relay;
-        }
-        finally
-        {
-            directory.Delete(recursive: true);
-        }
-    }
-
-    /// <summary>
-    /// A Herdr that accepts and then never answers costs one deadline, reported as
-    /// unreachable, not a connection held until the relay stops.
+    /// A Herdr that accepts and then never answers costs one deadline, logged as
+    /// unreachable, not a report queue held up until the relay stops.
     /// </summary>
     [Fact]
     public async Task UnixSocketUpstreamThatNeverRepliesTimesOutAsUnreachable()
@@ -385,7 +450,7 @@ public class ReportRelayTests
             herdr.Bind(new UnixDomainSocketEndPoint(herdrPath));
             herdr.Listen(4);
             var accepted = new List<Socket>();
-            var silent = Task.Run(async () =>
+            _ = Task.Run(async () =>
             {
                 while (true) accepted.Add(await herdr.AcceptAsync(cancellation));
             }, cancellation);
@@ -393,10 +458,9 @@ public class ReportRelayTests
 
             await Assert.ThrowsAsync<IOException>(() => upstream("{}", cancellation));
 
-            var stream = new DuplexStream("{\"id\":\"b\",\"method\":\"pane.report_agent\",\"params\":{}}\n");
-            await new ReportRelayServer("first", upstream).ServeAsync(stream, cancellation);
-            Assert.Contains("herdr is unreachable", stream.Written);
-            Assert.Contains("\"id\":\"b\"", stream.Written);
+            var recorder = new Recorder();
+            await recorder.Server(upstream).HandleLineAsync("""{"id":"b","method":"pane.report_agent","params":{}}""", cancellation);
+            Assert.Contains("herdr is unreachable", Assert.Single(recorder.Logged));
             foreach (var socket in accepted) socket.Dispose();
         }
         finally
@@ -412,13 +476,13 @@ public class ReportRelayTests
         var pipeName = "wip-relay-" + Guid.NewGuid().ToString("N")[..12];
         await using var herdr = new NamedPipeServerStream(pipeName, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
         var accepting = herdr.WaitForConnectionAsync(cancellation);
-        var upstream = ReportRelayServer.NamedPipe(pipeName, TimeSpan.FromMilliseconds(200));
+        var recorder = new Recorder();
 
-        var stream = new DuplexStream("{\"id\":\"b\",\"method\":\"pane.report_agent\",\"params\":{}}\n");
-        await new ReportRelayServer("first", upstream).ServeAsync(stream, cancellation);
+        await recorder.Server(ReportRelayServer.NamedPipe(pipeName, TimeSpan.FromMilliseconds(200)))
+            .HandleLineAsync("""{"id":"b","method":"pane.report_agent","params":{}}""", cancellation);
 
         await accepting;
-        Assert.Contains("herdr is unreachable", stream.Written);
+        Assert.Contains("herdr is unreachable", Assert.Single(recorder.Logged));
     }
 
     /// <summary>The deadline covers connect too: a pipe nobody serves is not waited on forever.</summary>
@@ -436,24 +500,5 @@ public class ReportRelayTests
         var upstream = ReportRelayServer.NamedPipe("wip-relay-absent-" + Guid.NewGuid().ToString("N")[..12], TimeSpan.FromMinutes(5));
         using var stop = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => upstream("{}", stop.Token));
-    }
-
-    /// <summary>Reads from a fixed input and records what is written back.</summary>
-    private sealed class DuplexStream(string input) : Stream
-    {
-        private readonly MemoryStream _input = new(Encoding.UTF8.GetBytes(input));
-        private readonly MemoryStream _output = new();
-
-        public string Written => Encoding.UTF8.GetString(_output.ToArray());
-        public override bool CanRead => true;
-        public override bool CanSeek => false;
-        public override bool CanWrite => true;
-        public override long Length => throw new NotSupportedException();
-        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
-        public override void Flush() { }
-        public override int Read(byte[] buffer, int offset, int count) => _input.Read(buffer, offset, count);
-        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
-        public override void SetLength(long value) => throw new NotSupportedException();
-        public override void Write(byte[] buffer, int offset, int count) => _output.Write(buffer, offset, count);
     }
 }

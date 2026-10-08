@@ -6,8 +6,7 @@ using Wip.Configuration;
 namespace Wip.Execution;
 
 public sealed record SandboxCommandResult(int Code, string Output);
-/// <param name="Source">Host path of a bind mount; empty when the backend does not report one.</param>
-public sealed record SandboxMount(string Type, string Name, string Destination, string Source = "", bool ReadOnly = false);
+public sealed record SandboxMount(string Type, string Name, string Destination);
 public sealed record SandboxStatus(string Name, string BackendName, string? Id, string State, IReadOnlyList<SandboxMount>? Mounts = null)
 {
     public IReadOnlyList<SandboxMount> Mounts { get; init; } = Mounts ?? [];
@@ -34,12 +33,7 @@ public enum SandboxConsoleMode
 /// <summary>Backend argv are passed directly, never through a shell. Capture is only needed for probes.</summary>
 public delegate SandboxCommandResult SandboxBackend(IReadOnlyList<string> arguments, TimeSpan timeout, SandboxConsoleMode console);
 
-/// <param name="reportRelayDirectory">
-/// Host directory for a sandbox's report relay socket; required only to create a sandbox
-/// that declares <c>report_relay</c>.
-/// </param>
-public sealed class SandboxLifecycle(SandboxSettings settings, SandboxBackend backend, IVolumeLifecycle? volumes = null,
-    Func<string, string>? reportRelayDirectory = null)
+public sealed class SandboxLifecycle(SandboxSettings settings, SandboxBackend backend, IVolumeLifecycle? volumes = null)
 {
     public const string OwnerLabel = "io.slidict.wip.owner";
     private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(10);
@@ -95,12 +89,10 @@ public sealed class SandboxLifecycle(SandboxSettings settings, SandboxBackend ba
         var volumeDefs = ValidateVolumes(name, definition);
         if (volumeDefs.Count != 0 && volumes is null)
             throw new ConfigException($"Sandbox {name}: volume lifecycle is not configured; no container was created");
-        var relayDirectory = RelayDirectory(name, definition);
         var existing = Status(name);
         if (existing.Id is not null)
         {
             VerifyExistingMounts(name, existing, volumeDefs);
-            VerifyRelayMount(name, existing, relayDirectory);
             if (existing.State == "running")
             {
                 if (volumeDefs.Count != 0 && volumes is not null)
@@ -143,12 +135,6 @@ public sealed class SandboxLifecycle(SandboxSettings settings, SandboxBackend ba
                     runArgs.Add("--mount");
                     runArgs.Add($"type=volume,source={vStatus.BackendName},target={vDef.Mount}");
                 }
-            }
-            if (relayDirectory is not null)
-            {
-                // Read-only: the sandbox may connect to the socket but never plant files on the host.
-                runArgs.Add("--mount");
-                runArgs.Add($"type=bind,source={relayDirectory},target={ReportRelay.MountPath},readonly");
             }
             runArgs.Add(definition.Image);
             var created = backend(runArgs, MutationTimeout, SandboxConsoleMode.Stream);
@@ -260,49 +246,6 @@ public sealed class SandboxLifecycle(SandboxSettings settings, SandboxBackend ba
         }
     }
 
-    private string? RelayDirectory(string name, SandboxDefinition definition)
-    {
-        if (!definition.ReportRelay) return null;
-        var directory = reportRelayDirectory?.Invoke(name)
-            ?? throw new ConfigException($"Sandbox {name}: report relay directory is not configured; no container was created");
-        if (directory.Contains(',') || directory.Any(char.IsControl))
-            throw new ConfigException($"Sandbox {name}: report relay directory cannot contain ',' or control characters");
-        return directory;
-    }
-
-    /// <summary>
-    /// A container created before <c>report_relay</c> was toggled has the wrong mounts, and
-    /// mounts cannot change after creation, so the mismatch is reported rather than ignored.
-    /// </summary>
-    /// <remarks>
-    /// A bind at the relay path is accepted only when it is read-only and its source is the
-    /// configured directory: a writable bind would let the sandbox write into the host
-    /// directory, and another source would put a different socket in front of the CLI.
-    /// </remarks>
-    private static void VerifyRelayMount(string name, SandboxStatus existing, string? relayDirectory)
-    {
-        var binds = existing.Mounts.Where(m =>
-            string.Equals(m.Type, "bind", StringComparison.OrdinalIgnoreCase) &&
-            string.Equals(m.Destination, ReportRelay.MountPath, StringComparison.Ordinal)).ToArray();
-        var matches = relayDirectory is null
-            ? binds.Length == 0
-            : binds.Length == 1 && binds[0].ReadOnly && SameHostPath(binds[0].Source, relayDirectory);
-        if (!matches)
-            throw Failure(name, "existing container report relay mount does not match report_relay; run sandbox destroy, confirm absence, then sandbox create");
-    }
-
-    /// <summary>
-    /// Compares the configured directory with the source the backend reports, ignoring
-    /// separator style and a trailing separator, and case on Windows.
-    /// </summary>
-    /// <remarks>The form wslc reports for a bind source is not yet measured.</remarks>
-    private static bool SameHostPath(string reported, string configured)
-    {
-        static string Normalize(string path) => path.Replace('\\', '/').TrimEnd('/');
-        return string.Equals(Normalize(reported), Normalize(configured),
-            OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
-    }
-
     private IReadOnlyList<VolumeDefinition> ValidateVolumes(string name, SandboxDefinition definition)
     {
         if (definition.Volumes.Count == 0) return [];
@@ -337,6 +280,17 @@ public sealed class SandboxLifecycle(SandboxSettings settings, SandboxBackend ba
             throw new ConfigException("sandbox exec timeout must be positive and at most 2147483 seconds");
         var options = EnvironmentOptions(environment);
         return backend(["exec", .. options, RunningId(name), .. argv], timeout, SandboxConsoleMode.Stream).Code;
+    }
+
+    /// <summary>
+    /// The backend arguments for running <paramref name="argv"/> in the verified, running
+    /// container, for a caller that must read the child's output as it streams -- the report
+    /// relay reading the sandbox FIFO -- rather than through <see cref="SandboxBackend"/>.
+    /// </summary>
+    public IReadOnlyList<string> ExecArguments(string name, IReadOnlyList<string> argv)
+    {
+        ValidateArgv(argv);
+        return ["exec", RunningId(name), .. argv];
     }
 
     /// <summary>
@@ -501,12 +455,7 @@ public sealed class SandboxLifecycle(SandboxSettings settings, SandboxBackend ba
             var destination = (Text(mount, "Destination") ?? Text(mount, "Target") ?? "").TrimEnd('/');
             if (destination.Length == 0 && (Text(mount, "Destination") == "/" || Text(mount, "Target") == "/"))
                 destination = "/";
-            var source = Text(mount, "Source") ?? "";
-            // Docker reports RW and wslc ReadWrite; accept an explicit ReadOnly too. Absent all, assume writable.
-            var readOnly = (mount.TryGetProperty("RW", out var rw) && rw.ValueKind == JsonValueKind.False) ||
-                (mount.TryGetProperty("ReadWrite", out var readWrite) && readWrite.ValueKind == JsonValueKind.False) ||
-                (mount.TryGetProperty("ReadOnly", out var ro) && ro.ValueKind == JsonValueKind.True);
-            result.Add(new(type, name, destination, source, readOnly));
+            result.Add(new(type, name, destination));
         }
         return result;
     }
