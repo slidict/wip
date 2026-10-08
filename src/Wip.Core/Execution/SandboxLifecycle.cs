@@ -295,6 +295,7 @@ public sealed class SandboxLifecycle(SandboxSettings settings, SandboxBackend ba
     /// Compares the configured directory with the source the backend reports, ignoring
     /// separator style and a trailing separator, and case on Windows.
     /// </summary>
+    /// <remarks>The form wslc reports for a bind source is not yet measured.</remarks>
     private static bool SameHostPath(string reported, string configured)
     {
         static string Normalize(string path) => path.Replace('\\', '/').TrimEnd('/');
@@ -501,8 +502,9 @@ public sealed class SandboxLifecycle(SandboxSettings settings, SandboxBackend ba
             if (destination.Length == 0 && (Text(mount, "Destination") == "/" || Text(mount, "Target") == "/"))
                 destination = "/";
             var source = Text(mount, "Source") ?? "";
-            // Docker reports RW; accept an explicit ReadOnly too. Absent both, assume writable.
+            // Docker reports RW and wslc ReadWrite; accept an explicit ReadOnly too. Absent all, assume writable.
             var readOnly = (mount.TryGetProperty("RW", out var rw) && rw.ValueKind == JsonValueKind.False) ||
+                (mount.TryGetProperty("ReadWrite", out var readWrite) && readWrite.ValueKind == JsonValueKind.False) ||
                 (mount.TryGetProperty("ReadOnly", out var ro) && ro.ValueKind == JsonValueKind.True);
             result.Add(new(type, name, destination, source, readOnly));
         }

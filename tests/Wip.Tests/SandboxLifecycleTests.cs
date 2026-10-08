@@ -1085,6 +1085,30 @@ public class SandboxLifecycleTests
             new SandboxLifecycle(Settings(RelaySuffix), fake.Run, reportRelayDirectory: _ => RelayDirectory).Create("first"));
     }
 
+    /// <summary>
+    /// wslc's inspect gives each mount exactly Destination, Name, ReadWrite, Source and Type
+    /// (measured on a live container), with no RW or ReadOnly.
+    /// </summary>
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    public void StatusReadsWslcReadWriteFlag(bool readWrite, bool expectedReadOnly)
+    {
+        var fake = new Fake
+        {
+            Exists = true,
+            InspectOutput = $$"""
+                [{"Id":"backend-id","Name":"{{SandboxLifecycle.BackendName("test", "first")}}","State":"running",
+                  "Labels":{"{{SandboxLifecycle.OwnerLabel}}":"v1:test:sandbox:first"},
+                  "Mounts":[{"Destination":"/run/wip/herdr","Name":"","ReadWrite":{{(readWrite ? "true" : "false")}},"Source":"/host/a","Type":"bind"}]}]
+                """,
+        };
+
+        var mount = Assert.Single(new SandboxLifecycle(Settings(), fake.Run).Status("first").Mounts);
+
+        Assert.Equal(new SandboxMount("bind", "", "/run/wip/herdr", "/host/a", expectedReadOnly), mount);
+    }
+
     /// <summary>Docker's inspect reports RW; the read-only state is what the relay check relies on.</summary>
     [Fact]
     public void StatusKeepsBindSourceAndReadOnlyState()
