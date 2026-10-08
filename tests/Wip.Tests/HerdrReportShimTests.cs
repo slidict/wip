@@ -4,69 +4,43 @@ using System.Text.Json;
 namespace Wip.Tests;
 
 /// <summary>
-/// Runs <c>scripts/herdr-report</c> under <c>/bin/sh</c>, as it runs inside the sandbox.
+/// Runs <c>scripts/herdr-report</c> under <c>/bin/sh</c>, as it runs inside the sandbox,
+/// against real FIFOs made with <c>mkfifo</c>.
 /// </summary>
-/// <remarks>
-/// The shipped transport is a stub until the TCP leg passes its gate, and the script has no
-/// runtime seam for replacing it. Tests that need a transport run a copy with
-/// <c>herdr_report_transport</c> redefined just before the final <c>herdr_report_main</c>
-/// call; a later shell function definition replaces the earlier one.
-/// </remarks>
 public sealed class HerdrReportShimTests : IDisposable
 {
-    private const string MainCall = "herdr_report_main \"$@\"";
-
     private static readonly string ScriptPath = Path.Combine(
         Path.GetDirectoryName(GoldenCorpus.Root)!, "..", "scripts", "herdr-report");
-
-    private static readonly Dictionary<string, string> RelayEnvironment = new()
-    {
-        ["WIP_REPORT_ENDPOINT"] = "relay.test:40123",
-        ["WIP_REPORT_SOURCE"] = "wip:first",
-        ["WIP_REPORT_TOKEN"] = "secret-token",
-        ["HERDR_PANE_ID"] = "pane-7",
-    };
 
     private readonly DirectoryInfo _work = Directory.CreateTempSubdirectory("herdr-report-");
 
     public void Dispose() => _work.Delete(recursive: true);
 
-    private string Captured(string name) => Path.Combine(_work.FullName, name);
-
-    private bool TransportCalled => File.Exists(Captured("frames"));
-
-    /// <summary>A copy whose transport records its target and frames, then answers with <paramref name="reply"/>.</summary>
-    private string RecordingScript(string reply)
+    private string Fifo
     {
-        File.WriteAllText(Captured("reply"), reply);
-        return ScriptWithTransport($$"""
-            herdr_report_transport() {
-                printf '%s\n%s\n' "$1" "$2" > '{{Captured("target")}}'
-                cat > '{{Captured("frames")}}'
-                cat '{{Captured("reply")}}'
-            }
-            """);
+        get
+        {
+            var path = Path.Combine(_work.FullName, "report.fifo");
+            if (!File.Exists(path)) Assert.Equal(0, Run("/bin/sh", null, "-c", $"mkfifo -m 600 '{path}'").Code);
+            return path;
+        }
     }
 
-    private string ScriptWithTransport(string transport)
-    {
-        var original = File.ReadAllText(ScriptPath);
-        var index = original.LastIndexOf(MainCall, StringComparison.Ordinal);
-        var path = Captured("herdr-report-under-test");
-        File.WriteAllText(path, original[..index] + transport + "\n" + original[index..]);
-        return path;
-    }
+    private Dictionary<string, string> FifoEnvironment => new() { ["WIP_REPORT_FIFO"] = Fifo };
+
+    private static (int Code, string Stdout, string Stderr, TimeSpan Elapsed) Shim(
+        IReadOnlyDictionary<string, string>? environment, params string[] arguments) =>
+        Run("/bin/sh", environment, [ScriptPath, .. arguments]);
 
     private static (int Code, string Stdout, string Stderr, TimeSpan Elapsed) Run(
-        string script, IReadOnlyDictionary<string, string>? environment, params string[] arguments)
+        string executable, IReadOnlyDictionary<string, string>? environment, params string[] arguments)
     {
-        var start = new ProcessStartInfo("/bin/sh")
+        var start = new ProcessStartInfo(executable)
         {
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             RedirectStandardInput = true,
         };
-        start.ArgumentList.Add(script);
         foreach (var argument in arguments) start.ArgumentList.Add(argument);
         start.Environment.Clear();
         start.Environment["PATH"] = "/usr/local/bin:/usr/bin:/bin";
@@ -80,36 +54,28 @@ public sealed class HerdrReportShimTests : IDisposable
         if (!process.WaitForExit(TimeSpan.FromSeconds(20)))
         {
             process.Kill(entireProcessTree: true);
-            throw new TimeoutException("herdr-report did not finish");
+            throw new TimeoutException($"{executable} did not finish");
         }
         return (process.ExitCode, stdout.Result, stderr.Result, clock.Elapsed);
     }
 
-    private static void SkipOnWindows() => Assert.SkipWhen(OperatingSystem.IsWindows(), "the shim runs under a Linux /bin/sh");
-
-    private (string Token, JsonElement Request) Frames()
+    /// <summary>Reads the FIFO until its writer closes it, as the relay's <c>cat</c> does.</summary>
+    private Task<string> ReadFifoOnce()
     {
-        var lines = File.ReadAllLines(Captured("frames"));
-        Assert.Equal(2, lines.Length);
-        using var token = JsonDocument.Parse(lines[0]);
-        Assert.Equal(["token"], token.RootElement.EnumerateObject().Select(p => p.Name));
-        using var request = JsonDocument.Parse(lines[1]);
-        return (token.RootElement.GetProperty("token").GetString()!, request.RootElement.Clone());
+        var path = Fifo;
+        return Task.Run(() => File.ReadAllText(path), TestContext.Current.CancellationToken);
     }
 
-    /// <summary>
-    /// The shipped transport sends nothing until the TCP gate passes, and the script names
-    /// no host of its own to fall back to.
-    /// </summary>
+    private static void SkipOnWindows() => Assert.SkipWhen(OperatingSystem.IsWindows(), "the shim runs under a Linux /bin/sh");
+
+    /// <summary>The script names no host, endpoint or token: its only target is the FIFO variable.</summary>
     [Fact]
-    public void ShippedScriptHasAStubTransportAndNoBuiltInAddress()
+    public void ShippedScriptHasNoBuiltInTargetOrCredential()
     {
         var text = File.ReadAllText(ScriptPath);
-        Assert.EndsWith(MainCall + "\n", text);
-        Assert.Contains("herdr_report_transport() {\n    return 69\n}", text);
-        Assert.DoesNotContain("host.docker.internal", text);
-        Assert.DoesNotContain("127.0.0.1", text);
-        Assert.DoesNotContain("localhost", text);
+        Assert.Contains("herdr_report_transport() {\n    printf '%s\\n' \"$2\" >\"$1\"\n}", text);
+        foreach (var removed in new[] { "host.docker.internal", "localhost", "WIP_REPORT_ENDPOINT", "WIP_REPORT_TOKEN", "token", "pane_id\\\"" })
+            Assert.DoesNotContain(removed, text);
         Assert.DoesNotMatch(@"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b", text);
     }
 
@@ -117,78 +83,45 @@ public sealed class HerdrReportShimTests : IDisposable
     public void EmptyEnvironmentSucceedsSilently()
     {
         SkipOnWindows();
-        var result = Run(ScriptPath, null, "report-agent", "--agent", "claude-code", "--state", "blocked", "--seq", "3");
+        var result = Shim(null, "report-agent", "--agent", "claude-code", "--state", "blocked", "--seq", "3");
         Assert.Equal((0, "", ""), (result.Code, result.Stdout, result.Stderr));
     }
 
-    /// <summary>With the full relay environment the shipped stub reports unavailable, which is still silent success.</summary>
+    /// <summary>A path that is not a FIFO is left alone: no file is created or written.</summary>
     [Fact]
-    public void ShippedStubTransportSucceedsSilently()
+    public void PathThatIsNotAFifoIsUnavailableAndUntouched()
     {
         SkipOnWindows();
-        var result = Run(ScriptPath, RelayEnvironment, "report-agent", "--agent", "claude-code", "--state", "working");
-        Assert.Equal((0, "", ""), (result.Code, result.Stdout, result.Stderr));
+        var plain = Path.Combine(_work.FullName, "plain");
+        File.WriteAllText(plain, "");
+        var missing = Path.Combine(_work.FullName, "missing");
+
+        foreach (var path in new[] { plain, missing, _work.FullName })
+        {
+            var result = Shim(new Dictionary<string, string> { ["WIP_REPORT_FIFO"] = path }, "report-agent", "--agent", "a", "--state", "idle");
+            Assert.Equal((0, "", ""), (result.Code, result.Stdout, result.Stderr));
+        }
+        Assert.Equal("", File.ReadAllText(plain));
+        Assert.False(File.Exists(missing));
     }
 
-    [Theory]
-    [InlineData("WIP_REPORT_ENDPOINT")]
-    [InlineData("WIP_REPORT_TOKEN")]
-    [InlineData("HERDR_PANE_ID")]
-    public void MissingRelayVariableSucceedsSilentlyWithoutSending(string missing)
-    {
-        SkipOnWindows();
-        var environment = new Dictionary<string, string>(RelayEnvironment);
-        environment.Remove(missing);
-        var result = Run(RecordingScript("""{"result":{"type":"ok"}}"""), environment, "report-agent", "--agent", "a", "--state", "idle");
-        Assert.Equal((0, "", ""), (result.Code, result.Stdout, result.Stderr));
-        Assert.False(TransportCalled);
-    }
-
-    [Theory]
-    [InlineData("relay.test")]
-    [InlineData("relay.test:")]
-    [InlineData(":40123")]
-    [InlineData("relay.test:0")]
-    [InlineData("relay.test:65536")]
-    [InlineData("relay.test:http")]
-    [InlineData("relay test:1")]
-    public void MalformedEndpointIsTreatedAsUnavailable(string endpoint)
-    {
-        SkipOnWindows();
-        var environment = new Dictionary<string, string>(RelayEnvironment) { ["WIP_REPORT_ENDPOINT"] = endpoint };
-        var result = Run(RecordingScript("""{"result":{"type":"ok"}}"""), environment, "report-agent", "--agent", "a", "--state", "idle");
-        Assert.Equal((0, "", ""), (result.Code, result.Stdout, result.Stderr));
-        Assert.False(TransportCalled);
-    }
-
-    [Theory]
-    [InlineData("relay.test:40123", "relay.test", "40123")]
-    [InlineData("10.1.2.3:9", "10.1.2.3", "9")]
-    [InlineData("[fd00::1]:65535", "fd00::1", "65535")]
-    public void EndpointIsPassedToTheTransportAsGiven(string endpoint, string host, string port)
-    {
-        SkipOnWindows();
-        var environment = new Dictionary<string, string>(RelayEnvironment) { ["WIP_REPORT_ENDPOINT"] = endpoint };
-        Assert.Equal(0, Run(RecordingScript("""{"result":{"type":"ok"}}"""), environment, "report-agent", "--agent", "a", "--state", "idle").Code);
-        Assert.Equal([host, port], File.ReadAllLines(Captured("target")));
-    }
-
-    /// <summary>The token line comes first, then exactly one request with the verified params.</summary>
     [Fact]
-    public void SendsTokenLineThenOneRequestLine()
+    public async Task WritesExactlyOneLineWithoutPaneSourceOrToken()
     {
         SkipOnWindows();
-        var result = Run(RecordingScript("""{"id":"x","result":{"type":"ok"}}"""), RelayEnvironment,
-            "report-agent", "--agent", "claude-code", "--state", "blocked", "--seq", "3", "--message", "needs \"approval\" \\ now");
+        var read = ReadFifoOnce();
+
+        var result = Shim(FifoEnvironment, "report-agent", "--agent", "claude-code", "--state", "blocked", "--seq", "3", "--message", "needs \"approval\" \\ now");
 
         Assert.Equal((0, "", ""), (result.Code, result.Stdout, result.Stderr));
-        var (token, request) = Frames();
-        Assert.Equal("secret-token", token);
-        Assert.Equal(["id", "method", "params"], request.EnumerateObject().Select(p => p.Name));
-        Assert.Equal("pane.report_agent", request.GetProperty("method").GetString());
-        var parameters = request.GetProperty("params");
-        Assert.Equal(["pane_id", "agent", "state", "seq", "message"], parameters.EnumerateObject().Select(p => p.Name));
-        Assert.Equal("pane-7", parameters.GetProperty("pane_id").GetString());
+        var written = await read.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+        Assert.EndsWith("\n", written);
+        Assert.Single(written.Split('\n', StringSplitOptions.RemoveEmptyEntries));
+        using var request = JsonDocument.Parse(written);
+        Assert.Equal(["id", "method", "params"], request.RootElement.EnumerateObject().Select(p => p.Name));
+        Assert.Equal("pane.report_agent", request.RootElement.GetProperty("method").GetString());
+        var parameters = request.RootElement.GetProperty("params");
+        Assert.Equal(["agent", "state", "seq", "message"], parameters.EnumerateObject().Select(p => p.Name));
         Assert.Equal("claude-code", parameters.GetProperty("agent").GetString());
         Assert.Equal("blocked", parameters.GetProperty("state").GetString());
         Assert.Equal(3, parameters.GetProperty("seq").GetInt64());
@@ -196,11 +129,47 @@ public sealed class HerdrReportShimTests : IDisposable
     }
 
     [Fact]
-    public void OptionalFieldsAreOmittedWhenNotGiven()
+    public async Task OptionalFieldsAreOmittedWhenNotGiven()
     {
         SkipOnWindows();
-        Assert.Equal(0, Run(RecordingScript("""{"result":{"type":"ok"}}"""), RelayEnvironment, "report-agent", "--state", "idle", "--agent", "codex").Code);
-        Assert.Equal(["pane_id", "agent", "state"], Frames().Request.GetProperty("params").EnumerateObject().Select(p => p.Name));
+        var read = ReadFifoOnce();
+        Assert.Equal(0, Shim(FifoEnvironment, "report-agent", "--state", "idle", "--agent", "codex").Code);
+        using var request = JsonDocument.Parse(await read.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken));
+        Assert.Equal(["agent", "state"], request.RootElement.GetProperty("params").EnumerateObject().Select(p => p.Name));
+    }
+
+    /// <summary>
+    /// With no relay reading, opening the FIFO blocks; the deadline cuts it off at two
+    /// seconds, silently, and leaves no blocked writer behind.
+    /// </summary>
+    [Fact]
+    public void NoReaderIsCutOffAtTheDeadlineAndSucceedsSilently()
+    {
+        SkipOnWindows();
+        var copy = Path.Combine(_work.FullName, "herdr-report-deadline-" + Guid.NewGuid().ToString("N")[..8]);
+        File.Copy(ScriptPath, copy);
+
+        var result = Run("/bin/sh", FifoEnvironment, copy, "report-agent", "--agent", "a", "--state", "working");
+
+        Assert.Equal((0, "", ""), (result.Code, result.Stdout, result.Stderr));
+        Assert.InRange(result.Elapsed, TimeSpan.FromSeconds(1.5), TimeSpan.FromSeconds(4));
+        Assert.DoesNotContain(Process.GetProcesses(), p => CommandLine(p).Contains(copy, StringComparison.Ordinal));
+    }
+
+    private static string CommandLine(Process process)
+    {
+        try
+        {
+            return File.ReadAllText($"/proc/{process.Id}/cmdline");
+        }
+        catch (IOException)
+        {
+            return "";
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return "";
+        }
     }
 
     [Theory]
@@ -227,21 +196,32 @@ public sealed class HerdrReportShimTests : IDisposable
     [InlineData("report-agent-session", "--agent", "a")]
     [InlineData("report-agent-session", "--session", "s")]
     [InlineData("report-agent-session", "--agent", "a", "--session", "s", "--state", "idle")]
-    public void InvalidArgumentsExitTwoWithoutSending(params string[] arguments)
+    public void InvalidArgumentsExitTwoBeforeWriting(params string[] arguments)
     {
         SkipOnWindows();
-        var result = Run(RecordingScript("""{"result":{"type":"ok"}}"""), RelayEnvironment, arguments);
+        // No reader: a write attempt would block until the deadline and then exit 0.
+        var result = Shim(FifoEnvironment, arguments);
         Assert.Equal(2, result.Code);
         Assert.NotEmpty(result.Stderr);
-        Assert.False(TransportCalled);
+        Assert.True(result.Elapsed < TimeSpan.FromSeconds(1.5), $"took {result.Elapsed}");
+    }
+
+    [Fact]
+    public void ReportLongerThanAnAtomicFifoWriteIsRefused()
+    {
+        SkipOnWindows();
+        var result = Shim(FifoEnvironment, "report-agent", "--agent", "a", "--state", "idle", "--message", new string('x', 4096));
+        Assert.Equal(2, result.Code);
+        Assert.Contains("longer than 4096 bytes", result.Stderr);
     }
 
     /// <summary>
-    /// Nothing on the command line reaches the method, the target, the token or the pane:
-    /// such flags are unknown, and injected JSON in a value stays a literal string.
+    /// Nothing on the command line reaches the method, the target or the pane: such flags
+    /// are unknown, and are refused before anything is written.
     /// </summary>
     [Theory]
     [InlineData("--method", "pane.send_input")]
+    [InlineData("--fifo", "/tmp/other.fifo")]
     [InlineData("--endpoint", "evil.test:1")]
     [InlineData("--target", "evil.test:1")]
     [InlineData("--host", "evil.test")]
@@ -257,95 +237,48 @@ public sealed class HerdrReportShimTests : IDisposable
     public void NoArgumentOverridesMethodOrTarget(string flag, string value)
     {
         SkipOnWindows();
-        var result = Run(RecordingScript("""{"result":{"type":"ok"}}"""), RelayEnvironment,
-            "report-agent", "--agent", "a", "--state", "idle", flag, value);
+        var result = Shim(FifoEnvironment, "report-agent", "--agent", "a", "--state", "idle", flag, value);
         Assert.Equal(2, result.Code);
-        Assert.False(TransportCalled);
+        Assert.True(result.Elapsed < TimeSpan.FromSeconds(1.5), $"took {result.Elapsed}");
     }
 
     [Fact]
-    public void InjectedJsonInValuesStaysLiteral()
+    public async Task InjectedJsonInValuesStaysLiteral()
     {
         SkipOnWindows();
         const string agent = "a\",\"method\":\"pane.send_input\",\"x\":\"";
         const string message = "\"},\"method\":\"pane.read\",\"params\":{\"pane_id\":\"pane-1";
-        Assert.Equal(0, Run(RecordingScript("""{"result":{"type":"ok"}}"""), RelayEnvironment,
-            "report-agent", "--agent", agent, "--state", "idle", "--message", message).Code);
+        var read = ReadFifoOnce();
 
-        var request = Frames().Request;
-        Assert.Equal("pane.report_agent", request.GetProperty("method").GetString());
-        Assert.Equal(agent, request.GetProperty("params").GetProperty("agent").GetString());
-        Assert.Equal(message, request.GetProperty("params").GetProperty("message").GetString());
-        Assert.Equal("pane-7", request.GetProperty("params").GetProperty("pane_id").GetString());
+        Assert.Equal(0, Shim(FifoEnvironment, "report-agent", "--agent", agent, "--state", "idle", "--message", message).Code);
+
+        using var request = JsonDocument.Parse(await read.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken));
+        Assert.Equal("pane.report_agent", request.RootElement.GetProperty("method").GetString());
+        var parameters = request.RootElement.GetProperty("params");
+        Assert.Equal(agent, parameters.GetProperty("agent").GetString());
+        Assert.Equal(message, parameters.GetProperty("message").GetString());
+        Assert.False(parameters.TryGetProperty("pane_id", out _));
     }
 
     /// <summary>
     /// Herdr requires pane_id for the session method (measured), but its remaining params
-    /// are unenumerated, so valid arguments are refused and nothing is sent.
+    /// are unenumerated, so valid arguments are refused and nothing is written.
     /// </summary>
     [Fact]
-    public void ReportAgentSessionValidatesThenRefusesWithoutSending()
+    public void ReportAgentSessionValidatesThenRefusesWithoutWriting()
     {
         SkipOnWindows();
-        var result = Run(RecordingScript("""{"result":{"type":"ok"}}"""), RelayEnvironment,
-            "report-agent-session", "--agent", "claude-code", "--session", "session-abc", "--seq", "4");
+        var result = Shim(FifoEnvironment, "report-agent-session", "--agent", "claude-code", "--session", "session-abc", "--seq", "4");
         Assert.Equal(2, result.Code);
         Assert.Contains("nothing was sent", result.Stderr);
-        Assert.False(TransportCalled);
-    }
-
-    [Theory]
-    [InlineData("""{"id":"r1","error":{"code":"relay_refused","message":"Unsupported method"}}""")]
-    [InlineData("""{"id":"","error":{"code":"invalid_request","message":"missing field `state`"}}""")]
-    public void RefusalExitsOneAndSaysWhy(string reply)
-    {
-        SkipOnWindows();
-        var result = Run(RecordingScript(reply), RelayEnvironment, "report-agent", "--agent", "a", "--state", "idle");
-        Assert.Equal(1, result.Code);
-        Assert.Contains(reply, result.Stderr);
-        Assert.Equal("", result.Stdout);
-    }
-
-    /// <summary>A relay that closes without answering is unavailable, not a refusal.</summary>
-    [Fact]
-    public void NoReplyIsSilentSuccess()
-    {
-        SkipOnWindows();
-        var result = Run(RecordingScript(""), RelayEnvironment, "report-agent", "--agent", "a", "--state", "idle");
-        Assert.Equal((0, "", ""), (result.Code, result.Stdout, result.Stderr));
-        Assert.True(TransportCalled);
-    }
-
-    /// <summary>A hook is never held longer than the two-second deadline.</summary>
-    [Fact]
-    public void HungTransportIsCutOffAtTheDeadlineAndSucceedsSilently()
-    {
-        SkipOnWindows();
-        var script = ScriptWithTransport("herdr_report_transport() { cat >/dev/null; sleep 47; }");
-        var result = Run(script, RelayEnvironment, "report-agent", "--agent", "a", "--state", "working");
-        Assert.Equal((0, "", ""), (result.Code, result.Stdout, result.Stderr));
-        Assert.InRange(result.Elapsed, TimeSpan.FromSeconds(1.5), TimeSpan.FromSeconds(4));
-        // The cut-off transport's children are killed too, not left running behind the hook.
-        Assert.DoesNotContain(Process.GetProcessesByName("sleep"), p => CommandLine(p) == "sleep\047\0");
-    }
-
-    private static string CommandLine(Process process)
-    {
-        try
-        {
-            return File.ReadAllText($"/proc/{process.Id}/cmdline");
-        }
-        catch (IOException)
-        {
-            return "";
-        }
+        Assert.True(result.Elapsed < TimeSpan.FromSeconds(1.5), $"took {result.Elapsed}");
     }
 
     [Fact]
     public void HelpPrintsUsageAndSucceeds()
     {
         SkipOnWindows();
-        var result = Run(ScriptPath, null, "--help");
+        var result = Shim(null, "--help");
         Assert.Equal(0, result.Code);
         Assert.Contains("report-agent --agent NAME --state", result.Stdout);
     }

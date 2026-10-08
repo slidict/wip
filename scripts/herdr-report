@@ -1,25 +1,28 @@
 #!/bin/sh
 # herdr-report: reports this sandbox's agent state to Herdr through the wip report relay.
 #
-# Runs inside the sandbox; see docs/herdr-agent-status-reporting.md, which is the contract.
-# POSIX sh because the repo has no JavaScript toolchain; it runs under busybox sh.
+# Runs inside the sandbox and writes one JSON line into the report FIFO, which the host's
+# `wip sandbox relay` reads. POSIX sh because the repo has no JavaScript toolchain; it runs
+# under busybox sh.
 #
 #   herdr-report report-agent --agent NAME --state idle|working|blocked|unknown [--seq N] [--message TEXT]
 #   herdr-report report-agent-session --agent NAME --session ID [--seq N]
 #
-# Pane, endpoint and token come only from the environment (HERDR_PANE_ID,
-# WIP_REPORT_ENDPOINT, WIP_REPORT_TOKEN), and the relay stamps the source itself. No
-# argument chooses the target, the method or any other part of the Herdr API.
+# The FIFO path comes only from the environment (WIP_REPORT_FIFO), and the relay stamps
+# the pane and source itself. No argument chooses the target, the method or any other part
+# of the Herdr API.
 #
-# Exit status: 0 when reported, and also, silently, when reporting is unavailable (no
-# relay environment, no pane, no answer within two seconds), so a CLI hook never breaks
-# for lack of a relay. 1 when the relay or Herdr refuses the request. 2 for invalid
-# arguments.
+# The FIFO is one-way, so there is no reply and no refusal to report. Exit status: 0 once
+# the line is written, and also, silently, when reporting is unavailable (no
+# WIP_REPORT_FIFO, no FIFO there, or no reader within two seconds), so a CLI hook never
+# breaks for lack of a relay. 2 for invalid arguments.
 
 set -u
 
 HERDR_REPORT_DEADLINE=2
-HERDR_REPORT_MAX_LINE=16384
+# A write of at most PIPE_BUF bytes (4096 on Linux) is atomic, so concurrent reports from
+# one sandbox never interleave within a line.
+HERDR_REPORT_MAX_LINE=4096
 
 herdr_report_usage() {
     cat <<'EOF'
@@ -46,21 +49,14 @@ herdr_report_json_string() {
     printf '"%s"' "$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g')"
 }
 
-# The single transport. The sandbox-to-host leg is gated in the design doc until
-# off-host reachability is verified and the required protection is established, so
-# this performs no network I/O yet and reports the relay as unavailable (status 69).
-#
-# Contract for the implementation that replaces it: connect to $1:$2, send stdin (the
-# token line, then the request line), and write the relay's one reply line to stdout.
-# Return 0 with a reply, or 69 when the relay cannot be reached or closes without one.
-# The caller bounds it by HERDR_REPORT_DEADLINE. nc is available in the sandbox images.
+# The single transport: writes one line into the FIFO. Opening a FIFO blocks until the
+# relay is reading it, which is why the caller bounds this by the deadline.
 herdr_report_transport() {
-    return 69
+    printf '%s\n' "$2" >"$1"
 }
 
-# Kills a process and its descendants, children first, so a transport cut off at the
-# deadline leaves no client (nc, sleep, ...) running behind the hook. Without pgrep only
-# the process itself is killed.
+# Kills a process and its descendants, children first, so a write cut off at the deadline
+# leaves nothing running behind the hook. Without pgrep only the process itself is killed.
 herdr_report_kill_tree() {
     for herdr_report_child in $(pgrep -P "$1" 2>/dev/null); do
         herdr_report_kill_tree "$herdr_report_child"
@@ -68,22 +64,15 @@ herdr_report_kill_tree() {
     kill "$1" 2>/dev/null
 }
 
-# Runs the transport with the frames on stdin, bounded by the deadline. Prints the reply
-# and returns 0, or returns 69 when there is none in time.
+# Runs the transport bounded by the deadline. Its outcome is not reported: there is no
+# reply to read, and a write that cannot finish in time means the relay is unavailable.
 herdr_report_send() {
-    herdr_report_dir=$(mktemp -d 2>/dev/null) || return 69
-    trap 'rm -rf "$herdr_report_dir"' EXIT
-    printf '%s\n%s\n' "$1" "$2" >"$herdr_report_dir/frames"
-    ( herdr_report_transport "$3" "$4" <"$herdr_report_dir/frames" >"$herdr_report_dir/reply" 2>/dev/null ) &
+    ( herdr_report_transport "$1" "$2" ) &
     herdr_report_pid=$!
     ( sleep "$HERDR_REPORT_DEADLINE"; herdr_report_kill_tree "$herdr_report_pid" ) >/dev/null 2>&1 &
     herdr_report_watch=$!
     wait "$herdr_report_pid"
-    herdr_report_status=$?
     herdr_report_kill_tree "$herdr_report_watch"
-    [ "$herdr_report_status" -eq 0 ] || return 69
-    IFS= read -r herdr_report_reply <"$herdr_report_dir/reply" || [ -n "${herdr_report_reply:-}" ] || return 69
-    printf '%s\n' "$herdr_report_reply"
 }
 
 herdr_report_main() {
@@ -136,41 +125,26 @@ herdr_report_main() {
     esac
 
     if [ "$method" = pane.report_agent_session ]; then
-        # Herdr requires pane_id here (measured), but the rest of its required params are
-        # unenumerated, and the doc forbids guessing the payload. Nothing is sent.
+        # Herdr requires pane_id here (measured; the relay stamps it), but the rest of its
+        # required params are unenumerated, and the doc forbids guessing. Nothing is sent.
         printf 'herdr-report: report-agent-session is not available yet: its params are not fully enumerated; nothing was sent\n' >&2
         exit 2
     fi
 
-    # Reporting is unavailable without the relay environment or a pane: succeed silently.
-    endpoint=${WIP_REPORT_ENDPOINT:-}
-    token=${WIP_REPORT_TOKEN:-}
-    pane=${HERDR_PANE_ID:-}
-    [ -n "$endpoint" ] && [ -n "$token" ] && [ -n "$pane" ] || exit 0
-    case $token$pane in *[[:cntrl:]]*) exit 0 ;; esac
+    # Reporting is unavailable without the FIFO: succeed silently. Never create a file in
+    # its place.
+    fifo=${WIP_REPORT_FIFO:-}
+    [ -n "$fifo" ] && [ -p "$fifo" ] || exit 0
 
-    # host:port, or [v6]:port. The host is taken as given; nothing is substituted for it.
-    port=${endpoint##*:}
-    host=${endpoint%:*}
-    case $host in \[*\]) host=${host#\[}; host=${host%\]} ;; esac
-    case $port in ''|*[!0-9]*) exit 0 ;; esac
-    [ ${#port} -le 5 ] && [ "$port" -ge 1 ] && [ "$port" -le 65535 ] || exit 0
-    case $host in ''|*[[:space:]]*|*[[:cntrl:]]*) exit 0 ;; esac
-
-    params="\"pane_id\":$(herdr_report_json_string "$pane"),\"agent\":$(herdr_report_json_string "$agent"),\"state\":\"$state\""
+    params="\"agent\":$(herdr_report_json_string "$agent"),\"state\":\"$state\""
     [ -z "$seq" ] || params="$params,\"seq\":$seq"
     case $seen in *' --message '*) params="$params,\"message\":$(herdr_report_json_string "$message")" ;; esac
     request="{\"id\":\"herdr-report-$$\",\"method\":\"$method\",\"params\":{$params}}"
-    [ "$(printf '%s' "$request" | wc -c)" -le "$HERDR_REPORT_MAX_LINE" ] || herdr_report_fail "report is longer than $HERDR_REPORT_MAX_LINE bytes"
-    auth="{\"token\":$(herdr_report_json_string "$token")}"
+    [ "$(printf '%s\n' "$request" | wc -c)" -le "$HERDR_REPORT_MAX_LINE" ] || herdr_report_fail "report is longer than $HERDR_REPORT_MAX_LINE bytes"
 
     # stderr is discarded: the shell announces a job killed at the deadline ("Terminated").
-    reply=$(herdr_report_send "$auth" "$request" "$host" "$port" 2>/dev/null) || exit 0
-    case $reply in
-        *'"result"'*) exit 0 ;;
-        *'"error"'*) printf 'herdr-report: refused: %s\n' "$reply" >&2; exit 1 ;;
-        *) exit 0 ;;
-    esac
+    herdr_report_send "$fifo" "$request" 2>/dev/null
+    exit 0
 }
 
 herdr_report_main "$@"
