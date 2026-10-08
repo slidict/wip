@@ -87,6 +87,16 @@ public class SandboxCommandTests
     }
 
     [Fact]
+    public void RelayParsesWithOptionalUpstream()
+    {
+        var parsed = Program.Parse(Program.BuildRoot(), ["sandbox", "relay", "first", "--upstream", "/host/herdr.sock"]);
+        Assert.Empty(parsed.Errors);
+        Assert.Equal("relay", parsed.CommandResult.Command.Name);
+        Assert.Empty(Program.Parse(Program.BuildRoot(), ["sandbox", "relay", "first"]).Errors);
+        Assert.NotEmpty(Program.Parse(Program.BuildRoot(), ["sandbox", "relay", "first", "--", "sh"]).Errors);
+    }
+
+    [Fact]
     public void MissingExecutableIsUsageError()
     {
         var parsed = Program.Parse(Program.BuildRoot(), ["sandbox", "exec", "first"]);

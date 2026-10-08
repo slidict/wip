@@ -984,4 +984,107 @@ public class SandboxLifecycleTests
         Assert.Contains("oldvol", fakeVolumes.ReconcileCalls);
         Assert.Contains("newvol", fakeVolumes.ReconcileCalls);
     }
+
+    private const string RelaySuffix = "\n    report_relay: true";
+    private const string RelayDirectory = "/host/project/.wip/report-relay/first";
+
+    private static readonly KeyValuePair<string, string>[] RelayEnvironment =
+    [
+        new("WIP_REPORT_SOCKET", "/run/wip/herdr/report.sock"),
+        new("HERDR_PANE_ID", "1-2"),
+    ];
+
+    /// <summary>
+    /// Without the relay, create keeps its exact argv and needs no relay directory, so
+    /// existing wip.yml files see no change.
+    /// </summary>
+    [Fact]
+    public void CreateWithoutRelayAddsNoBindMount()
+    {
+        var fake = new Fake();
+        Assert.Equal(0, new SandboxLifecycle(Settings(), fake.Run).Create("first"));
+        Assert.Equal(["run", "--name", fake.Name, "-d", "--label", $"{SandboxLifecycle.OwnerLabel}=v1:test:sandbox:first", "fixture:latest"],
+            fake.Calls.Single(c => c[0] == "run"));
+    }
+
+    [Fact]
+    public void CreateWithRelayBindsTheHostDirectoryReadOnlyAtTheFixedPath()
+    {
+        var fake = new Fake();
+        var service = new SandboxLifecycle(Settings(RelaySuffix), fake.Run, reportRelayDirectory: _ => RelayDirectory);
+        Assert.Equal(0, service.Create("first"));
+        var run = fake.Calls.Single(c => c[0] == "run");
+        var mount = run[Array.IndexOf(run, "--mount") + 1];
+        Assert.Equal($"type=bind,source={RelayDirectory},target=/run/wip/herdr,readonly", mount);
+        Assert.Equal("fixture:latest", run[^1]);
+        // Restarting the same container accepts its relay mount.
+        Assert.Equal(0, service.Create("first"));
+        Assert.Single(fake.Calls, c => c[0] == "run");
+    }
+
+    [Fact]
+    public void CreateWithRelayRefusesWithoutADirectoryOrWithAnUnsafeOne()
+    {
+        var fake = new Fake();
+        Assert.Throws<ConfigException>(() => new SandboxLifecycle(Settings(RelaySuffix), fake.Run).Create("first"));
+        Assert.Throws<ConfigException>(() =>
+            new SandboxLifecycle(Settings(RelaySuffix), fake.Run, reportRelayDirectory: _ => "/a,readonly=false").Create("first"));
+        Assert.Empty(fake.Calls);
+    }
+
+    /// <summary>Mounts are fixed at creation, so toggling report_relay needs a recreate.</summary>
+    [Fact]
+    public void ExistingContainerWhoseRelayMountDisagreesWithConfigIsReported()
+    {
+        var withoutMount = new Fake { Exists = true };
+        Assert.Throws<WipException>(() =>
+            new SandboxLifecycle(Settings(RelaySuffix), withoutMount.Run, reportRelayDirectory: _ => RelayDirectory).Create("first"));
+
+        var withMount = new Fake { Exists = true, Mounts = [new("bind", "", "/run/wip/herdr")] };
+        Assert.Throws<WipException>(() => new SandboxLifecycle(Settings(), withMount.Run).Create("first"));
+        Assert.DoesNotContain(withoutMount.Calls.Concat(withMount.Calls), c => c[0] is "run" or "start" or "remove");
+    }
+
+    [Fact]
+    public void ExecExportsEnvironmentBeforeTheContainerId()
+    {
+        var fake = new Fake { Exists = true };
+        var service = new SandboxLifecycle(Settings(), fake.Run);
+        Assert.Equal(0, service.Exec("first", ["true"], TimeSpan.FromSeconds(5), RelayEnvironment));
+        Assert.Equal(["exec", "-e", "WIP_REPORT_SOCKET=/run/wip/herdr/report.sock", "-e", "HERDR_PANE_ID=1-2", fake.Id, "true"],
+            fake.Calls.Single(c => c[0] == "exec"));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void InteractiveExecExportsEnvironmentAndEmptyEnvironmentChangesNothing(bool tty)
+    {
+        var fake = new Fake { Exists = true };
+        var service = new SandboxLifecycle(Settings(), fake.Run);
+        string[] prefix = tty ? ["exec", "-i", "-t"] : ["exec", "-i"];
+
+        Assert.Equal(0, service.ExecInteractive("first", ["sh"], tty, RelayEnvironment));
+        Assert.Equal(prefix.Concat(["-e", "WIP_REPORT_SOCKET=/run/wip/herdr/report.sock", "-e", "HERDR_PANE_ID=1-2", fake.Id, "sh"]),
+            fake.Calls.Single(c => c[0] == "exec"));
+
+        fake.Calls.Clear();
+        Assert.Equal(0, service.ExecInteractive("first", ["sh"], tty, []));
+        Assert.Equal(prefix.Concat([fake.Id, "sh"]), fake.Calls.Single(c => c[0] == "exec"));
+    }
+
+    [Theory]
+    [InlineData("", "x")]
+    [InlineData("A=B", "x")]
+    [InlineData("-e", "x")]
+    [InlineData("HERDR_PANE_ID", "1-2\n")]
+    public void InvalidEnvironmentIsRejectedBeforeAnyBackendCall(string key, string value)
+    {
+        var fake = new Fake { Exists = true };
+        var service = new SandboxLifecycle(Settings(), fake.Run);
+        KeyValuePair<string, string>[] environment = [new(key, value)];
+        Assert.Throws<ConfigException>(() => service.ExecInteractive("first", ["sh"], tty: true, environment));
+        Assert.Throws<ConfigException>(() => service.Exec("first", ["sh"], TimeSpan.FromSeconds(5), environment));
+        Assert.Empty(fake.Calls);
+    }
 }

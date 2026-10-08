@@ -4,7 +4,11 @@ using Wip.Yaml;
 namespace Wip.Configuration;
 
 public sealed record VolumeDefinition(string Name, bool Persistent, string Mount);
-public sealed record SandboxDefinition(string Name, string Image, IReadOnlyList<string> Volumes);
+/// <param name="ReportRelay">
+/// Opt-in: bind the host's report relay directory into the sandbox so its CLI can report
+/// agent state through <see cref="Execution.ReportRelay"/>. Off unless declared.
+/// </param>
+public sealed record SandboxDefinition(string Name, string Image, IReadOnlyList<string> Volumes, bool ReportRelay = false);
 
 /// <summary>Declarative resources only; loading never creates, mounts or deletes resources.</summary>
 public sealed partial class SandboxSettings
@@ -45,7 +49,7 @@ public sealed partial class SandboxSettings
         var sandboxNames = new HashSet<string>(StringComparer.Ordinal);
         foreach (var item in Sequence(raw, "sandboxes"))
         {
-            var entry = Entry(item, "sandboxes", "name", "image", "volumes");
+            var entry = Entry(item, "sandboxes", "name", "image", "volumes", "report_relay");
             var name = Name(entry, "sandboxes");
             if (!sandboxNames.Add(name)) throw new ConfigException($"Duplicate sandbox name: {name}");
             var image = Text(entry, "image", $"sandboxes.{name}");
@@ -60,7 +64,18 @@ public sealed partial class SandboxSettings
                 if (!mounts.Add(volume.Mount)) throw new ConfigException($"sandboxes.{name} has conflicting mount destinations");
                 references.Add(volumeName);
             }
-            sandboxes.Add(new SandboxDefinition(name, image, references.AsReadOnly()));
+            var reportRelay = false;
+            if (entry.ContainsKey("report_relay"))
+            {
+                if (entry["report_relay"] is not bool relay)
+                    throw new ConfigException($"sandboxes.{name}.report_relay must explicitly be true or false");
+                reportRelay = relay;
+            }
+            // The relay mount is wip's own; a declared volume must neither shadow it nor be
+            // shadowed by it, so member-private storage never shares a path with the socket.
+            if (reportRelay && references.Any(v => Overlaps(byName[v].Mount, Execution.ReportRelay.MountPath)))
+                throw new ConfigException($"sandboxes.{name} has a volume overlapping {Execution.ReportRelay.MountPath}");
+            sandboxes.Add(new SandboxDefinition(name, image, references.AsReadOnly(), reportRelay));
         }
         string? resourceNamespace = null;
         if (volumes.Count > 0 || sandboxes.Count > 0 || raw.ContainsKey("resource_namespace"))
@@ -76,7 +91,13 @@ public sealed partial class SandboxSettings
         var result = RubyValue.NewMapping();
         if (ResourceNamespace is not null) result["resource_namespace"] = ResourceNamespace;
         result["volumes"] = Volumes.Select(v => (object?)Mapping(("name", v.Name), ("persistent", v.Persistent), ("mount", v.Mount))).ToList();
-        result["sandboxes"] = Sandboxes.Select(s => (object?)Mapping(("name", s.Name), ("image", s.Image), ("volumes", s.Volumes.Cast<object?>().ToList()))).ToList();
+        result["sandboxes"] = Sandboxes.Select(s =>
+        {
+            var mapping = Mapping(("name", s.Name), ("image", s.Image), ("volumes", s.Volumes.Cast<object?>().ToList()));
+            // Emitted only when enabled, so configs without a relay normalize exactly as before.
+            if (s.ReportRelay) mapping["report_relay"] = true;
+            return (object?)mapping;
+        }).ToList();
         return result;
     }
 
@@ -86,6 +107,11 @@ public sealed partial class SandboxSettings
         foreach (var (key, value) in values) result[key] = value;
         return result;
     }
+
+    private static bool Overlaps(string mount, string reserved) =>
+        mount == "/" || mount == reserved ||
+        reserved.StartsWith(mount + "/", StringComparison.Ordinal) ||
+        mount.StartsWith(reserved + "/", StringComparison.Ordinal);
 
     private static List<object?> Sequence(OrderedDictionary<string, object?> raw, string key) =>
         !raw.ContainsKey(key) ? [] : RubyValue.AsSequence(raw[key]) ?? throw new ConfigException($"{key} must be a sequence");
