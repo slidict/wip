@@ -443,6 +443,9 @@ try {
     . (Join-Path $PSScriptRoot 'sandbox-mount.ps1')
     Invoke-SandboxMountE2E -Namespace $sandboxNamespace -Image 'wip-e2e:latest'
 
+    . (Join-Path $PSScriptRoot 'shim-persistence.ps1')
+    Invoke-ShimPersistenceE2E
+
     # The terminal half of interactive exec. Resolved before use rather than skipped if
     # missing: a terminal assertion that quietly does not run is worse than one that fails.
     . (Join-Path $PSScriptRoot 'pty-session.ps1')

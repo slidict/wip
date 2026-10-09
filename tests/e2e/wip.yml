@@ -15,6 +15,9 @@ volumes:
   - name: isolated-fixture
     persistent: false
     mount: /isolated
+  - name: shim-fixture
+    persistent: true
+    mount: /shim
 sandboxes:
   - name: fixture
     image: wip-e2e:latest
@@ -24,6 +27,12 @@ sandboxes:
   - name: mount-shared-second
     image: wip-e2e:latest
     volumes: [persistent-fixture, ephemeral-fixture, isolated-fixture]
+  - name: shim-first
+    image: wip-e2e:latest
+    volumes: [shim-fixture]
+  - name: shim-second
+    image: wip-e2e:latest
+    volumes: [shim-fixture]
 mode: container
 wslc:
   command: auto
