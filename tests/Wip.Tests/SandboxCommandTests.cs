@@ -103,6 +103,26 @@ public class SandboxCommandTests
         Assert.NotEmpty(parsed.Errors);
     }
 
+    [Fact]
+    public void ListTakesNoNameAndDoesNotFallBackToDispatch()
+    {
+        var parsed = Program.Parse(Program.BuildRoot(), ["--config", "example.yml", "sandbox", "list"]);
+        Assert.Empty(parsed.Errors);
+        Assert.Equal("list", parsed.CommandResult.Command.Name);
+        Assert.Empty(parsed.CommandResult.Command.Arguments);
+    }
+
+    /// <summary>
+    /// The listing covers every declared sandbox, so a name is not a shorter way to ask for
+    /// one: it has to be a usage error rather than an argument the command quietly drops.
+    /// </summary>
+    [Fact]
+    public void ListRejectsASandboxName()
+    {
+        var parsed = Program.Parse(Program.BuildRoot(), ["--config", "example.yml", "sandbox", "list", "first"]);
+        Assert.NotEmpty(parsed.Errors);
+    }
+
     [Theory]
     [InlineData("create")]
     [InlineData("status")]
