@@ -240,8 +240,13 @@ function Invoke-RelayLifecycleE2E([string] $Namespace, [string] $Image) {
         $after = Find-RelayReport $record 'e2e-after-refusals'
         if ($after.params.source -ne $source) { throw "sandbox-supplied source was forwarded: '$($after.params.source)'" }
         if ($after.params.pane_id -ne $pane) { throw "upstream got pane_id '$($after.params.pane_id)', expected $pane" }
-        $upstream = [pscustomobject]@{ Code = 0; Output = (Read-RelayShared $record) }
-        Assert-NoMatch $upstream 'other-pane|e2e-pane|pane\.send_input' 'refused lines never reach the upstream'
+        # Checked per parsed report, not by matching the recorded text: every forwarded line
+        # carries the relay's own pane_id, which a text match cannot tell from a refused one.
+        foreach ($forwarded in Get-RelayStubReports $record) {
+            if ($forwarded.id -in 'e2e-pane', 'e2e-method') { throw "refused line $($forwarded.id) reached the upstream" }
+            if ($forwarded.method -ne 'pane.report_agent') { throw "upstream got method '$($forwarded.method)'" }
+            if ($forwarded.params.pane_id -ne $pane) { throw "upstream got pane_id '$($forwarded.params.pane_id)', expected $pane" }
+        }
         $log = [pscustomobject]@{ Code = 0; Output = (Get-RelayLog $relay) }
         Assert-Match $log 'refused e2e-pane: pane_id is set by the relay' 'relay logs the pane_id refusal'
         Assert-Match $log 'refused e2e-method: method not allowed' 'relay logs the method refusal'
