@@ -89,6 +89,34 @@ internal sealed partial class CliContext
     }
 
     /// <summary>
+    /// Prints one <c>status</c> line per declared sandbox, in wip.yml's order. A sandbox whose
+    /// status cannot be read does not end the listing: its line says <c>error</c>, the reason
+    /// goes to stderr, and the exit code is non-zero once every other sandbox has been shown.
+    /// </summary>
+    internal int SandboxList()
+    {
+        var lifecycle = Lifecycle();
+        var failed = false;
+        foreach (var definition in Config.SandboxResources.Sandboxes)
+        {
+            SandboxStatus status;
+            try
+            {
+                status = lifecycle.Status(definition.Name);
+            }
+            catch (WipException exception)
+            {
+                failed = true;
+                Console.WriteLine($"{definition.Name}\terror\t-\t-");
+                Log.Error($"{definition.Name}: {exception.Message}");
+                continue;
+            }
+            Console.WriteLine($"{status.Name}\t{status.State}\t{status.BackendName}\t{status.Id ?? "-"}");
+        }
+        return failed ? 1 : 0;
+    }
+
+    /// <summary>
     /// Runs the host side of a sandbox's report relay until interrupted: creates the report
     /// FIFO inside the sandbox, reads it through <c>sandbox exec</c>, and forwards what the
     /// filter allows to Herdr. Only the host runs this; the sandbox never sees Herdr's pipe.
