@@ -443,6 +443,9 @@ try {
     . (Join-Path $PSScriptRoot 'sandbox-mount.ps1')
     Invoke-SandboxMountE2E -Namespace $sandboxNamespace -Image 'wip-e2e:latest'
 
+    . (Join-Path $PSScriptRoot 'relay-lifecycle.ps1')
+    Invoke-RelayLifecycleE2E -Namespace $sandboxNamespace -Image 'wip-e2e:latest'
+
     . (Join-Path $PSScriptRoot 'shim-persistence.ps1')
     Invoke-ShimPersistenceE2E
 
@@ -469,7 +472,7 @@ catch {
 finally {
     if ($script:Workspace -and (Test-Path (Join-Path $script:Workspace 'wip.yml'))) {
         # The lifecycle verifies labels and IDs before removing this run's resource.
-        foreach ($sb in @('fixture', 'mount-shared-first', 'mount-shared-second')) {
+        foreach ($sb in @('fixture', 'mount-shared-first', 'mount-shared-second', 'relay-fixture')) {
             try {
                 $cleanup = Invoke-Wip @('sandbox', 'destroy', $sb)
                 if ($cleanup.Code -ne 0) {

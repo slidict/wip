@@ -189,6 +189,12 @@ internal static class Program
             }
             sandbox.Subcommands.Add(command);
         }
+        // A separate verb rather than making status's name optional: a status call that
+        // forgot its name would otherwise silently become a full listing, and the name
+        // stays required where it is the whole point of the command.
+        var list = new Command("list", "Print the status of every sandbox declared in wip.yml");
+        list.SetAction(parsed => context(parsed).SandboxList());
+        sandbox.Subcommands.Add(list);
         var relayName = new Argument<string>("name");
         var relayUpstream = new Option<string?>("--upstream")
         {

@@ -27,7 +27,7 @@ key, every command's flags, guides, and troubleshooting — see the
 
 The additive sandbox/volume configuration contract is documented in
 [Sandbox and volume contract](docs/sandbox-volume-contract.md). Named sandbox
-create/status/exec/destroy are described in [Sandbox lifecycle](docs/sandbox-lifecycle.md);
+create/status/list/exec/destroy are described in [Sandbox lifecycle](docs/sandbox-lifecycle.md);
 [volume storage](docs/volume-lifecycle.md) is available separately, with mount integration remaining a follow-up.
 
 - [Highlights](#highlights)

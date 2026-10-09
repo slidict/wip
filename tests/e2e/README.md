@@ -88,6 +88,15 @@ Two things the harness learned the hard way, both documented at their call sites
   chance to; the outcome is written to `--result` before anything is closed, which is why the
   assertions read that file rather than the harness's own exit code.
 
+## The report relay
+
+`relay-lifecycle.ps1` runs `wip sandbox relay` against the `relay-fixture` sandbox
+(`report_relay: true`). Herdr is not on the runner. On Windows the relay uses `--upstream` as a
+local named pipe name, so a second pwsh serves that pipe, records each request and answers like
+Herdr. The scenario checks FIFO creation, owner and mode; reuse and refusal of an existing FIFO;
+the per-sandbox lock; delivery of a `herdr-report` line with relay-stamped `source` and
+`pane_id`; refusal of a sandbox-supplied `pane_id`; and reader recovery after `cat` exits.
+
 ## In CI
 
 [`.github/workflows/e2e-windows.yml`](../../.github/workflows/e2e-windows.yml) runs it on

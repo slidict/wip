@@ -27,6 +27,9 @@ sandboxes:
   - name: mount-shared-second
     image: wip-e2e:latest
     volumes: [persistent-fixture, ephemeral-fixture, isolated-fixture]
+  - name: relay-fixture
+    image: wip-e2e:latest
+    report_relay: true
   - name: shim-first
     image: wip-e2e:latest
     volumes: [shim-fixture]

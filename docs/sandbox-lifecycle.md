@@ -15,6 +15,7 @@ sandboxes:
 ```powershell
 wip sandbox create first
 wip sandbox status first
+wip sandbox list # every declared sandbox, one status line each
 wip sandbox exec first -- printf '%s\n' 'an argument with spaces'
 wip sandbox exec first --timeout 30 -- sh -c 'exit 7'
 wip sandbox exec first --interactive -- bash
@@ -36,11 +37,17 @@ Check status and, if necessary, destroy the dedicated sandbox before retrying no
 | --- | --- | --- |
 | create | Running: success without another container; created/exited: start the verified ID; unknown: recovery error | Run the configured image and verify ownership/state |
 | status | Print logical name, state, backend name and ID | Print `not found`, success |
+| list | Print one `status` line per declared sandbox, in wip.yml's order | Lines read `not found`; no declarations prints nothing, success |
 | stop | Running: stop the verified ID, then confirm the same ID is exited; created/exited: success without mutation; other states: error | Success |
 | destroy | Force-remove the verified container ID and confirm absence | Success |
 | exec | Requires a running container; preserve exit code | Error; never create implicitly |
 | exec --interactive | Requires a running container; attach stdin (`-i`, plus `-t` with a terminal), no deadline, preserve exit code | Error; never create implicitly |
 | attach | Requires a running container; join the main process's streams, no argv, no deadline, preserve its exit code | Error; never create implicitly |
+
+`list` takes no name: it reports the declared set, which wip already knows, so callers do not
+have to enumerate names and loop over `status`. One sandbox whose status cannot be read does
+not end the listing — that line reads `error`, the reason goes to stderr, and the exit code is
+1 once every other sandbox has been printed.
 
 Unknown declarations are configuration errors. Sandboxes may reference declared volumes
 by name (`volumes: [vol1, vol2]`). On `sandbox create`, referenced volumes are ensured via
