@@ -1,4 +1,5 @@
 using Wip.Configuration;
+using Wip.Diagnostics;
 using Wip.Execution;
 
 namespace Wip.Cli;
