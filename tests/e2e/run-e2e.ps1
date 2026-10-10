@@ -472,7 +472,7 @@ catch {
 finally {
     if ($script:Workspace -and (Test-Path (Join-Path $script:Workspace 'wip.yml'))) {
         # The lifecycle verifies labels and IDs before removing this run's resource.
-        foreach ($sb in @('fixture', 'mount-shared-first', 'mount-shared-second', 'relay-fixture')) {
+        foreach ($sb in @('fixture', 'mount-shared-first', 'mount-shared-second', 'relay-fixture', 'shim-first', 'shim-second')) {
             try {
                 $cleanup = Invoke-Wip @('sandbox', 'destroy', $sb)
                 if ($cleanup.Code -ne 0) {
@@ -485,7 +485,7 @@ finally {
                 Write-Warning "sandbox cleanup failed ($sb): $_"
             }
         }
-        foreach ($vol in @('persistent-fixture', 'ephemeral-fixture', 'isolated-fixture')) {
+        foreach ($vol in @('persistent-fixture', 'ephemeral-fixture', 'isolated-fixture', 'shim-fixture')) {
             try {
                 $cleanup = Invoke-Wip @('volume', 'destroy', $vol)
                 if ($cleanup.Code -ne 0) {
