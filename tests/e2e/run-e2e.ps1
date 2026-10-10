@@ -446,6 +446,9 @@ try {
     . (Join-Path $PSScriptRoot 'relay-lifecycle.ps1')
     Invoke-RelayLifecycleE2E -Namespace $sandboxNamespace -Image 'wip-e2e:latest'
 
+    . (Join-Path $PSScriptRoot 'shim-persistence.ps1')
+    Invoke-ShimPersistenceE2E
+
     # The terminal half of interactive exec. Resolved before use rather than skipped if
     # missing: a terminal assertion that quietly does not run is worse than one that fails.
     . (Join-Path $PSScriptRoot 'pty-session.ps1')
@@ -469,7 +472,7 @@ catch {
 finally {
     if ($script:Workspace -and (Test-Path (Join-Path $script:Workspace 'wip.yml'))) {
         # The lifecycle verifies labels and IDs before removing this run's resource.
-        foreach ($sb in @('fixture', 'mount-shared-first', 'mount-shared-second', 'relay-fixture')) {
+        foreach ($sb in @('fixture', 'mount-shared-first', 'mount-shared-second', 'relay-fixture', 'shim-first', 'shim-second')) {
             try {
                 $cleanup = Invoke-Wip @('sandbox', 'destroy', $sb)
                 if ($cleanup.Code -ne 0) {
@@ -482,7 +485,7 @@ finally {
                 Write-Warning "sandbox cleanup failed ($sb): $_"
             }
         }
-        foreach ($vol in @('persistent-fixture', 'ephemeral-fixture', 'isolated-fixture')) {
+        foreach ($vol in @('persistent-fixture', 'ephemeral-fixture', 'isolated-fixture', 'shim-fixture')) {
             try {
                 $cleanup = Invoke-Wip @('volume', 'destroy', $vol)
                 if ($cleanup.Code -ne 0) {
