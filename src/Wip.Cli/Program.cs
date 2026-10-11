@@ -420,7 +420,12 @@ internal static class Program
 
     private static Command UpCommand(Func<ParseResult, CliContext> context)
     {
-        var detach = new Option<bool>("--detach", "-d");
+        var detach = new Option<bool>("--detach", "-d")
+        {
+            Description =
+                "Return once the containers are running instead of staying attached to the " +
+                "primary one (implied by --watch)",
+        };
         var sync = new Option<bool>("--sync")
         {
             Description = "Mirror the source into the sync volume first (--no-sync skips)",
@@ -523,7 +528,11 @@ internal static class Program
 
     private static Command LogsCommand(Func<ParseResult, CliContext> context)
     {
-        var follow = new Option<bool>("--follow", "-f") { DefaultValueFactory = _ => true };
+        var follow = new Option<bool>("--follow", "-f")
+        {
+            Description = "Keep streaming new log lines as they arrive (the default)",
+            DefaultValueFactory = _ => true,
+        };
         var noFollow = new Option<bool>("--no-follow") { Description = "Print current logs and exit" };
         var services = new Argument<string[]>("services") { Arity = ArgumentArity.ZeroOrMore };
 
@@ -565,6 +574,15 @@ internal static class Program
     /// is how the Ruby CLI's boolean option behaved.
     /// </summary>
     private static (Option<bool> Interactive, Option<bool> NoInteractive) InteractiveOptions() =>
-        (new Option<bool>("--interactive") { DefaultValueFactory = _ => true },
-            new Option<bool>("--no-interactive"));
+        (new Option<bool>("--interactive")
+            {
+                Description =
+                    "Attach wip's terminal to the command when wip has one, so a shell or REPL " +
+                    "works (the default)",
+                DefaultValueFactory = _ => true,
+            },
+            new Option<bool>("--no-interactive")
+            {
+                Description = "Run with no terminal attached, for scripts and CI",
+            });
 }
