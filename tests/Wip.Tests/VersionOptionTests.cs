@@ -57,7 +57,10 @@ public class VersionOptionTests
         var command = Run("--config", MissingConfig, "version");
 
         Assert.Equal(command.Code, option.Code);
-        Assert.Contains($"wip {WipVersion.Current}", command.Output);
+        Assert.Equal(command.Output, option.Output);
+
+        // Equality alone would also hold if both printed nothing at all, so one of the two
+        // reports is still checked for the version it is supposed to carry.
         Assert.Contains($"wip {WipVersion.Current}", option.Output);
     }
 
