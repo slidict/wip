@@ -38,6 +38,14 @@ public class VersionOptionTests
     }
 
     [Fact]
+    public void VersionOptionWithVolumeDestroyIsRejectedDuringParsing()
+    {
+        var parsed = Program.Parse(Program.BuildRoot(), ["--version", "volume", "destroy", "NAME"]);
+
+        Assert.Equal("--version cannot be combined with a subcommand.", Assert.Single(parsed.Errors).Message);
+    }
+
+    [Fact]
     public void VersionOptionReportsTheWipVersionWithoutAConfig()
     {
         var (code, output) = Run("--config", MissingConfig, "--version");

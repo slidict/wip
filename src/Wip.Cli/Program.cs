@@ -149,8 +149,25 @@ internal static class Program
             ? Context(parsed).Version()
             : root.Parse(["--help"]).Invoke(parsed.InvocationConfiguration));
 
+        void AddVersionValidator(Command command)
+        {
+            command.Validators.Add(commandResult =>
+            {
+                if (commandResult.GetValue(versionOption))
+                {
+                    commandResult.AddError("--version cannot be combined with a subcommand.");
+                }
+            });
+
+            foreach (var subcommand in command.Subcommands)
+            {
+                AddVersionValidator(subcommand);
+            }
+        }
+
         foreach (var command in BuildCommands(Context))
         {
+            AddVersionValidator(command);
             root.Subcommands.Add(command);
         }
 
