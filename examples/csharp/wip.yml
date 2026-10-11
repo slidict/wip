@@ -18,6 +18,10 @@ dependencies:
       - "8080:8080"
     volumes:
       - ".:/app"
+      # The mount above hides the image's own bin/ and obj/, so without these the host's build
+      # output and the container's would land in the same paths and overwrite each other.
+      - "api-bin:/app/bin"
+      - "api-obj:/app/obj"
       - "nuget:/root/.nuget/packages" # named volume so `dotnet restore` output survives `wip down`
   db:
     image: postgres:16

@@ -53,9 +53,11 @@ this mode fits.
   trigger a rebuild.
 - The `nuget` named volume keeps restored packages out of the bind mount, so `wip down` doesn't
   cost you a full `dotnet restore`.
-- `bin/` and `obj/` built on the host and built in the container will fight over the same paths
-  through the bind mount. If that bites, `wip init --template csharp` writes a starter `wip.yml`
-  whose `sync.exclude` already skips them, mirroring the tree into a volume instead.
+- The `api-bin` and `api-obj` volumes are there because `.:/app` hides the image's own `bin/` and
+  `obj/`: without them, output built on the host and output built in the container land in the
+  same paths and overwrite each other. If you'd rather not bind-mount the source at all,
+  `wip init --template csharp` writes a starter `wip.yml` whose `sync.exclude` already skips those
+  directories and mirrors the tree into a volume instead.
 
 See the [Configuration Reference](https://github.com/slidict/wip/wiki/Configuration-Reference)
 for every key `wip.yml` accepts.
