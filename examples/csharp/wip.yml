@@ -1,0 +1,57 @@
+version: 1
+mode: container # no compose.yml here — wip drives wslc directly
+container: app # the primary container; `wip up`/`exec`/`run`/`build` target this one
+network: api-tier
+dependencies:
+  app:
+    image: myapp/api:development # built by the `build` command below
+    workdir: /app
+    command: dotnet watch run # replaces the image's CMD when `wip up` creates the container
+    env:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: http://0.0.0.0:8080 # the container listens on every interface; the port: below picks who reaches it
+      # The host tree is bind-mounted below, so `dotnet watch` sees no inotify events for it —
+      # polling is what makes a file saved on Windows actually trigger a rebuild.
+      DOTNET_USE_POLLING_FILE_WATCHER: "true"
+      ConnectionStrings__Default: Host=db;Username=postgres;Password=password;Database=myapp_development # matches POSTGRES_PASSWORD below
+    ports:
+      - "8080:8080"
+    volumes:
+      - ".:/app"
+      - "nuget:/root/.nuget/packages" # named volume so `dotnet restore` output survives `wip down`
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    env:
+      POSTGRES_PASSWORD: password # local development only — pick a real secret before this leaves your machine
+      POSTGRES_DB: myapp_development
+    ports:
+      - "127.0.0.1:5432:5432" # loopback only, so the sample credential isn't reachable from the network
+    healthcheck: # `wip up` waits for this before starting `app`
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 2
+      retries: 10
+commands:
+  restore:
+    command: dotnet restore
+  test:
+    command: dotnet test
+  ef:
+    command: dotnet ef
+    interactive: true
+  migrate:
+    type: run # ephemeral --rm container instead of exec'ing into the running one
+    command: dotnet ef database update
+    image: myapp/api:development
+    remove: true
+  psql:
+    command: psql -U postgres -d myapp_development
+    container: db # redirects this one command from `app` to the `db` dependency
+    interactive: true
+  shell:
+    command: bash
+    interactive: true
+  build:
+    type: build
+    context: .
+    tag: myapp/api:development
