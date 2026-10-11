@@ -135,6 +135,30 @@ wip up -d
 wip rails console
 ```
 
+### Starter templates
+
+`wip init --template NAME` preloads the `sync.exclude` list in the generated `wip.yml` with the
+directories that stack regenerates inside the container, or that are too large to mirror (and
+names the preset in the comment above the list):
+
+| `--template` | `sync.exclude` patterns written |
+|---|---|
+| `rails` | `.git`, `log/`, `tmp/`, `storage/`, `public/assets/`, `public/packs/`, `.bundle/`, `vendor/bundle/`, `coverage/`, `node_modules/` |
+| `ruby` | `.git`, `log/`, `tmp/`, `.bundle/`, `vendor/bundle/`, `coverage/` |
+| `node` | `.git`, `node_modules/`, `dist/`, `build/`, `.next/`, `.cache/`, `coverage/` |
+| `rust` | `.git`, `target/` |
+| `csharp` | `.git`, `bin/`, `obj/`, `.vs/`, `packages/` |
+
+```powershell
+wip init --template csharp
+```
+
+That is the whole of it — the preset touches no other key. `mode:` is still decided by whether a
+compose file sits next to the target, every other key is still written as the same placeholder or
+`TODO`, and omitting `--template` just starts `sync.exclude` at `.git`, `tmp/`, `node_modules/`
+instead. An unknown name is rejected with the valid list, and `--template` cannot be combined with
+`--ai` (which generates the whole file from a natural-language request instead).
+
 ## Examples
 
 The quick start above is intentionally minimal. For fuller `wip.yml`/`compose.yml` pairs modeled
