@@ -25,17 +25,13 @@ key, every command's flags, guides, and troubleshooting — see the
 
 ## Contents
 
-The additive sandbox/volume configuration contract is documented in
-[Sandbox and volume contract](docs/sandbox-volume-contract.md). Named sandbox
-create/status/list/exec/destroy are described in [Sandbox lifecycle](docs/sandbox-lifecycle.md);
-[volume storage](docs/volume-lifecycle.md) is available separately, with mount integration remaining a follow-up.
-
 - [Highlights](#highlights)
 - [Requirements & installation](#requirements--installation)
 - [Quick start](#quick-start)
 - [Examples](#examples)
 - [Configuration](#configuration)
 - [Commands](#commands)
+- [Sandboxes](#sandboxes)
 - [Development](#development)
 - [Contributing](#contributing)
 - [License](#license)
@@ -190,6 +186,45 @@ at the **[Configuration Reference](https://github.com/slidict/wip/wiki/Configura
 
 Every command's flags, per-mode behavior, and examples are on the
 **[CLI Command Reference](https://github.com/slidict/wip/wiki/CLI-Command-Reference)**.
+
+## Sandboxes
+
+Besides your app's stack, `wip.yml` can declare **named sandboxes** — long-lived containers with
+their own image and their own storage, for running a tool somewhere isolated from the project's
+own containers. `wip up`, `wip down` and `wip exec` never touch a sandbox, and `wip sandbox` never
+touches the stack.
+
+```yaml
+version: 1
+resource_namespace: example-project
+
+volumes:
+  - name: state
+    persistent: true # kept when the sandbox is destroyed; `false` means ephemeral
+    mount: /home/user/state
+
+sandboxes:
+  - name: agent
+    image: example/tool:1 # its default command has to keep running
+    volumes: [state]
+```
+
+```powershell
+wip sandbox create agent                     # run it, mounting the declared volumes
+wip sandbox exec agent --interactive -- sh   # a session you drive; `--` keeps sh's own flags
+wip sandbox stop agent                       # pause it — `create` resumes the same container
+wip sandbox destroy agent                    # remove it; persistent volumes survive
+```
+
+`create` / `list` / `status` / `exec` / `attach` / `stop` / `destroy` are the whole set. `exec`
+runs non-interactively with a 300-second deadline unless you pass `--interactive`, which has no
+deadline and cannot be combined with `--timeout`. Anything that has to survive `destroy` belongs
+in the image or on a persistent volume — and installing or signing into whatever CLI the image
+ships is outside wip's scope.
+
+For the operations and their guarantees, see [Sandbox lifecycle](docs/sandbox-lifecycle.md); for
+the configuration and ownership model, [Sandbox and volume contract](docs/sandbox-volume-contract.md);
+for declared volumes on their own, [volume storage](docs/volume-lifecycle.md).
 
 ## Development
 
