@@ -118,12 +118,20 @@ internal static class Program
             quietOption,
         };
 
-        // Package managers may validate an installation by launching the executable without
-        // arguments. Re-parsing "--help" against this same root reuses its current command
-        // tree, and invoking that with the caller's own InvocationConfiguration (rather than a
-        // freshly built one) keeps this correct for direct callers of BuildRoot(), not just the
-        // Main wrapper: it's the same root, and captured output/exit codes come through as-is.
-        root.SetAction(parsed => root.Parse(["--help"]).Invoke(parsed.InvocationConfiguration));
+        // RootCommand ships a --version of its own, which short-circuits parsing to print the
+        // bare assembly version — a different answer, in a different shape and a different
+        // language, to the question `wip version` already answers. Replacing it with a plain
+        // flag routed to the same method is what keeps the two spellings from drifting.
+        var versionOption = new Option<bool>("--version")
+        {
+            Description = "Show wip and WSLC versions, the same as `wip version`",
+        };
+        foreach (var builtIn in root.Options.OfType<VersionOption>().ToArray())
+        {
+            root.Options.Remove(builtIn);
+        }
+
+        root.Options.Add(versionOption);
 
         CliContext Context(ParseResult parsed) => new(new CliOptions(
             parsed.GetValue(configOption),
@@ -132,8 +140,34 @@ internal static class Program
             parsed.GetValue(debugLogOption),
             parsed.GetValue(quietOption)));
 
+        // Package managers may validate an installation by launching the executable without
+        // arguments. Re-parsing "--help" against this same root reuses its current command
+        // tree, and invoking that with the caller's own InvocationConfiguration (rather than a
+        // freshly built one) keeps this correct for direct callers of BuildRoot(), not just the
+        // Main wrapper: it's the same root, and captured output/exit codes come through as-is.
+        root.SetAction(parsed => parsed.GetValue(versionOption)
+            ? Context(parsed).Version()
+            : root.Parse(["--help"]).Invoke(parsed.InvocationConfiguration));
+
+        void AddVersionValidator(Command command)
+        {
+            command.Validators.Add(commandResult =>
+            {
+                if (commandResult.GetValue(versionOption))
+                {
+                    commandResult.AddError("--version cannot be combined with a subcommand.");
+                }
+            });
+
+            foreach (var subcommand in command.Subcommands)
+            {
+                AddVersionValidator(subcommand);
+            }
+        }
+
         foreach (var command in BuildCommands(Context))
         {
+            AddVersionValidator(command);
             root.Subcommands.Add(command);
         }
 
