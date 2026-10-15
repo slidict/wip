@@ -246,8 +246,8 @@ deadline and cannot be combined with `--timeout`. Anything that has to survive `
 in the image or on a persistent volume — and installing or signing into whatever CLI the image
 ships is outside wip's scope.
 
-For the operations and their guarantees, see [Sandbox lifecycle](docs/sandbox-lifecycle.md); for
-the configuration and ownership model, [Sandbox and volume contract](docs/sandbox-volume-contract.md);
+For the operations and their guarantees, see [wip sandbox](https://github.com/slidict/wip/wiki/wip-sandbox); for
+the configuration and ownership model, [Sandboxes](https://github.com/slidict/wip/wiki/Sandboxes);
 for declared volumes on their own, [volume storage](docs/volume-lifecycle.md).
 
 ## Development
