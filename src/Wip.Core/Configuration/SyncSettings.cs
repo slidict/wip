@@ -126,19 +126,33 @@ public sealed class SyncSettings
     /// Trailing slashes matter to rsync: they copy the <em>contents</em> of the mount into
     /// the target rather than nesting it one directory deeper.
     /// </summary>
-    public IReadOnlyList<string> MirrorCommand()
+    public IReadOnlyList<string> MirrorCommand() =>
+        MirrorCommand(Binary, Mount, Target, Delete, Exclude, ExtraOptions);
+
+    /// <summary>
+    /// The same mirror invocation without a <c>sync:</c> block behind it, so the declared
+    /// volume mirror (<c>volumes[].sync</c>) runs the option set defined here rather than a
+    /// second copy of it.
+    /// </summary>
+    public static IReadOnlyList<string> MirrorCommand(
+        string binary,
+        string mount,
+        string target,
+        bool delete,
+        IEnumerable<string> exclude,
+        IEnumerable<string>? extraOptions = null)
     {
-        var command = new List<string> { Binary };
+        var command = new List<string> { binary };
         command.AddRange(BaseOptions);
-        if (Delete)
+        if (delete)
         {
             command.Add("--delete");
         }
 
-        command.AddRange(Exclude.Select(pattern => $"--exclude={pattern}"));
-        command.AddRange(ExtraOptions);
-        command.Add($"{Mount.TrimEnd('/')}/");
-        command.Add($"{Target.TrimEnd('/')}/");
+        command.AddRange(exclude.Select(pattern => $"--exclude={pattern}"));
+        command.AddRange(extraOptions ?? []);
+        command.Add($"{mount.TrimEnd('/')}/");
+        command.Add($"{target.TrimEnd('/')}/");
         return command;
     }
 

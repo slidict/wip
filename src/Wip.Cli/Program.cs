@@ -263,6 +263,7 @@ internal static class Program
             ("status", "Print the named volume's state and the declaration that owns it"),
             ("destroy", "Remove the named volume and the data it holds"),
             ("reconcile", "Bring the named volume back in line with its declaration, recreating an ephemeral one"),
+            ("sync", "Mirror the host directory the named volume declares in volumes[].sync into it"),
         })
         {
             var name = new Argument<string>("name") { Description = "Volume declared in wip.yml" };

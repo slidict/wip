@@ -76,7 +76,79 @@ public class SandboxSettingsTests
     [InlineData("sandboxes: [{name: box, image: tool, volumes: data}]")]
     [InlineData("sandboxes: [{name: box, image: tool, report_relay: 'true'}]")]
     [InlineData("sandboxes: [{name: box, image: tool, report_relay: null}]")]
+    [InlineData("volumes: [{name: data, persistent: true, mount: /data, sync: {}}]")]
+    [InlineData("volumes: [{name: data, persistent: true, mount: /data, sync: {source: .}}]")]
+    [InlineData("volumes: [{name: data, persistent: true, mount: /data, sync: {image: m, target: /x}}]")]
+    [InlineData("volumes: [{name: data, persistent: true, mount: /data, sync: [image]}]")]
+    [InlineData("volumes: [{name: data, persistent: true, mount: /data, sync: {image: ''}}]")]
+    [InlineData("volumes: [{name: data, persistent: true, mount: /data, sync: {image: '-rm'}}]")]
+    [InlineData("volumes: [{name: data, persistent: true, mount: /data, sync: {image: m, mount: /data}}]")]
+    [InlineData("volumes: [{name: data, persistent: true, mount: /data, sync: {image: m, mount: relative}}]")]
+    [InlineData("volumes: [{name: data, persistent: true, mount: /data, sync: {image: m, mount: /a/../b}}]")]
+    [InlineData("volumes: [{name: data, persistent: true, mount: /data, sync: {image: m, mount: '/host-src,ro'}}]")]
+    [InlineData("volumes: [{name: data, persistent: true, mount: /data, sync: {image: m, source: 'a,b'}}]")]
+    [InlineData("volumes: [{name: data, persistent: true, mount: /data, sync: {image: m, delete: 'false'}}]")]
+    [InlineData("volumes: [{name: data, persistent: true, mount: /data, sync: {image: m, exclude: [.git, null]}}]")]
+    [InlineData("volumes: [{name: data, persistent: true, mount: /data, sync: {image: m, exclude: ['--delete']}}]")]
+    [InlineData("volumes: [{name: data, persistent: true, mount: /data, sync: {image: m, exclude: .git}}]")]
     public void InvalidResourcesFailAtConfigLoad(string yaml) => Assert.Throws<ConfigException>(() => Load("resource_namespace: example\n" + yaml));
+
+    [Fact]
+    public void DeclaredSyncKeepsItsSourceRawAndDefaultsTheRest()
+    {
+        var config = Load("""
+            resource_namespace: example
+            volumes:
+              - name: src
+                persistent: true
+                mount: /workspace/src
+                sync: {image: mirror:1}
+              - name: data
+                persistent: true
+                mount: /data
+            """);
+        var sync = config.SandboxResources.Volumes[0].Sync!;
+        Assert.Equal(".", sync.Source);
+        Assert.Equal("/host-src", sync.Mount);
+        Assert.Equal("mirror:1", sync.Image);
+        Assert.True(sync.Delete);
+        Assert.Empty(sync.Exclude);
+        Assert.Null(config.SandboxResources.Volumes[1].Sync);
+    }
+
+    [Fact]
+    public void NormalizedOutputCarriesSyncOnlyForVolumesThatDeclareIt()
+    {
+        var config = Load("""
+            resource_namespace: example
+            volumes:
+              - name: src
+                persistent: true
+                mount: /workspace/src
+                sync: {source: ../tree, image: mirror:1, exclude: [.git], delete: false}
+              - name: data
+                persistent: true
+                mount: /data
+            """);
+        var volumes = config.SandboxResources.ToMapping()["volumes"] as List<object?>;
+        var emitted = RubyValue.AsMapping(RubyValue.AsMapping(volumes![0])!["sync"])!;
+        Assert.Equal("../tree", emitted["source"]);
+        Assert.Equal(false, emitted["delete"]);
+        Assert.False(RubyValue.AsMapping(volumes[1])!.ContainsKey("sync"));
+
+        // Round-tripping the projection must not change the declaration. Compared field by
+        // field: the record's Exclude is a list, so record equality would compare references.
+        var projected = RubyValue.NewMapping();
+        foreach (var key in new[] { "resource_namespace", "volumes", "sandboxes" }) projected[key] = config.ToMapping()[key];
+        var restored = Load(YamlWriter.Dump(projected)).SandboxResources.Volumes;
+        Assert.Equal(config.SandboxResources.Volumes.Select(v => v.Name), restored.Select(v => v.Name));
+        var original = config.SandboxResources.Volumes[0].Sync!;
+        var roundTripped = restored[0].Sync!;
+        Assert.Equal(original with { Exclude = [] }, roundTripped with { Exclude = [] });
+        Assert.Equal(original.Exclude, roundTripped.Exclude);
+        Assert.Null(restored[1].Sync);
+        Assert.DoesNotContain(Load(Sample).SandboxResources.Volumes, v => v.Sync is not null);
+    }
 
     [Fact]
     public void EqualMountPathsAreValidWhenNeverCombinedInOneSandbox()
