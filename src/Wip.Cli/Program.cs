@@ -528,7 +528,7 @@ internal static class Program
         var arguments = new Argument<string[]>("command")
         {
             Arity = ArgumentArity.ZeroOrMore,
-            Description = "Command and its arguments to run in the running container (default: the image's own)",
+            Description = "Command and its arguments to run in the running container",
         };
         var command = new Command("exec", "Execute a command in the running container")
         {
