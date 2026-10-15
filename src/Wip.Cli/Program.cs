@@ -593,7 +593,7 @@ internal static class Program
         var name = new Argument<string?>("name")
         {
             Arity = ArgumentArity.ZeroOrOne,
-            Description = "Command defined under commands: in wip.yml (omit to list them)",
+            Description = "Command defined under commands: in wip.yml",
         };
         var arguments = new Argument<string[]>("args")
         {
