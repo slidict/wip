@@ -44,9 +44,10 @@ inference from an agent name or a `shared`, `agent` or `sandbox` purpose mode.
 | Field | Contract |
 |---|---|
 | `resource_namespace` | Required for nonempty resource declarations; explicit stable project identity |
-| `volumes` | Optional sequence; each entry has exactly `name`, `persistent`, `mount` |
+| `volumes` | Optional sequence; each entry has exactly `name`, `persistent`, `mount` and an optional `sync` |
 | `persistent` | Required YAML boolean; never silently default to destructive ephemeral storage |
 | `mount` | Required canonical absolute Linux path; no control characters, empty segments, trailing slash (except `/`), '.' or '..' |
+| volume `sync` | Optional mapping; exactly `source`, `mount`, `image`, `exclude`, `delete`. Declaration alone mirrors nothing |
 | `sandboxes` | Optional sequence; each entry has `name`, `image`, optional `volumes` |
 | `image` | Required nonempty string without control characters; backend support is checked by execution later |
 | sandbox `volumes` | Optional sequence of declared volume names; omitted means no mounts |
@@ -58,6 +59,40 @@ Ancestor/descendant mounts are not equal-path conflicts; nested mounts are order
 so shallower paths precede deeper paths before container creation. Unknown fields inside either resource
 declaration are rejected, including agent/purpose/mode labels. Backend errors do not
 permit silently changing the declared mount path or persistence.
+
+## Declared source mirror
+
+A volume may declare the host directory it is mirrored from. The declaration is validated at
+load and runs nothing; `wip volume sync <name>` performs the mirror.
+
+```yaml
+volumes:
+  - name: src
+    persistent: true
+    mount: /workspace/src
+    sync:
+      source: .            # relative to wip.yml's directory; default "."
+      mount: /host-src     # where the mirror sees the host tree, read-only; default /host-src
+      image: mirror:1      # required; the mirror container runs rsync from this image
+      exclude: [.git, node_modules]
+      delete: true         # default true
+```
+
+`source` stays raw in the typed contract and is expanded against the wip.yml directory at
+execution, so normalized output does not depend on the invoking directory. `image` is required:
+the mirror runs in a throwaway container of its own, and the images that mount the volume are
+not guaranteed to carry rsync. A leading `-` in `image` or an `exclude` entry, a
+`mount` equal to the volume's own destination, a non-canonical `mount`, a comma in
+`source`/`mount`, a non-boolean `delete` and any other key are rejected at load.
+
+`wip volume sync` resolves the volume's current generation, then runs
+`run --rm -v <source>:<sync.mount>:ro --mount type=volume,source=<generation>,target=<mount> <image> rsync …`.
+The rsync invocation is `SyncSettings.MirrorCommand`, the same option set the legacy `sync:`
+block uses, rather than a second copy of it. The mirror creates no storage: a volume that does
+not exist yet is reported, and `volume create` remains the explicit creation step. Sandboxes
+referencing the volume keep running and are neither attached nor detached, and the host side is
+mounted read-only, so a mirror never writes to the host tree. Its deadline is the duration of
+one whole-tree copy, not a backend call's.
 
 ## Responsibility and ownership
 
@@ -92,6 +127,9 @@ inheritance and `sync` retain their behavior. This does not add a new mode or re
 existing orchestration choices. `dependencies.<name>.volumes` remains the existing raw
 bind-mount argument list; it is distinct from the new top-level resource declarations.
 Compose-native's compose.yml volumes are not automatically converted or adopted.
+The volume `sync` declaration above is separate from the legacy `sync:` block: `up`, `exec`,
+`run` and `sync` keep targeting legacy dependencies and never mirror a declared volume,
+and `volume sync` never touches the legacy container. Only the rsync argument builder is shared.
 Old normalized config output gets no extra resource keys when the extension is absent.
 
 Migrating is deliberate: choose a namespace; declare storage and explicit persistence;
@@ -123,6 +161,9 @@ dropping a mandatory parent criterion.
 
 `SandboxSettingsTests` exercises resource sharing, invalid configuration, canonical mount
 paths, namespace identity, normalized YAML round-trip and coexistence with legacy bind mounts.
+`VolumeSyncTests` exercises the declared mirror: the argument shape against the volume's own
+generation, the shared rsync invocation, `delete: false`, the refusal of an undeclared sync, an
+absent volume and an unusable resolved source, and that running references do not block it.
 Run `dotnet test tests/Wip.Tests/Wip.Tests.csproj --configuration Release` and the existing
 build/AOT CI. No live sandbox or credential access is needed for this schema-only Issue.
 slidict/workspace#195/#196 can use the typed definitions and this ownership contract independently;

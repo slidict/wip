@@ -33,6 +33,12 @@ public sealed class VolumeLifecycle(SandboxSettings settings, SandboxBackend bac
     public const string InstanceLabel = "io.slidict.wip.instance";
     private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan MutationTimeout = TimeSpan.FromMinutes(2);
+    /// <summary>
+    /// A first mirror copies the whole tree, so this is far longer than a mutation's
+    /// deadline: the work is one rsync over however large the declared source is, not a
+    /// backend call that either answers or has hung.
+    /// </summary>
+    private static readonly TimeSpan MirrorTimeout = TimeSpan.FromMinutes(30);
 
     public static string BackendPrefix(string resourceNamespace, string name) => "wip-v-" +
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"{resourceNamespace}:volume:{name}")))[..24].ToLowerInvariant() + "-";
@@ -115,6 +121,40 @@ public sealed class VolumeLifecycle(SandboxSettings settings, SandboxBackend bac
         var status = Status(name);
         if (status.BackendName is null || status.Persistent || status.References.Count != 0 || !status.WasUsed) return 0;
         return DestroyGeneration(status);
+    }
+
+    /// <summary>
+    /// Mirrors <paramref name="hostSource"/> into the volume from a throwaway container that
+    /// mounts the host tree read-only and the volume at its declared destination, the way
+    /// <c>sync.mode: run</c> does for the legacy block. The sandboxes that reference the
+    /// volume keep running: nothing is attached to or detached from them, and the mirror
+    /// never writes to the host side.
+    /// </summary>
+    /// <remarks>
+    /// Storage is not created here. An absent volume is reported instead, because creation
+    /// stays the explicit <c>volume create</c> operation.
+    /// </remarks>
+    public int Sync(string name, string hostSource)
+    {
+        var definition = Definition(name);
+        if (definition.Sync is not { } sync)
+            throw new ConfigException($"Volume {name}: no sync is declared; add volumes.{name}.sync to mirror a host directory");
+        if (string.IsNullOrWhiteSpace(hostSource) || hostSource.StartsWith('-') || hostSource.Any(char.IsControl))
+            throw Failure(name, "the resolved sync source is not a usable host path");
+        var status = Status(name);
+        if (status.BackendName is null)
+            throw Failure(name, "storage does not exist yet; run wip volume create first");
+        var arguments = new List<string>
+        {
+            "run",
+            "--rm",
+            "-v", $"{hostSource}:{sync.Mount}:ro",
+            "--mount", $"type=volume,source={status.BackendName},target={definition.Mount}",
+            sync.Image,
+        };
+        arguments.AddRange(SyncSettings.MirrorCommand(
+            SyncSettings.DefaultBinary, sync.Mount, definition.Mount, sync.Delete, sync.Exclude));
+        return backend(arguments, MirrorTimeout, SandboxConsoleMode.Stream).Code;
     }
 
     private IReadOnlyList<string> References(string backendName)

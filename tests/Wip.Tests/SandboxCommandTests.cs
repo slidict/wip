@@ -128,6 +128,7 @@ public class SandboxCommandTests
     [InlineData("status")]
     [InlineData("destroy")]
     [InlineData("reconcile")]
+    [InlineData("sync")]
     public void StorageOperationsParseWithoutDispatch(string operation)
     {
         var parsed = Program.Parse(Program.BuildRoot(), ["volume", operation, "data"]);

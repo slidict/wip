@@ -3,7 +3,26 @@ using Wip.Yaml;
 
 namespace Wip.Configuration;
 
-public sealed record VolumeDefinition(string Name, bool Persistent, string Mount);
+/// <param name="Source">
+/// Host directory to mirror, relative to wip.yml's own directory unless absolute. Kept raw
+/// here: resolving it belongs to execution, which knows where the config was loaded from,
+/// and a raw value normalizes the same no matter which subdirectory wip was invoked from.
+/// </param>
+/// <param name="Mount">Where the mirror container sees the host source, read-only.</param>
+/// <param name="Image">Image the mirror runs in; it must provide the sync binary.</param>
+public sealed record VolumeSyncDefinition(
+    string Source,
+    string Mount,
+    string Image,
+    IReadOnlyList<string> Exclude,
+    bool Delete);
+
+/// <param name="Sync">
+/// Opt-in: declares a host source this volume is mirrored from. Declaring it neither creates
+/// the volume nor runs a mirror; <c>wip volume sync</c> does.
+/// </param>
+public sealed record VolumeDefinition(string Name, bool Persistent, string Mount, VolumeSyncDefinition? Sync = null);
+
 /// <param name="ReportRelay">
 /// Opt-in: execs export the report FIFO's path so the sandbox's CLI can report agent state
 /// through <see cref="Execution.ReportRelay"/>. Off unless declared.
@@ -30,7 +49,7 @@ public sealed partial class SandboxSettings
         var byName = new Dictionary<string, VolumeDefinition>(StringComparer.Ordinal);
         foreach (var item in Sequence(raw, "volumes"))
         {
-            var entry = Entry(item, "volumes", "name", "persistent", "mount");
+            var entry = Entry(item, "volumes", "name", "persistent", "mount", "sync");
             var name = Name(entry, "volumes");
             if (entry.GetValueOrDefault("persistent") is not bool persistent)
                 throw new ConfigException($"volumes.{name}.persistent must explicitly be true or false");
@@ -40,7 +59,7 @@ public sealed partial class SandboxSettings
             if (!mount.StartsWith('/') || mount.Any(char.IsControl) ||
                 (mount != "/" && mount[1..].Split('/').Any(part => part is "" or "." or "..")))
                 throw new ConfigException($"volumes.{name}.mount must be a canonical absolute Linux path");
-            var volume = new VolumeDefinition(name, persistent, mount);
+            var volume = new VolumeDefinition(name, persistent, mount, ReadSync(entry.GetValueOrDefault("sync"), name, mount));
             if (!byName.TryAdd(name, volume)) throw new ConfigException($"Duplicate volume name: {name}");
             volumes.Add(volume);
         }
@@ -86,7 +105,21 @@ public sealed partial class SandboxSettings
     {
         var result = RubyValue.NewMapping();
         if (ResourceNamespace is not null) result["resource_namespace"] = ResourceNamespace;
-        result["volumes"] = Volumes.Select(v => (object?)Mapping(("name", v.Name), ("persistent", v.Persistent), ("mount", v.Mount))).ToList();
+        result["volumes"] = Volumes.Select(v =>
+        {
+            var mapping = Mapping(("name", v.Name), ("persistent", v.Persistent), ("mount", v.Mount));
+            // Emitted only when declared, so volumes without a mirror normalize exactly as before.
+            if (v.Sync is { } sync)
+            {
+                mapping["sync"] = Mapping(
+                    ("source", sync.Source),
+                    ("mount", sync.Mount),
+                    ("image", sync.Image),
+                    ("exclude", sync.Exclude.Cast<object?>().ToList()),
+                    ("delete", sync.Delete));
+            }
+            return (object?)mapping;
+        }).ToList();
         result["sandboxes"] = Sandboxes.Select(s =>
         {
             var mapping = Mapping(("name", s.Name), ("image", s.Image), ("volumes", s.Volumes.Cast<object?>().ToList()));
@@ -95,6 +128,52 @@ public sealed partial class SandboxSettings
             return (object?)mapping;
         }).ToList();
         return result;
+    }
+
+    /// <summary>
+    /// Validation only; the mirror itself is <c>wip volume sync</c>'s job. <c>image</c> is
+    /// required because the mirror runs in a throwaway container of its own, and the sandbox
+    /// images that mount the volume are not guaranteed to carry rsync.
+    /// </summary>
+    private static VolumeSyncDefinition? ReadSync(object? raw, string name, string target)
+    {
+        if (raw is null) return null;
+        var path = $"volumes.{name}.sync";
+        var entry = Entry(raw, path, "source", "mount", "image", "exclude", "delete");
+        var source = entry.ContainsKey("source") ? Text(entry, "source", path) : ".";
+        if (source.Contains(',')) throw new ConfigException($"{path}.source cannot contain commas");
+        var mount = entry.ContainsKey("mount") ? Text(entry, "mount", path) : "/host-src";
+        if (mount.Contains(',')) throw new ConfigException($"{path}.mount cannot contain commas");
+        if (!mount.StartsWith('/') || (mount != "/" && mount[1..].Split('/').Any(part => part is "" or "." or "..")))
+            throw new ConfigException($"{path}.mount must be a canonical absolute Linux path");
+        // rsync copies the mount's contents into the target, so an overlapping pair would make
+        // the source its own destination. Nesting either way counts: /data under /data/host
+        // puts the target inside the source, and /data/host under /data the reverse.
+        var mirrorSource = mount.TrimEnd('/');
+        var mirrorTarget = target.TrimEnd('/');
+        if (mirrorSource == mirrorTarget ||
+            mirrorSource.StartsWith(mirrorTarget + "/", StringComparison.Ordinal) ||
+            mirrorTarget.StartsWith(mirrorSource + "/", StringComparison.Ordinal))
+            throw new ConfigException($"{path}.mount must not overlap the volume's own mount");
+        var image = Text(entry, "image", path);
+        // A leading dash would be read as an option by the backend's run, not as an image.
+        if (image.StartsWith('-')) throw new ConfigException($"{path}.image must not start with '-'");
+        var exclude = new List<string>();
+        foreach (var pattern in Sequence(entry, "exclude"))
+        {
+            if (pattern is not string text || string.IsNullOrWhiteSpace(text) || text.Any(char.IsControl))
+                throw new ConfigException($"{path}.exclude entries must be nonempty strings without control characters");
+            if (text.StartsWith('-')) throw new ConfigException($"{path}.exclude entries must not start with '-'");
+            exclude.Add(text);
+        }
+        var delete = true;
+        if (entry.ContainsKey("delete"))
+        {
+            if (entry["delete"] is not bool value)
+                throw new ConfigException($"{path}.delete must explicitly be true or false");
+            delete = value;
+        }
+        return new(source, mount, image, exclude.AsReadOnly(), delete);
     }
 
     private static OrderedDictionary<string, object?> Mapping(params (string Key, object? Value)[] values)
