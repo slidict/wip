@@ -177,13 +177,27 @@ internal static class Program
     private static IEnumerable<Command> BuildCommands(Func<ParseResult, CliContext> context)
     {
         var sandbox = new Command("sandbox", "Manage named, ownership-checked sandboxes");
-        foreach (var operation in new[] { "create", "status", "stop", "destroy", "exec", "attach" })
+        // The operations share their plumbing, not their meaning, so the loop carries a line
+        // for each one rather than one description for all of them.
+        foreach (var (operation, summary) in new[]
         {
-            var name = new Argument<string>("name");
-            var command = new Command(operation) { name };
+            ("create", "Create the named sandbox and its declared volumes, or resume it if it exists"),
+            ("status", "Print the named sandbox's state, container and owning declaration"),
+            ("stop", "Stop the named sandbox, keeping it and its volumes for a later create"),
+            ("destroy", "Remove the named sandbox and the volumes it owns exclusively"),
+            ("exec", "Run a command inside the named sandbox"),
+            ("attach", "Attach this terminal to the named sandbox's running container"),
+        })
+        {
+            var name = new Argument<string>("name") { Description = "Sandbox declared in wip.yml" };
+            var command = new Command(operation, summary) { name };
             if (operation == "exec")
             {
-                var argv = new Argument<string[]>("argv") { Arity = ArgumentArity.OneOrMore };
+                var argv = new Argument<string[]>("argv")
+                {
+                    Arity = ArgumentArity.OneOrMore,
+                    Description = "Command and its arguments to run inside the sandbox",
+                };
                 var timeout = new Option<int>("--timeout") { DefaultValueFactory = _ => 300, Description = "Execution deadline in seconds (default: 300)" };
                 // One flag with four spellings, including the bundled -it people type out of
                 // docker habit. The two halves it bundles are not a choice the caller has to
@@ -229,7 +243,7 @@ internal static class Program
         var list = new Command("list", "Print the status of every sandbox declared in wip.yml");
         list.SetAction(parsed => context(parsed).SandboxList());
         sandbox.Subcommands.Add(list);
-        var relayName = new Argument<string>("name");
+        var relayName = new Argument<string>("name") { Description = "Sandbox declared in wip.yml" };
         var relayUpstream = new Option<string?>("--upstream")
         {
             Description = "Herdr's socket path, or pipe name on Windows (default: HERDR_SOCKET_PATH)",
@@ -243,10 +257,16 @@ internal static class Program
         sandbox.Subcommands.Add(relay);
         yield return sandbox;
         var volume = new Command("volume", "Manage declared storage and reconcile ephemeral use cycles");
-        foreach (var operation in new[] { "create", "status", "destroy", "reconcile" })
+        foreach (var (operation, summary) in new[]
         {
-            var name = new Argument<string>("name");
-            var command = new Command(operation) { name };
+            ("create", "Create the named volume if it does not exist yet"),
+            ("status", "Print the named volume's state and the declaration that owns it"),
+            ("destroy", "Remove the named volume and the data it holds"),
+            ("reconcile", "Bring the named volume back in line with its declaration, recreating an ephemeral one"),
+        })
+        {
+            var name = new Argument<string>("name") { Description = "Volume declared in wip.yml" };
+            var command = new Command(operation, summary) { name };
             var action = operation;
             command.SetAction(parsed => context(parsed).Volume(action, parsed.GetValue(name)!));
             volume.Subcommands.Add(command);
@@ -339,7 +359,11 @@ internal static class Program
         {
             Description = "Skip the `wip manual` cache and fetch the wiki manual live for this question",
         };
-        var question = new Argument<string[]>("question") { Arity = ArgumentArity.ZeroOrMore };
+        var question = new Argument<string[]>("question")
+        {
+            Arity = ArgumentArity.ZeroOrMore,
+            Description = "Question to ask the AI server (requires --ai)",
+        };
         var command = new Command("help", "Show usage help (add --ai to ask an AI server instead)")
         {
             ai, url, allowRemoteAi, noCache, question,
@@ -411,7 +435,11 @@ internal static class Program
     private static Command BuildCommand(Func<ParseResult, CliContext> context)
     {
         var noCache = new Option<bool>("--no-cache") { Description = "Build without using cached layers" };
-        var extra = new Argument<string[]>("extra") { Arity = ArgumentArity.ZeroOrMore };
+        var extra = new Argument<string[]>("extra")
+        {
+            Arity = ArgumentArity.ZeroOrMore,
+            Description = "Extra arguments passed through to the underlying build",
+        };
         var command = new Command("build", "Build the configured image") { noCache, extra };
         command.SetAction(parsed =>
             context(parsed).Build(parsed.GetValue(extra) ?? [], parsed.GetValue(noCache)));
@@ -497,7 +525,11 @@ internal static class Program
     private static Command ExecCommand(Func<ParseResult, CliContext> context)
     {
         var (interactive, noInteractive) = InteractiveOptions();
-        var arguments = new Argument<string[]>("command") { Arity = ArgumentArity.ZeroOrMore };
+        var arguments = new Argument<string[]>("command")
+        {
+            Arity = ArgumentArity.ZeroOrMore,
+            Description = "Command and its arguments to run in the running container (default: the image's own)",
+        };
         var command = new Command("exec", "Execute a command in the running container")
         {
             interactive, noInteractive, arguments,
@@ -513,7 +545,11 @@ internal static class Program
     private static Command RunCommand(Func<ParseResult, CliContext> context)
     {
         var (interactive, noInteractive) = InteractiveOptions();
-        var arguments = new Argument<string[]>("command") { Arity = ArgumentArity.ZeroOrMore };
+        var arguments = new Argument<string[]>("command")
+        {
+            Arity = ArgumentArity.ZeroOrMore,
+            Description = "Command and its arguments to run in the new container (default: the image's own)",
+        };
         var command = new Command("run", "Run a command in a new container")
         {
             interactive, noInteractive, arguments,
@@ -534,7 +570,11 @@ internal static class Program
             DefaultValueFactory = _ => true,
         };
         var noFollow = new Option<bool>("--no-follow") { Description = "Print current logs and exit" };
-        var services = new Argument<string[]>("services") { Arity = ArgumentArity.ZeroOrMore };
+        var services = new Argument<string[]>("services")
+        {
+            Arity = ArgumentArity.ZeroOrMore,
+            Description = "Compose services to read logs from (default: the configured container)",
+        };
 
         var command = new Command("logs", "Follow logs from the configured container or compose services")
         {
@@ -550,8 +590,16 @@ internal static class Program
 
     private static Command DispatchCommand(Func<ParseResult, CliContext> context)
     {
-        var name = new Argument<string?>("name") { Arity = ArgumentArity.ZeroOrOne };
-        var arguments = new Argument<string[]>("args") { Arity = ArgumentArity.ZeroOrMore };
+        var name = new Argument<string?>("name")
+        {
+            Arity = ArgumentArity.ZeroOrOne,
+            Description = "Command defined under commands: in wip.yml (omit to list them)",
+        };
+        var arguments = new Argument<string[]>("args")
+        {
+            Arity = ArgumentArity.ZeroOrMore,
+            Description = "Extra arguments appended to the dispatched command",
+        };
         var command = new Command("dispatch", "Run a command defined in wip.yml") { name, arguments };
 
         command.SetAction(parsed =>
