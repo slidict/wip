@@ -4,10 +4,11 @@ using Wip.Cli;
 namespace Wip.Tests;
 
 /// <summary>
-/// <c>--help</c> is generated from the command tree, so an option with no <c>Description</c>
-/// prints as a bare flag with nothing beside it, and neither the build nor the other tests say a
-/// word about it. Walking the whole tree is what keeps the next option added from shipping that
-/// way.
+/// <c>--help</c> is generated from the command tree, so an option, subcommand or argument with no
+/// <c>Description</c> prints as a bare name with nothing beside it, and neither the build nor the
+/// other tests say a word about it. Walking the whole tree is what keeps the next one added from
+/// shipping that way. The root is skipped for subcommands only: its description belongs to the
+/// executable, not to a verb.
 /// </summary>
 public class OptionHelpTests
 {
@@ -22,6 +23,29 @@ public class OptionHelpTests
 
         // Compared as joined text rather than as an empty collection so that a failure names
         // the options that are missing one.
+        Assert.Equal("", string.Join(", ", missing));
+    }
+
+    [Fact]
+    public void EverySubcommandHasHelpText()
+    {
+        var missing =
+            from command in Commands(Program.BuildRoot()).Skip(1)
+            where string.IsNullOrWhiteSpace(command.Description)
+            select command.Name;
+
+        Assert.Equal("", string.Join(", ", missing));
+    }
+
+    [Fact]
+    public void EveryArgumentHasHelpText()
+    {
+        var missing =
+            from command in Commands(Program.BuildRoot())
+            from argument in command.Arguments
+            where string.IsNullOrWhiteSpace(argument.Description)
+            select $"{command.Name} {argument.Name}";
+
         Assert.Equal("", string.Join(", ", missing));
     }
 
