@@ -41,7 +41,21 @@ internal sealed partial class CliContext
         var sync = definition.Sync
             ?? throw new ConfigException($"Volume {name}: no sync is declared; add volumes.{name}.sync to mirror a host directory");
         var directory = Path.GetDirectoryName(Path.GetFullPath(Config.Path ?? "wip.yml"))!;
-        return WslPath.ForWslc(Path.GetFullPath(Path.Combine(directory, sync.Source)), $"volumes.{name}.sync.source");
+        return ResolveSyncSource(directory, name, sync.Source, Directory.Exists);
+    }
+
+    /// <summary>
+    /// A source that is not there is a typo or a tree that was moved, not an empty mirror: the
+    /// backend would bind an absent path, or rsync would run against whatever the backend
+    /// created in its place and <c>--delete</c> would then empty the volume. Checked before the
+    /// path is converted for the backend, so the message names the host path as written.
+    /// </summary>
+    internal static string ResolveSyncSource(string configDirectory, string name, string rawSource, Func<string, bool> directoryExists)
+    {
+        var source = Path.GetFullPath(Path.Combine(configDirectory, rawSource));
+        if (!directoryExists(source))
+            throw new ConfigException($"Volume {name}: sync source directory does not exist: {source}");
+        return WslPath.ForWslc(source, $"volumes.{name}.sync.source");
     }
 
     private SandboxBackend ResourceBackend()

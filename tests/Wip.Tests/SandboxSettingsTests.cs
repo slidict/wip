@@ -83,6 +83,8 @@ public class SandboxSettingsTests
     [InlineData("volumes: [{name: data, persistent: true, mount: /data, sync: {image: ''}}]")]
     [InlineData("volumes: [{name: data, persistent: true, mount: /data, sync: {image: '-rm'}}]")]
     [InlineData("volumes: [{name: data, persistent: true, mount: /data, sync: {image: m, mount: /data}}]")]
+    [InlineData("volumes: [{name: data, persistent: true, mount: /data, sync: {image: m, mount: /data/host}}]")]
+    [InlineData("volumes: [{name: data, persistent: true, mount: /host-src/data, sync: {image: m}}]")]
     [InlineData("volumes: [{name: data, persistent: true, mount: /data, sync: {image: m, mount: relative}}]")]
     [InlineData("volumes: [{name: data, persistent: true, mount: /data, sync: {image: m, mount: /a/../b}}]")]
     [InlineData("volumes: [{name: data, persistent: true, mount: /data, sync: {image: m, mount: '/host-src,ro'}}]")]

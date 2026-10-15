@@ -192,4 +192,26 @@ public class VolumeSyncTests
         Assert.Throws<WipException>(() => new VolumeLifecycle(Settings(), fake.Run, new Usage()).Sync("src", source));
         Assert.DoesNotContain(fake.Calls, call => call[0] == "run");
     }
+
+    [Fact]
+    public void ResolvedSourceIsExpandedAgainstTheConfigDirectory()
+    {
+        var resolved = Wip.Cli.CliContext.ResolveSyncSource(
+            Path.Combine(Path.GetTempPath(), "project"), "src", "../tree", _ => true);
+        Assert.Equal(Path.GetFullPath(Path.Combine(Path.GetTempPath(), "tree")), resolved);
+    }
+
+    /// <summary>
+    /// An absent source would have the backend bind a path it creates instead, and
+    /// <c>--delete</c> would then empty the volume against it.
+    /// </summary>
+    [Fact]
+    public void MissingSourceDirectoryIsRefusedBeforeTheMirrorRuns()
+    {
+        var probed = new List<string>();
+        var exception = Assert.Throws<ConfigException>(() => Wip.Cli.CliContext.ResolveSyncSource(
+            Path.Combine(Path.GetTempPath(), "project"), "src", "gone", path => { probed.Add(path); return false; }));
+        Assert.Contains("sync source directory does not exist", exception.Message);
+        Assert.Equal([Path.GetFullPath(Path.Combine(Path.GetTempPath(), "project", "gone"))], probed);
+    }
 }

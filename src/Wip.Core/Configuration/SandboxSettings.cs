@@ -146,10 +146,15 @@ public sealed partial class SandboxSettings
         if (mount.Contains(',')) throw new ConfigException($"{path}.mount cannot contain commas");
         if (!mount.StartsWith('/') || (mount != "/" && mount[1..].Split('/').Any(part => part is "" or "." or "..")))
             throw new ConfigException($"{path}.mount must be a canonical absolute Linux path");
-        // rsync copies the mount's contents into the target, so the same path for both would
-        // make the source its own destination.
-        if (mount.TrimEnd('/') == target.TrimEnd('/'))
-            throw new ConfigException($"{path}.mount must differ from the volume's own mount");
+        // rsync copies the mount's contents into the target, so an overlapping pair would make
+        // the source its own destination. Nesting either way counts: /data under /data/host
+        // puts the target inside the source, and /data/host under /data the reverse.
+        var mirrorSource = mount.TrimEnd('/');
+        var mirrorTarget = target.TrimEnd('/');
+        if (mirrorSource == mirrorTarget ||
+            mirrorSource.StartsWith(mirrorTarget + "/", StringComparison.Ordinal) ||
+            mirrorTarget.StartsWith(mirrorSource + "/", StringComparison.Ordinal))
+            throw new ConfigException($"{path}.mount must not overlap the volume's own mount");
         var image = Text(entry, "image", path);
         // A leading dash would be read as an option by the backend's run, not as an image.
         if (image.StartsWith('-')) throw new ConfigException($"{path}.image must not start with '-'");
