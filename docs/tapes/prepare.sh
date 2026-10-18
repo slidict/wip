@@ -11,8 +11,9 @@ if [[ ! -f .wip-tapes-recording ]]; then
   exit 1
 fi
 if [[ -f wip.yml ]]; then
-  wip down
-  wip sandbox destroy demo
+  # Missing containers or sandboxes must not prevent the next take.
+  wip down || true
+  wip sandbox destroy demo || true
 fi
 mkdir -p context/payload source
 cp docs/tapes/Dockerfile context/Dockerfile

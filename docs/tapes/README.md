@@ -1,22 +1,26 @@
 # Wiki terminal recordings
 
-These seven VHS tapes record real commands with a shared fixture. GIF rendering
-runs on the recording host; the tapes have not been rendered in this environment.
+These seven VHS tapes record real commands with a shared fixture on Windows,
+wip's shipping target. The tape shell is PowerShell. GIF rendering runs on the
+recording host; these revised tapes have not been rendered in this environment.
 
 ## Tools
 
-Use VHS 0.12.1, ttyd 1.7.7, and FFmpeg 7.1 or newer as the recording
-baseline (not a tested minimum). Install them from the
+The host-tested versions are VHS 0.12.1, ttyd 1.7.7, and FFmpeg 9.0.2,
+on Windows 11 with wip 2.12.0 and WSLC 3.0.3.0. Install them from the
 [VHS instructions](https://github.com/charmbracelet/vhs#installation),
 [ttyd releases](https://github.com/tsl0922/ttyd/releases), and
 [FFmpeg downloads](https://ffmpeg.org/download.html).
 The VHS README requires ttyd and FFmpeg on `PATH` but specifies no minimum
 versions for them. Record the actual versions with `vhs --version`,
 `ttyd --version`, and `ffmpeg -version` when handing off a recording.
+For example, install the recording tools with Scoop: `scoop install vhs ttyd ffmpeg`.
 
 Also install `wip` itself and a working WSLC backend. Check `wip version` and
-`wip doctor` before recording. Bash and standard utilities (`cp`, `sed`, `date`,
-`mkdir`, `mv`, `touch`) must be available. Use an English terminal and backend.
+`wip doctor` before recording. PowerShell must be available for the tapes.
+Run `prepare.sh` and the command blocks below from Git Bash or another Bash
+with standard utilities (`cp`, `sed`, `date`, `mkdir`, `mv`, `touch`).
+Use an English terminal and backend.
 
 ## Prepare the recording directory
 
@@ -37,7 +41,9 @@ touch .wip-tapes-recording
 Run every command below from this recording directory. `prepare.sh` copies
 `docs/tapes/wip.yml` to `wip.yml`, gives each take a fresh network name, creates
 `context/` and `source/message.txt`, and warms the build cache. It removes only
-the fixture's containers and declared sandbox from the previous take. Reserve
+the fixture's containers and declared sandbox from the previous take, continuing
+if cleanup fails (including when those resources are absent). Build and startup
+failures still stop preparation. Reserve
 the `wip-tapes` resource names for this fixture. The marker guards against
 accidentally preparing a normal project directory.
 
@@ -82,7 +88,9 @@ The getting-started take begins without `wip.yml`. After showing `wip init`,
 it installs `recording.yml` while hidden: the generated starter contains a
 placeholder image and must be customized before use. Other tapes start with
 the fixture installed; shell, logs, and sync start with the app already running.
-The sync take schedules a host edit while the foreground watcher runs, then
+The sync take uses PowerShell `Start-Job` to schedule a host edit after four
+seconds. It passes an absolute file path because jobs use a separate working
+directory. The foreground watcher runs while the job edits the file, then the tape
 reads `/app/message.txt` inside the container after Ctrl-C to show the result.
 
 Outputs are `docs/tapes/<slug>.gif` in the recording directory. Copy them to
@@ -111,7 +119,12 @@ Check flags in `src/Wip.Cli/Program.cs` and behavior in
 `src/Wip.Cli/CliContext.cs` or `CliContext.Sandbox.cs`. Update the shared fixture
 and preparation script if inputs change, then regenerate every affected tape
 using its prepare/render pair above. Keep the seven visual settings aligned
-with `docs/demo.tape`.
+with `docs/demo.tape`, except for the required PowerShell shell.
+
+On the Windows recording host, `Set Shell "bash"` produced a successful VHS
+exit and an empty GIF with only the background, even for a minimal echo tape.
+`Set Shell "powershell"` rendered that minimal tape correctly. Keep PowerShell
+when retaking these recordings; Bash is used only for preparation outside VHS.
 
 Visible typing and sleeps budget roughly 6-18 seconds per take before VHS key
 overhead. The sidecar waits two seconds; health probes poll once per second.
