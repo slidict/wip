@@ -4,4 +4,4 @@ RUN apt-get update && apt-get install -y --no-install-recommends rsync \
 WORKDIR /app
 COPY payload/ /app/payload/
 RUN sleep 1
-CMD ["sleep", "infinity"]
+CMD ["sh", "-c", "trap 'kill \"$child\" 2>/dev/null; wait \"$child\" 2>/dev/null; exit 0' TERM INT; sleep infinity & child=$!; wait \"$child\""]

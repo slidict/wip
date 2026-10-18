@@ -48,11 +48,13 @@ the `wip-tapes` resource names for this fixture. The marker guards against
 accidentally preparing a normal project directory.
 
 The app and sandbox use `wip-tapes-app:latest`, built locally from the public
-`ubuntu:latest` image. Its `CMD` runs `sleep infinity` so the sandbox stays alive;
+`ubuntu:latest` image. Its `CMD` traps SIGTERM/INT, terminates its child sleep,
+and waits for it before exiting, so the sandbox stays alive and stops promptly;
 the app overrides that command with its heartbeat loop. The sidecar uses Ubuntu
 directly. Preparation builds the image with rsync, then runs `wip up -d` and
-`wip down` to warm dependency images before recording. It selects another fresh
-network afterward so visible startup still shows network creation. No registry
+`wip down` to warm dependency images before recording. Warmup reuses the fixed
+`wip-tapes-warm` network. It selects one fresh network per take afterward so
+visible startup still shows network creation. No registry
 credentials or private images are required. A nonempty `.dockerignore` enables context-copy
 progress even on a local filesystem, and a changed payload forces the visible
 build's one-second final step to run again.
@@ -103,9 +105,22 @@ the separate delivery destination. Do not commit GIFs; `.gitignore` excludes
 them. Only copy changed source assets back into the checkout.
 
 After recording, run `wip down` and `wip sandbox destroy demo` with the fixture
-installed. The shared sync volume and the per-take networks remain; remove the
-unused `wip-tapes-src` volume and `wip-tapes-*` networks with the backend's
-resource management commands once all fixture containers have been removed.
+installed. Remove the unused `wip-tapes-src` volume with the backend's volume
+management commands once all fixture containers have been removed.
+
+`wip down` leaves networks behind. Warmup now reuses one network, but each take
+still adds one: seven takes leave eight networks on a clean host. Remove unused
+fixture networks after each batch and before retrying if older batches remain.
+Accumulated networks exhaust the default IPv4 address pools: startup fails with
+"could not find an available, non-overlapping IPv4 address pool".
+
+From the recording host, run `wslc network list`, then `wslc network rm NAME`
+for each unused `wip-tapes-*` network, replacing `NAME` with its exact listed
+name. Include older warmup networks and take networks. After the final batch,
+remove the shared warmup network with `wslc network rm wip-tapes-warm` too.
+Only remove fixture networks after their containers have been removed; keep
+unrelated networks. The command follows the
+[WSLC network cleanup example](https://github.com/microsoft/WSL/blob/master/test/windows/wslc/e2e/WSLCE2EHelpers.cpp).
 
 ## Retake after a behavior change
 
@@ -175,8 +190,14 @@ revisions were recorded again: getting-started reached hello and down without
 garbled pull output, sync reached `updated on host`, and sandbox reached its
 interactive exec and exit. Up, build, and logs remained successful. Shell still
 ran echo on the host because its custom command lacked `interactive: true`;
-the fixture now enables it. Sandbox stopped recording at stop; its final waits
-are now longer. Re-record shell and sandbox to verify both fixes. Avoid escaped
+the fixture now enables it, and the next host run confirmed `container$ `,
+one-line echo output, and return to the host prompt. Sandbox still cut off at
+stop: measured create/stop/destroy times were 0.87/10.36/0.90 seconds. Its
+previous PID 1 sleep ignored SIGTERM until the ten-second kill timeout; the
+revised CMD traps the signal and terminates and reaps its child. Keep the
+three-second stop and destroy pauses and re-record sandbox to verify the fix.
+Repeated batches also exhausted network pools; warmup now reuses one network,
+and the cleanup steps above cover networks retained after recording. Avoid escaped
 double quotes inside VHS Type strings; use plain text or a different outer
 quote delimiter.
 

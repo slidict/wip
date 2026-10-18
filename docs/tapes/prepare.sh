@@ -23,8 +23,8 @@ for ((index=0; index<128; index++)); do
   printf 'recording fixture %s\n' "$index" > "context/payload/$index.txt"
 done
 printf 'original\n' > source/message.txt
-# Each take shows network creation; previous networks can be removed after recording.
-network="wip-tapes-$(date +%s)-$$"
+# Reuse one warmup network instead of allocating another pool on every take.
+network=wip-tapes-warm
 sed "s/^network: wip-tapes$/network: $network/" docs/tapes/wip.yml > recording.yml
 cp recording.yml wip.yml
 # Warm the public base image and package layer before recording.
@@ -33,7 +33,7 @@ wip build
 wip up -d
 wip down
 # Use a fresh network so visible startup still includes network creation.
-network="$network-take"
+network="wip-tapes-$(date +%s)-$$-take"
 sed "s/^network: wip-tapes$/network: $network/" docs/tapes/wip.yml > recording.yml
 cp recording.yml wip.yml
 # Invalidate COPY and the one-second build step for the visible build.
