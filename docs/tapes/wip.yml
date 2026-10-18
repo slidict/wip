@@ -42,5 +42,5 @@ volumes:
     mount: /data
 sandboxes:
   - name: demo
-    image: ubuntu:latest
+    image: wip-tapes-app:latest
     volumes: [scratch]

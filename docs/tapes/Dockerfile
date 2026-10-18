@@ -4,3 +4,4 @@ RUN apt-get update && apt-get install -y --no-install-recommends rsync \
 WORKDIR /app
 COPY payload/ /app/payload/
 RUN sleep 1
+CMD ["sleep", "infinity"]

@@ -47,10 +47,13 @@ failures still stop preparation. Reserve
 the `wip-tapes` resource names for this fixture. The marker guards against
 accidentally preparing a normal project directory.
 
-The app image `wip-tapes-app:latest` is built locally from the public
-`ubuntu:latest` image; the sidecar and sandbox use that public image directly.
-The warm build installs rsync before recording. No registry credentials or
-private images are required. A nonempty `.dockerignore` enables context-copy
+The app and sandbox use `wip-tapes-app:latest`, built locally from the public
+`ubuntu:latest` image. Its `CMD` runs `sleep infinity` so the sandbox stays alive;
+the app overrides that command with its heartbeat loop. The sidecar uses Ubuntu
+directly. Preparation builds the image with rsync, then runs `wip up -d` and
+`wip down` to warm dependency images before recording. It selects another fresh
+network afterward so visible startup still shows network creation. No registry
+credentials or private images are required. A nonempty `.dockerignore` enables context-copy
 progress even on a local filesystem, and a changed payload forces the visible
 build's one-second final step to run again.
 
@@ -88,9 +91,11 @@ The getting-started take begins without `wip.yml`. After showing `wip init`,
 it installs `recording.yml` while hidden: the generated starter contains a
 placeholder image and must be customized before use. Other tapes start with
 the fixture installed; shell, logs, and sync start with the app already running.
-The sync take uses PowerShell `Start-Job` to schedule a host edit after four
-seconds. It passes an absolute file path because jobs use a separate working
-directory. The foreground watcher runs while the job edits the file, then the tape
+The sync take uses PowerShell `Start-Job` with absolute file paths because jobs
+use a separate working directory. A hidden readiness marker confirms startup
+before a second marker starts the three-second edit countdown; a 12-second
+hidden pause covers job startup and its ten-second readiness timeout. The watcher
+runs for eight seconds while the job edits the file, then the tape
 reads `/app/message.txt` inside the container after Ctrl-C to show the result.
 
 Outputs are `docs/tapes/<slug>.gif` in the recording directory. Copy them to
@@ -126,11 +131,14 @@ exit and an empty GIF with only the background, even for a minimal echo tape.
 `Set Shell "powershell"` rendered that minimal tape correctly. Keep PowerShell
 when retaking these recordings; Bash is used only for preparation outside VHS.
 
-Visible typing and sleeps budget roughly 6-18 seconds per take before VHS key
+Visible typing and sleeps budget roughly 6-20 seconds per take before VHS key
 overhead. The sidecar waits two seconds; health probes poll once per second.
-The watcher syncs once per second and observes a host edit after four seconds.
-Build and startup use fixed `Sleep` budgets of 3-7 seconds, not `Wait`.
-These budgets are source-derived and remain unverified on the recording host.
+The watcher syncs once per second. Getting-started allows eight seconds for
+startup, two seconds for hello, and two seconds for down; init and doctor have
+shorter display times. Sync allows three seconds for the final cat output.
+The sandbox allows three seconds for creation and two seconds for destruction.
+These fixed `Sleep` budgets, without `Wait`, were increased after the host run;
+the revised timings still need verification on the recording host.
 Preview each GIF: increase its `Sleep` if a command is unfinished, and reduce
 idle time if needed to aim for 20 seconds. A longer host operation takes
 precedence over the duration target; never hide an unfinished command.
@@ -141,3 +149,22 @@ Before delivery, inspect prompts and all output for personal paths or names.
 The host prompt is fixed to `$ ` and the container prompt to `container$ `;
 choose a neutral recording path because build and sync print absolute paths.
 Use a clean recording account if diagnostics print machine-specific details.
+
+## Recording notes from the Windows run
+
+All seven tapes were attempted on the host: up, build, and logs rendered
+successfully. Shell needed a Type string without escaped nested quotes. The
+sandbox needed an image with a persistent CMD. Getting-started needed warm
+dependency images and more startup time; sync needed job-startup coordination
+and more time for both the second sync line and final cat output. These four
+revisions require another host recording. Avoid escaped double quotes inside
+VHS Type strings; use plain text or a different outer quote delimiter.
+
+Record with a Windows account whose UI display language is English. wip's
+error display follows the Windows UI language: `DisplayLanguage.cs` reads
+`GetUserDefaultUILanguage`, so environment variables cannot switch it to English.
+Never accept a GIF containing errors. Warm dependency images during preparation:
+a pull during recording can introduce backend output, including garbled text on
+a host with a different display language. Confirm that getting-started reaches
+down, sync shows a second sync line and `updated on host`, and sandbox reaches
+destroy before delivering the revised recordings.

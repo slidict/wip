@@ -29,6 +29,13 @@ sed "s/^network: wip-tapes$/network: $network/" docs/tapes/wip.yml > recording.y
 cp recording.yml wip.yml
 # Warm the public base image and package layer before recording.
 wip build
+# Warm sidecar images before any visible startup, then leave no containers running.
+wip up -d
+wip down
+# Use a fresh network so visible startup still includes network creation.
+network="$network-take"
+sed "s/^network: wip-tapes$/network: $network/" docs/tapes/wip.yml > recording.yml
+cp recording.yml wip.yml
 # Invalidate COPY and the one-second build step for the visible build.
 printf '%s\n' "$network" > context/payload/take.txt
 case "$slug" in

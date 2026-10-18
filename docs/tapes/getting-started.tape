@@ -19,7 +19,7 @@ Show
 
 Type "wip init"
 Enter
-Sleep 500ms
+Sleep 250ms
 
 Hide
 Type@0ms "Copy-Item -LiteralPath recording.yml -Destination wip.yml -Force; Clear-Host"
@@ -29,7 +29,7 @@ Show
 
 Type "wip doctor"
 Enter
-Sleep 2s
+Sleep 750ms
 
 Type "wip build"
 Enter
@@ -37,12 +37,12 @@ Sleep 3s
 
 Type "wip up -d"
 Enter
-Sleep 5s
+Sleep 8s
 
 Type "wip hello"
 Enter
-Sleep 1s
+Sleep 2s
 
 Type "wip down"
 Enter
-Sleep 1500ms
+Sleep 2s

@@ -21,7 +21,7 @@ Type "wip shell"
 Enter
 Sleep 1500ms
 
-Type "echo \"inside the container\""
+Type "echo inside the container"
 Enter
 Sleep 1s
 

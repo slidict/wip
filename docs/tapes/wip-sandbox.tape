@@ -19,7 +19,7 @@ Show
 
 Type "wip sandbox create demo"
 Enter
-Sleep 2s
+Sleep 3s
 
 Type "wip sandbox status demo"
 Enter
@@ -31,7 +31,7 @@ Sleep 500ms
 
 Type "wip sandbox exec --interactive demo -- sh"
 Enter
-Sleep 1s
+Sleep 1500ms
 
 Type "echo hello"
 Enter
@@ -43,8 +43,8 @@ Sleep 500ms
 
 Type "wip sandbox stop demo"
 Enter
-Sleep 1s
+Sleep 1500ms
 
 Type "wip sandbox destroy demo"
 Enter
-Sleep 1500ms
+Sleep 2s
