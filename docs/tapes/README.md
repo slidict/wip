@@ -100,9 +100,12 @@ hidden pause covers job startup and its ten-second readiness timeout. The watche
 runs for eight seconds while the job edits the file, then the tape
 reads `/app/message.txt` inside the container after Ctrl-C to show the result.
 
-Outputs are `docs/tapes/<slug>.gif` in the recording directory. Copy them to
-the separate delivery destination. Do not commit GIFs; `.gitignore` excludes
-them. Only copy changed source assets back into the checkout.
+Outputs are `docs/tapes/<slug>.gif` in the recording directory. After inspecting
+them, copy all seven GIFs into the checkout's `docs/tapes/` and commit them with
+any changed source assets. Wiki pages reference the committed GIFs through
+`raw.githubusercontent.com`; after the commit reaches main, use:
+
+`![wip up demo](https://raw.githubusercontent.com/slidict/wip/main/docs/tapes/wip-up.gif)`
 
 After recording, run `wip down` and `wip sandbox destroy demo` with the fixture
 installed. Remove the unused `wip-tapes-src` volume with the backend's volume
@@ -140,6 +143,9 @@ Check flags in `src/Wip.Cli/Program.cs` and behavior in
 and preparation script if inputs change, then regenerate every affected tape
 using its prepare/render pair above. Keep the seven visual settings aligned
 with `docs/demo.tape`, except for the required PowerShell shell.
+Inspect each retake, copy the regenerated GIF back into `docs/tapes/`, and
+commit the updated GIF with its tape or fixture changes. Keep the same slug so
+the Wiki's raw URL continues to work.
 
 The fixture's `commands.shell` overrides the built-in bash/sh fallback.
 It explicitly sets `interactive: true`: custom commands otherwise inherit

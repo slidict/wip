@@ -3,10 +3,11 @@ using System.Text.RegularExpressions;
 namespace Wip.Tests;
 
 /// <summary>
-/// Pins what docs/tapes has to keep: one tape per wiki page, a shell that actually
-/// renders on the Windows recording host, the visual settings shared with
-/// docs/demo.tape, and no infrastructure details in assets that ship publicly.
-/// Recording itself needs VHS, ttyd and FFmpeg, so CI checks the sources instead.
+/// Pins what docs/tapes has to keep: one tape per wiki page with its recorded GIF, a
+/// shell that actually renders on the Windows recording host, the visual settings
+/// shared with docs/demo.tape, and no infrastructure details in assets that ship
+/// publicly. Recording needs VHS, ttyd and FFmpeg, so CI checks the sources and the
+/// committed GIFs rather than rendering them.
 /// </summary>
 public class WikiTapeTests
 {
@@ -21,11 +22,11 @@ public class WikiTapeTests
         "FontSize", "Width", "Height", "Theme", "Padding", "TypingSpeed",
     ];
 
-    // docs/tapes ships in a public repository and the GIFs are published from it.
+    // docs/tapes ships in a public repository and the wiki links straight to its raw URLs.
     private static readonly string[] PrivateMarkers =
     [
         "herdr", "relay", "worktrees", "slidict/workspace", "claude-main", "codex1", "agy3",
-        @"c:\users", "/home/",
+        @"c:\users", "c:/users", "/home/", "/root/",
     ];
 
     private static string TapesDirectory { get; } = FindTapesDirectory();
@@ -39,11 +40,38 @@ public class WikiTapeTests
             .Order(StringComparer.Ordinal)
             .Select(name => new object[] { name });
 
+    [Fact]
+    public void ExactlyTheNamedTapesAreShipped()
+    {
+        Assert.Equal(
+            Slugs.Order(),
+            Directory.EnumerateFiles(TapesDirectory, "*.tape")
+                .Select(Path.GetFileNameWithoutExtension).Order());
+    }
+
     [Theory]
     [MemberData(nameof(SlugCases))]
     public void TapeWritesItsOwnGif(string slug)
     {
         Assert.Contains($"Output docs/tapes/{slug}.gif", ReadTape(slug));
+    }
+
+    /// <summary>
+    /// The wiki links to https://raw.githubusercontent.com/.../docs/tapes/&lt;slug&gt;.gif, so a
+    /// missing recording is a broken image on a published page, not a local inconvenience.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(SlugCases))]
+    public void TapeShipsItsRecordedGif(string slug)
+    {
+        var path = Path.Combine(TapesDirectory, $"{slug}.gif");
+        Assert.True(File.Exists(path), $"Missing recorded GIF: docs/tapes/{slug}.gif");
+    }
+
+    [Fact]
+    public void RecordedGifsAreNotIgnored()
+    {
+        Assert.False(File.Exists(Path.Combine(TapesDirectory, ".gitignore")));
     }
 
     /// <summary>
@@ -89,6 +117,12 @@ public class WikiTapeTests
     }
 
     [Fact]
+    public void ReadmeShowsHowTheWikiReferencesARecording()
+    {
+        Assert.Contains("https://raw.githubusercontent.com/slidict/wip/main/docs/tapes/", Readme());
+    }
+
+    [Fact]
     public void EveryTapeHasAFixtureAndPreparationStep()
     {
         Assert.True(File.Exists(Path.Combine(TapesDirectory, "wip.yml")));
@@ -99,6 +133,7 @@ public class WikiTapeTests
         }
     }
 
+    // GIFs are binary assets: their presence is checked above, never their bytes as text.
     [Theory]
     [MemberData(nameof(PublicFileCases))]
     public void PublicAssetsCarryNoInternalDetails(string name)
