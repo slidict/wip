@@ -114,7 +114,7 @@ resource management commands once all fixture containers have been removed.
 | getting-started | Getting Started | init, customize, doctor, build, up -d, hello, down |
 | wip-up | wip up | network, sidecar, healthcheck wait, app, completion |
 | wip-build | wip build | context-copy progress and completed build |
-| wip-shell | wip shell | interactive shell, command, exit |
+| wip-shell | wip shell | fixture's interactive shell, container$ prompt, one-line echo, exit |
 | wip-logs | wip logs | live heartbeats with -f, Ctrl-C |
 | wip-sync | wip sync | --watch, host edit, mirrored content, Ctrl-C |
 | wip-sandbox | wip sandbox | create, status, list, exec --interactive, stop, destroy |
@@ -126,6 +126,18 @@ and preparation script if inputs change, then regenerate every affected tape
 using its prepare/render pair above. Keep the seven visual settings aligned
 with `docs/demo.tape`, except for the required PowerShell shell.
 
+The fixture's `commands.shell` overrides the built-in bash/sh fallback.
+It explicitly sets `interactive: true`: custom commands otherwise inherit
+`interactive: false`, causing the shell to exit without accepting input.
+`CliContext.Dispatch` and `CommandBuilder.Custom` use this setting; both require
+`WindowsEnvironment.IsInteractive` (stdin and stdout must not be redirected)
+to inherit the terminal and pass `-it` to the backend. The exec CLI's
+`--interactive` default does not apply to a custom shell command. Record directly
+in VHS's ttyd terminal without piping wip. The fixture uses bash `-i` without
+profile files so `container$ ` remains distinct from the host's `$ ` prompt.
+Accept the shell take only if `echo inside the container` prints one line
+inside that container prompt, then `exit` returns to `$ `.
+
 On the Windows recording host, `Set Shell "bash"` produced a successful VHS
 exit and an empty GIF with only the background, even for a minimal echo tape.
 `Set Shell "powershell"` rendered that minimal tape correctly. Keep PowerShell
@@ -136,9 +148,11 @@ overhead. The sidecar waits two seconds; health probes poll once per second.
 The watcher syncs once per second. Getting-started allows eight seconds for
 startup, two seconds for hello, and two seconds for down; init and doctor have
 shorter display times. Sync allows three seconds for the final cat output.
-The sandbox allows three seconds for creation and two seconds for destruction.
-These fixed `Sleep` budgets, without `Wait`, were increased after the host run;
-the revised timings still need verification on the recording host.
+The sandbox allows two seconds for creation and three seconds each for stop
+and destroy. Status and list use 30ms typing and 250ms display pauses to keep
+the nominal visible duration under 20 seconds. The shell has a 2.5-second entry
+pause. These fixed `Sleep` budgets, without `Wait`, still need verification on
+the recording host for the revised shell and sandbox takes.
 Preview each GIF: increase its `Sleep` if a command is unfinished, and reduce
 idle time if needed to aim for 20 seconds. A longer host operation takes
 precedence over the duration target; never hide an unfinished command.
@@ -157,8 +171,14 @@ successfully. Shell needed a Type string without escaped nested quotes. The
 sandbox needed an image with a persistent CMD. Getting-started needed warm
 dependency images and more startup time; sync needed job-startup coordination
 and more time for both the second sync line and final cat output. These four
-revisions require another host recording. Avoid escaped double quotes inside
-VHS Type strings; use plain text or a different outer quote delimiter.
+revisions were recorded again: getting-started reached hello and down without
+garbled pull output, sync reached `updated on host`, and sandbox reached its
+interactive exec and exit. Up, build, and logs remained successful. Shell still
+ran echo on the host because its custom command lacked `interactive: true`;
+the fixture now enables it. Sandbox stopped recording at stop; its final waits
+are now longer. Re-record shell and sandbox to verify both fixes. Avoid escaped
+double quotes inside VHS Type strings; use plain text or a different outer
+quote delimiter.
 
 Record with a Windows account whose UI display language is English. wip's
 error display follows the Windows UI language: `DisplayLanguage.cs` reads

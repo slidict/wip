@@ -26,7 +26,8 @@ commands:
   hello:
     command: echo 'hello from the container'
   shell:
-    command: env 'PS1=container$ ' bash --noprofile --norc
+    interactive: true
+    command: env 'PS1=container$ ' bash --noprofile --norc -i
 
 sync:
   source: source

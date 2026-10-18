@@ -19,7 +19,7 @@ Show
 
 Type "wip shell"
 Enter
-Sleep 1500ms
+Sleep 2500ms
 
 Type "echo inside the container"
 Enter
