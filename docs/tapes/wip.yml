@@ -1,0 +1,47 @@
+version: 1
+mode: container
+container: wip-tapes-app
+network: wip-tapes
+
+dependencies:
+  wip-tapes-ready:
+    image: ubuntu:latest
+    command: sh -c 'sleep 2; touch /tmp/ready; exec sleep infinity'
+    healthcheck:
+      test: [CMD, test, -f, /tmp/ready]
+      interval: 1
+      timeout: 1
+      retries: 8
+  wip-tapes-app:
+    image: wip-tapes-app:latest
+    workdir: /app
+    env:
+      PS1: 'container$ '
+    command: sh -c 'while true; do echo "app heartbeat"; sleep 1; done'
+
+commands:
+  build:
+    context: context
+    tag: wip-tapes-app:latest
+  hello:
+    command: echo 'hello from the container'
+  shell:
+    interactive: true
+    command: env 'PS1=container$ ' bash --noprofile --norc -i
+
+sync:
+  source: source
+  target: /app
+  volume: wip-tapes-src
+  interval: 1
+  options: [--itemize-changes]
+
+resource_namespace: wip-tapes
+volumes:
+  - name: scratch
+    persistent: false
+    mount: /data
+sandboxes:
+  - name: demo
+    image: wip-tapes-app:latest
+    volumes: [scratch]
