@@ -250,7 +250,17 @@ For the operations and their guarantees, see [wip sandbox](https://github.com/sl
 the configuration and ownership model, [Sandboxes](https://github.com/slidict/wip/wiki/Sandboxes);
 for declared volumes on their own, [volume storage](docs/volume-lifecycle.md); for putting a
 sandbox behind a network it cannot reach past,
-[network isolation](docs/sandbox-network-isolation.md).
+[network isolation](docs/sandbox-network-isolation.md); for running one built-in diagnostic
+tool behind that boundary, [the security scan engine](docs/security-scan-engine.md).
+
+**Sandbox networking is IPv4 only, because WSLC is.** Measured against WSLC 3.0.3: a network
+created with an IPv6 subnet and gateway is accepted and the subnet is recorded in its IPAM
+configuration, but `EnableIPv6` stays false, an IPv4 subnet is assigned alongside it, and a
+container on that network gets no IPv6 address at all. The docker driver option
+`com.docker.network.enable_ipv6=true` is stored among the network's options and ignored. So
+an IPv6 declaration does not fail — it silently produces an IPv4-only network, which is the
+part worth knowing. Anything that depends on IPv6, including diagnosing a target's IPv6
+exposure, is out of reach until WSLC supports it.
 
 ## Development
 

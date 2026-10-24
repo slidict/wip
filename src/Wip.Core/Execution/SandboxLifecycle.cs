@@ -358,6 +358,24 @@ public sealed class SandboxLifecycle(
     }
 
     /// <summary>
+    /// Runs the same argv as <see cref="Exec"/> but keeps the child's output instead of
+    /// streaming it, for a caller that has to read what the command printed -- collecting a
+    /// scanner's report, say -- rather than show it.
+    /// </summary>
+    /// <remarks>
+    /// The status is returned alongside the output rather than thrown on, because a non-zero
+    /// exit is an answer here: a report that is not there is a fact about the run, not a
+    /// failure of the read.
+    /// </remarks>
+    public SandboxCommandResult Capture(string name, IReadOnlyList<string> argv, TimeSpan timeout)
+    {
+        ValidateArgv(argv);
+        if (timeout <= TimeSpan.Zero || timeout.TotalMilliseconds > int.MaxValue)
+            throw new ConfigException("sandbox capture timeout must be positive and at most 2147483 seconds");
+        return backend(["exec", RunningId(name), .. argv], timeout, SandboxConsoleMode.Capture);
+    }
+
+    /// <summary>
     /// The backend arguments for running <paramref name="argv"/> in the verified, running
     /// container, for a caller that must read the child's output as it streams -- the report
     /// relay reading the sandbox FIFO -- rather than through <see cref="SandboxBackend"/>.
@@ -442,10 +460,30 @@ public sealed class SandboxLifecycle(
     }
 
     /// <summary>The verified ID of the owned container, which must already be running.</summary>
+    /// <summary>
+    /// The verified, running container's ID -- verified including its declared boundary.
+    /// </summary>
+    /// <remarks>
+    /// The network check lives here because this is the guard <see cref="Exec"/>,
+    /// <see cref="Capture"/>, <see cref="ExecArguments"/>, <see cref="ExecInteractive"/> and
+    /// <see cref="Attach"/> all pass through. Create refuses a container that is not attached
+    /// to exactly its declared network, but until this, nothing else did: a container made
+    /// before `network:` was added to wip.yml kept running on whatever it was given, and an
+    /// exec into it ran with unrestricted egress (slidict/wip#263). A sandbox that declares
+    /// no network is unaffected, so this costs nothing where there is no boundary to check.
+    /// </remarks>
     private string RunningId(string name)
     {
         var existing = Status(name);
         if (existing.Id is null || existing.State != "running") throw Failure(name, "sandbox is not running; run sandbox create first");
+        if (Definition(name).Network is { } networkName)
+        {
+            if (networks is null)
+                throw new ConfigException($"Sandbox {name}: network lifecycle is not configured; its declared network cannot be verified");
+            var expected = networks.VerifiedBackendName(networkName);
+            if (existing.Networks.Count != 1 || existing.Networks[0] != expected)
+                throw Failure(name, "is not attached to exactly its declared network; run sandbox destroy, confirm absence, then sandbox create");
+        }
         return existing.Id;
     }
 
