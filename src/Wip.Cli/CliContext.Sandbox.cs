@@ -177,8 +177,16 @@ internal sealed partial class CliContext
         return process.ExitCode;
     }
 
-    private SandboxLifecycle Lifecycle(IVolumeLifecycle? volumes = null) =>
-        new(Config.SandboxResources, ResourceBackend(), volumes);
+    /// <summary>
+    /// The network lifecycle is always supplied, not opted into the way volumes are: it does
+    /// no I/O until a sandbox that declares a network asks for one, and leaving it out would
+    /// turn a declared boundary into a configuration error at create time.
+    /// </summary>
+    private SandboxLifecycle Lifecycle(IVolumeLifecycle? volumes = null)
+    {
+        var backend = ResourceBackend();
+        return new(Config.SandboxResources, backend, volumes, new NetworkLifecycle(Config.SandboxResources, backend));
+    }
 
     private SandboxDefinition Definition(string name) =>
         Config.SandboxResources.Sandboxes.SingleOrDefault(s => s.Name == name)

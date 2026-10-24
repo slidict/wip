@@ -18,9 +18,25 @@ volumes:
   - name: shim-fixture
     persistent: true
     mount: /shim
+# Two internal networks, not one: reaching the sandbox beside you is one of the paths the
+# isolation test has to show is blocked, and that needs a second network to be blocked from.
+networks:
+  - name: scan-isolated
+    internal: true
+  - name: scan-other
+    internal: true
 sandboxes:
   - name: fixture
     image: wip-e2e:latest
+  - name: scan-scanner
+    image: wip-e2e:latest
+    network: scan-isolated
+  - name: scan-target
+    image: wip-e2e:latest
+    network: scan-isolated
+  - name: scan-outsider
+    image: wip-e2e:latest
+    network: scan-other
   - name: mount-shared-first
     image: wip-e2e:latest
     volumes: [persistent-fixture, ephemeral-fixture]
