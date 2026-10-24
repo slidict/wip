@@ -96,9 +96,20 @@ removed from under a live attachment, and only when its owner label and internal
 A network several sandboxes share is kept while any of them is still attached -- destroying
 the scanner leaves the target's boundary standing -- and removed by whichever one is last.
 That is a no-op rather than an error, because the alternative is a `sandbox destroy` that
-fails on a network the backend is right to refuse. WSLC rejects removing a network that still
-has attachments; wip never forces or prunes, and an inspection it cannot read before removal
-deletes nothing.
+fails on a network the backend is right to refuse.
+
+**A stopped sandbox counts as attached.** Attachments are therefore counted by scanning
+containers, the way volume references are, and not from `network inspect`'s own
+`Containers` map: measured 2026-10-24, that map lists only *running* containers, and WSLC
+removes a network a stopped container is still attached to. The container is then unstartable
+for good — its attachment is pinned to the removed network's id, so recreating a network of
+the same name does not restore it (`start` fails with `network <id> not found`), while the
+container's own inspect still names the network, so nothing downstream can tell why. A
+container whose attachments cannot be read counts as attached: an orphan network is something
+to clean up, a container that can never start is not.
+
+WSLC rejects removing a network that still has attachments; wip never forces or prunes, and a
+scan it cannot complete before removal deletes nothing.
 
 ## What is tested, and what is not
 

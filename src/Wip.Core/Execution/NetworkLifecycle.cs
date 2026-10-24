@@ -124,11 +124,62 @@ public sealed class NetworkLifecycle(SandboxSettings settings, SandboxBackend ba
     /// </summary>
     private int Attachments(string name, string backendName)
     {
-        var record = Inspect(name, backendName)
-            ?? throw Failure(name, "the network could not be inspected before removal; attachments are unknown so nothing was deleted");
-        if (!record.TryGetProperty("Containers", out var containers) || containers.ValueKind != JsonValueKind.Object)
-            throw Failure(name, "network inspection omitted its attachments; nothing was deleted");
-        return containers.EnumerateObject().Count();
+        // Deliberately a scan over containers rather than `network inspect`'s own
+        // `Containers` map, the way VolumeLifecycle counts volume references. Measured
+        // 2026-10-24: that map lists only *running* containers, and WSLC will remove a
+        // network a stopped container is still attached to -- after which that container can
+        // never start again. Its attachment is pinned to the removed network's id, so
+        // recreating the same name does not restore it (`start` fails with
+        // "network <id> not found") and the container's own inspect still names the network,
+        // so nothing downstream can tell the difference either.
+        var rows = Records(Probe(["list", "--all", "--format", "json"]), allowEmpty: true);
+        var ids = new List<string>();
+        foreach (var row in rows)
+        {
+            // Older WSLC keeps deleted tombstones in `list --all`; there is no container left
+            // to inspect, and including them would fail the completeness check below.
+            if (row.TryGetProperty("State", out _) && IsDeleted(row)) continue;
+            var id = Text(row, "Id") ?? Text(row, "ID");
+            if (string.IsNullOrWhiteSpace(id) || id.StartsWith('-') || id.Any(char.IsControl))
+                throw Failure(name, "the attachment scan returned an invalid container ID; nothing was deleted");
+            ids.Add(id);
+        }
+        if (ids.Count == 0) return 0;
+        var attached = 0;
+        foreach (var batch in ids.Chunk(100))
+        {
+            var records = Records(Probe(["inspect", "--type", "container", "--format", "json", .. batch]));
+            if (records.Count != batch.Length)
+                throw Failure(name, "the attachment scan returned an incomplete inspection; attachments are unknown so nothing was deleted");
+            foreach (var container in records)
+            {
+                // A container whose attachments cannot be read counts as attached. Keeping a
+                // network nothing uses leaves an orphan to clean up; removing one something
+                // still uses leaves a container that can never start, so the unknown case
+                // goes the harmless way.
+                if (!container.TryGetProperty("NetworkSettings", out var networkSettings) || networkSettings.ValueKind != JsonValueKind.Object ||
+                    !networkSettings.TryGetProperty("Networks", out var networks) || networks.ValueKind != JsonValueKind.Object)
+                {
+                    attached++;
+                    continue;
+                }
+                if (networks.EnumerateObject().Any(n => n.Name == backendName)) attached++;
+            }
+        }
+        return attached;
+    }
+
+    /// <summary>Whether a <c>list</c> row is a tombstone, in either spelling WSLC has used.</summary>
+    private static bool IsDeleted(JsonElement record)
+    {
+        if (!record.TryGetProperty("State", out var state)) return false;
+        if (state.ValueKind == JsonValueKind.Object && state.TryGetProperty("Status", out var status)) state = status;
+        return state.ValueKind switch
+        {
+            JsonValueKind.String => state.GetString() == "deleted",
+            JsonValueKind.Number => state.TryGetInt32(out var number) && number == 4,
+            _ => false,
+        };
     }
 
     /// <summary>

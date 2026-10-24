@@ -53,8 +53,13 @@ public class NetworkIsolationTests
         public int NetworkInspectCode;
         public bool CreateLeavesNetworkAbsent;
 
-        /// <summary>Containers on the network besides this sandbox's own.</summary>
+        /// <summary>
+        /// Containers on the network besides this sandbox's own, and whether they are
+        /// running. A stopped one still holds the network: WSLC removes it anyway, and the
+        /// container is then unstartable, so the count must include it.
+        /// </summary>
         public int OtherAttachments;
+        public string OtherAttachmentState = "exited";
 
         public SandboxCommandResult Run(IReadOnlyList<string> argv, TimeSpan timeout, SandboxConsoleMode console)
         {
@@ -72,7 +77,6 @@ public class NetworkIsolationTests
             {
                 if (NetworkInspectCode != 0) return new(NetworkInspectCode, "");
                 if (!NetworkExists) return new(1, "");
-                var attached = (ContainerExists ? 1 : 0) + OtherAttachments;
                 return new(0, JsonSerializer.Serialize(new[]
                 {
                     new
@@ -81,7 +85,10 @@ public class NetworkIsolationTests
                         Name = ScanNet,
                         Internal = NetworkInternal,
                         Labels = new Dictionary<string, string> { [NetworkLifecycle.OwnerLabel] = NetworkOwner },
-                        Containers = Enumerable.Range(0, attached).ToDictionary(i => $"container-{i}", _ => new { }),
+                        // Only running containers, which is what WSLC reports here and the
+                        // reason attachments are counted from the container listing instead.
+                        Containers = Enumerable.Range(0, ContainerExists && ContainerState == "running" ? 1 : 0)
+                            .ToDictionary(i => $"running-{i}", _ => new { }),
                     },
                 }));
             }
@@ -97,24 +104,39 @@ public class NetworkIsolationTests
             }
             if (argv[0] == "list")
             {
-                return new(0, ContainerExists
-                    ? JsonSerializer.Serialize(new[] { new { Id = "container-id", Name = SandboxName, State = ContainerState } })
-                    : "[]");
+                var rows = new List<object>();
+                if (ContainerExists) rows.Add(new { Id = "container-id", Name = SandboxName, State = ContainerState });
+                for (var i = 0; i < OtherAttachments; i++)
+                    rows.Add(new { Id = $"other-{i}", Name = $"wip-s-other-{i}", State = OtherAttachmentState });
+                return new(0, JsonSerializer.Serialize(rows));
             }
             if (argv[0] == "inspect")
             {
-                return new(0, JsonSerializer.Serialize(new[]
+                var requested = argv.Skip(argv.ToList().IndexOf("json") + 1).ToArray();
+                var inspected = new List<object>();
+                foreach (var id in requested)
                 {
-                    new
-                    {
-                        Id = "container-id",
-                        Name = SandboxName,
-                        State = ContainerState,
-                        Labels = new Dictionary<string, string> { [SandboxLifecycle.OwnerLabel] = $"v1:{Namespace}:sandbox:scanner" },
-                        Mounts = Array.Empty<object>(),
-                        NetworkSettings = new { Networks = Attachments.ToDictionary(n => n, _ => new { }) },
-                    },
-                }));
+                    inspected.Add(id == "container-id"
+                        ? new
+                        {
+                            Id = "container-id",
+                            Name = SandboxName,
+                            State = ContainerState,
+                            Labels = new Dictionary<string, string> { [SandboxLifecycle.OwnerLabel] = $"v1:{Namespace}:sandbox:scanner" },
+                            Mounts = Array.Empty<object>(),
+                            NetworkSettings = new { Networks = Attachments.ToDictionary(n => n, _ => new { }) },
+                        }
+                        : new
+                        {
+                            Id = id,
+                            Name = $"wip-s-{id}",
+                            State = OtherAttachmentState,
+                            Labels = new Dictionary<string, string> { [SandboxLifecycle.OwnerLabel] = $"v1:{Namespace}:sandbox:{id}" },
+                            Mounts = Array.Empty<object>(),
+                            NetworkSettings = new { Networks = new Dictionary<string, object> { [ScanNet] = new { } } },
+                        });
+                }
+                return new(0, JsonSerializer.Serialize(inspected));
             }
             if (argv[0] is "run" or "start")
             {
@@ -301,12 +323,27 @@ public class NetworkIsolationTests
         // A scanner and its target share one declared network, so destroying the first of
         // them must leave the boundary standing for the second rather than failing on a
         // network the backend will not remove.
-        var fake = new Fake { ContainerExists = true, NetworkExists = true, OtherAttachments = 1 };
+        var fake = new Fake { ContainerExists = true, NetworkExists = true, OtherAttachments = 1, OtherAttachmentState = "running" };
 
         Assert.Equal(0, Lifecycle(fake).Destroy("scanner"));
 
         Assert.True(Ran(fake, "remove"), "the container is still removed");
         Assert.False(Ran(fake, "network", "remove"), "a network another container is on must be kept");
+    }
+
+    [Fact]
+    public void DestroyKeepsANetworkAStoppedSandboxIsStillOn()
+    {
+        // The case `network inspect` cannot answer: it lists only running containers, and
+        // WSLC removes the network anyway. The stopped container is then unstartable for
+        // good, because its attachment is pinned to the removed network's id and recreating
+        // the same name does not restore it.
+        var fake = new Fake { ContainerExists = true, NetworkExists = true, OtherAttachments = 1, OtherAttachmentState = "exited" };
+
+        Assert.Equal(0, Lifecycle(fake).Destroy("scanner"));
+
+        Assert.True(Ran(fake, "remove"), "the container is still removed");
+        Assert.False(Ran(fake, "network", "remove"), "a network a stopped container is on must be kept");
     }
 
     [Fact]

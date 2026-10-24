@@ -177,9 +177,20 @@ function Invoke-NetworkIsolationE2E([string] $Namespace, [string] $Image) {
         # the default bridge. Forced by putting a non-internal network under the exact name
         # wip derives, so wip finds one it may neither adopt nor replace.
         Write-Step 'a sandbox whose boundary cannot be verified is not started'
-        Assert-Exit (Invoke-Wip @('sandbox', 'destroy', 'scan-scanner')) 0 'destroy scan-scanner'
-        Assert-Exit (Invoke-Wip @('sandbox', 'destroy', 'scan-target')) 0 'destroy scan-target'
+        # A stopped sandbox still holds the shared network, which is the case `network
+        # inspect` cannot answer -- it lists only running containers, and WSLC removes the
+        # network regardless. The stopped container would then be unstartable for good, its
+        # attachment pinned to the removed network's id.
+        Assert-Exit (Invoke-Wip @('sandbox', 'stop', 'scan-target')) 0 'stop scan-target'
+        Assert-Exit (Invoke-Wip @('sandbox', 'destroy', 'scan-scanner')) 0 'destroy scan-scanner while scan-target is stopped'
         [void]$sandboxes.Remove('scan-scanner')
+        Assert-Match (Invoke-Wslc @('network', 'list')) ([regex]::Escape($isolatedName)) `
+            'the shared network survives while a stopped sandbox is attached'
+        # And the stopped sandbox can still be resumed, which is what the kept network buys.
+        Assert-Exit (Invoke-Wip @('sandbox', 'create', 'scan-target')) 0 'resume scan-target after the scanner was destroyed'
+        Assert-Match (Invoke-Wip @('sandbox', 'status', 'scan-target')) 'scan-target\s+running' 'scan-target resumed'
+
+        Assert-Exit (Invoke-Wip @('sandbox', 'destroy', 'scan-target')) 0 'destroy scan-target'
         [void]$sandboxes.Remove('scan-target')
         Assert-NoMatch (Invoke-Wslc @('network', 'list')) ([regex]::Escape($isolatedName)) `
             'destroying the last sandbox removed its network'
