@@ -250,7 +250,8 @@ For the operations and their guarantees, see [wip sandbox](https://github.com/sl
 the configuration and ownership model, [Sandboxes](https://github.com/slidict/wip/wiki/Sandboxes);
 for declared volumes on their own, [volume storage](docs/volume-lifecycle.md); for putting a
 sandbox behind a network it cannot reach past,
-[network isolation](docs/sandbox-network-isolation.md).
+[network isolation](docs/sandbox-network-isolation.md); for running one built-in diagnostic
+tool behind that boundary, [the security scan engine](docs/security-scan-engine.md).
 
 ## Development
 

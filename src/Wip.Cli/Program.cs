@@ -2,6 +2,7 @@ using System.CommandLine;
 using Wip.Ai;
 using Wip.Configuration;
 using Wip.Diagnostics;
+using Wip.Security;
 
 namespace Wip.Cli;
 
@@ -174,6 +175,52 @@ internal static class Program
         return root;
     }
 
+    /// <summary>
+    /// The security scan group. A sandbox and its internal network stay declared in wip.yml,
+    /// so this command selects a tool and a target rather than describing an environment:
+    /// the boundary is the configuration's, not the command line's, which is what keeps it
+    /// out of reach of whatever is being scanned.
+    /// </summary>
+    private static Command Security(Func<ParseResult, CliContext> context)
+    {
+        var security = new Command("security", "Run a built-in diagnostic tool inside an isolated sandbox");
+
+        var tools = new Command("tools", "List the diagnostic tools compiled into this build");
+        tools.SetAction(parsed => context(parsed).SecurityTools());
+        security.Subcommands.Add(tools);
+
+        var sandboxName = new Argument<string>("sandbox")
+        {
+            Description = "Sandbox declared in wip.yml, which must declare an internal network",
+        };
+        // Required rather than defaulted: exactly one tool per run is the contract, and a
+        // default would pick one for a caller who did not choose.
+        var tool = new Option<string>("--tool") { Required = true, Description = "Registered tool to run (see: wip security tools)" };
+        var target = new Option<string>("--target")
+        {
+            Required = true,
+            Description = "What to scan, reachable only inside the declared network (an alias or an address)",
+        };
+        var timeout = new Option<int>("--timeout")
+        {
+            // Read from the engine rather than repeated here, so help cannot drift from the
+            // deadline a scan would actually get.
+            DefaultValueFactory = _ => (int)ScanEngine.DefaultScanTimeout.TotalSeconds,
+            Description = $"Scan deadline in seconds (default: {(int)ScanEngine.DefaultScanTimeout.TotalSeconds})",
+        };
+        var scan = new Command("scan", "Prepare and run one tool against one target inside the sandbox")
+        {
+            sandboxName,
+            tool,
+            target,
+            timeout,
+        };
+        scan.SetAction(parsed => context(parsed).SecurityScan(
+            parsed.GetValue(sandboxName)!, parsed.GetValue(tool)!, parsed.GetValue(target)!, parsed.GetValue(timeout)));
+        security.Subcommands.Add(scan);
+        return security;
+    }
+
     private static IEnumerable<Command> BuildCommands(Func<ParseResult, CliContext> context)
     {
         var sandbox = new Command("sandbox", "Manage named, ownership-checked sandboxes");
@@ -256,6 +303,7 @@ internal static class Program
         relay.SetAction(parsed => context(parsed).SandboxRelay(parsed.GetValue(relayName)!, parsed.GetValue(relayUpstream)));
         sandbox.Subcommands.Add(relay);
         yield return sandbox;
+        yield return Security(context);
         var volume = new Command("volume", "Manage declared storage and reconcile ephemeral use cycles");
         foreach (var (operation, summary) in new[]
         {

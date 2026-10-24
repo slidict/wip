@@ -12,6 +12,10 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="Wip.Tests" />
+    <!-- The CLI assembly, which is wip itself. #692 keeps the scanning contract internal to
+         wip rather than an API anyone outside it can implement, and the command that drives a
+         scan lives here, so this is what "wip内部専用" means in project terms. -->
+    <InternalsVisibleTo Include="wip" />
   </ItemGroup>
 
 </Project>

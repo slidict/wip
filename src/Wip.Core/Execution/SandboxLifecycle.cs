@@ -358,6 +358,24 @@ public sealed class SandboxLifecycle(
     }
 
     /// <summary>
+    /// Runs the same argv as <see cref="Exec"/> but keeps the child's output instead of
+    /// streaming it, for a caller that has to read what the command printed -- collecting a
+    /// scanner's report, say -- rather than show it.
+    /// </summary>
+    /// <remarks>
+    /// The status is returned alongside the output rather than thrown on, because a non-zero
+    /// exit is an answer here: a report that is not there is a fact about the run, not a
+    /// failure of the read.
+    /// </remarks>
+    public SandboxCommandResult Capture(string name, IReadOnlyList<string> argv, TimeSpan timeout)
+    {
+        ValidateArgv(argv);
+        if (timeout <= TimeSpan.Zero || timeout.TotalMilliseconds > int.MaxValue)
+            throw new ConfigException("sandbox capture timeout must be positive and at most 2147483 seconds");
+        return backend(["exec", RunningId(name), .. argv], timeout, SandboxConsoleMode.Capture);
+    }
+
+    /// <summary>
     /// The backend arguments for running <paramref name="argv"/> in the verified, running
     /// container, for a caller that must read the child's output as it streams -- the report
     /// relay reading the sandbox FIFO -- rather than through <see cref="SandboxBackend"/>.
