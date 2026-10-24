@@ -294,7 +294,7 @@ $script:WipPath = $resolvedWip.Path
 # where a relative path no longer names the executable. A bare command name is left alone so
 # PATH still resolves it.
 $script:WslcPath = $Wslc
-if ($Wslc -match '[\/]') {
+if ($Wslc -match '[\\/]') {
     $resolvedWslc = Resolve-Path -LiteralPath $Wslc -ErrorAction SilentlyContinue
     if ($resolvedWslc) { $script:WslcPath = $resolvedWslc.Path }
 }
