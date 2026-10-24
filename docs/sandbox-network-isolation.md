@@ -53,8 +53,15 @@ rejected:
 - **Host firewall rules**: not reproducible in CI, and outside wip's declarative config.
 
 Measured against WSLC on 2026-10-24, a container attached only to an internal network cannot
-reach an external IPv4 or IPv6 address, cannot reach a public resolver, and cannot resolve a
-name at all.
+reach an external IPv4 address, cannot reach a public resolver, and cannot resolve a name at
+all.
+
+**External IPv6 reachability is unverified.** The fixture holds no global IPv6 address, so
+there was no IPv6 egress to block and nothing was established either way — a `ping -6` that
+fails for want of a stack says nothing about the boundary. The test asserts that absence
+rather than dressing it up as a block, and runs the reachability assertion only on a sandbox
+that does hold an address. Treat IPv6 isolation as unverified until it runs somewhere IPv6 is
+configured.
 
 Names derive from the resource namespace the same way sandbox and volume names do
 (`wip-n-` + a SHA-256 prefix of `<namespace>:network:<name>`), so two declared networks never
@@ -137,6 +144,12 @@ IPv6 is asserted for whichever reason actually holds. The fixture image has no g
 address under the WSLC measured on 2026-10-24, and a `ping -6` that fails for want of a stack
 is not evidence that a network blocked anything — so the absence is asserted directly, and
 the reachability assertion runs only when the sandbox does hold an address to reach from.
+External IPv6 blocking is therefore unverified here, as the mechanism section states.
+
+The cross-network TCP assertion carries a listener and a control for the same reason: without
+something to refuse the connection it would fail merely because nothing listens on the port,
+and would pass even if cross-network TCP were allowed. The control runs after the blocked
+probe, since `nc -l` without `-k` serves one connection and exits.
 
 Not covered, and deliberately not a completion condition: behaviour on a host whose WSLC
 version differs from CI's. The metadata endpoint in particular can only be observed on the

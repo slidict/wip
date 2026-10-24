@@ -204,7 +204,15 @@ function Invoke-NetworkIsolationE2E([string] $Namespace, [string] $Image) {
         # A sandbox of this same run on its own internal network. This is the assertion that a
         # parallel scan cannot reach the one beside it.
         Assert-Blocked 'scan-scanner' "ping -c 1 -W 2 $outsiderAddress" 'a sandbox on another internal network'
+        # The TCP half needs something to refuse it, or it would fail merely because no
+        # process listens on that port and would pass even if cross-network TCP were allowed.
+        # The control runs after the blocked probe on purpose: `nc -l` without `-k` serves one
+        # connection and exits, so a control placed first would consume the listener.
+        Assert-Exit (Invoke-WipHere @('sandbox', 'exec', 'scan-outsider', '--', 'sh', '-c',
+                'nohup nc -l -p 9090 -e /bin/echo scan-outsider-reached </dev/null >/dev/null 2>&1 & echo listening')) 0 `
+            'start the outsider listener'
         Assert-Blocked 'scan-scanner' "nc -z -w 3 $outsiderAddress 9090" 'a sandbox on another internal network over TCP'
+        Assert-Reachable 'scan-outsider' "nc -z -w 3 $outsiderAddress 9090" 'the outsider listener from its own network'
 
         # ------------------------------------------------------------ isolation survives a resume
         Assert-Exit (Invoke-WipHere @('sandbox', 'stop', 'scan-scanner')) 0 'stop scan-scanner'
@@ -251,12 +259,22 @@ function Invoke-NetworkIsolationE2E([string] $Namespace, [string] $Image) {
             'an unowned network is left alone'
     }
     finally {
+        # Warnings rather than throws: this also runs on the way out of a failure, and a
+        # cleanup problem must be visible without replacing the failure that got us here.
         foreach ($sandbox in $sandboxes) {
-            try { Invoke-WipHere @('sandbox', 'destroy', $sandbox) | Out-Null } catch { }
+            try {
+                $cleanup = Invoke-WipHere @('sandbox', 'destroy', $sandbox)
+                if ($cleanup.Code -ne 0) { Write-Warning "network fixture cleanup failed (${sandbox}): $($cleanup.Output.Trim())" }
+            }
+            catch { Write-Warning "network fixture cleanup failed (${sandbox}): $_" }
         }
         if ($squatted) {
             # wip refused to touch this one, so the fixture removes what it created itself.
-            try { Invoke-WslcHere @('network', 'remove', $squatted) | Out-Null } catch { }
+            try {
+                $cleanup = Invoke-WslcHere @('network', 'remove', $squatted)
+                if ($cleanup.Code -ne 0) { Write-Warning "squatted network was left behind (${squatted}): $($cleanup.Output.Trim())" }
+            }
+            catch { Write-Warning "squatted network was left behind (${squatted}): $_" }
         }
     }
 }

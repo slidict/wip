@@ -289,7 +289,15 @@ $script:WipPath = $resolvedWip.Path
 # Script-scoped for the same reason $script:WipPath is: a dot-sourced fixture that launches
 # wslc itself -- rather than through Invoke-Wslc -- needs the resolved command, not the
 # parameter, which is not in its scope.
+#
+# A filesystem path is resolved here because such a fixture runs from the staged workspace,
+# where a relative path no longer names the executable. A bare command name is left alone so
+# PATH still resolves it.
 $script:WslcPath = $Wslc
+if ($Wslc -match '[\/]') {
+    $resolvedWslc = Resolve-Path -LiteralPath $Wslc -ErrorAction SilentlyContinue
+    if ($resolvedWslc) { $script:WslcPath = $resolvedWslc.Path }
+}
 $fixture = $PSScriptRoot
 
 try {
