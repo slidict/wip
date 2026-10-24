@@ -4,10 +4,9 @@ One diagnostic tool, run inside one declared sandbox, behind the boundary that s
 declares. The engine owns the lifecycle; a tool adapter owns only its own command line and
 its own report format.
 
-Implemented for slidict/workspace#688, the second part of the single-tool penetration testing
-platform (slidict/workspace#692). The boundary itself is
-[network isolation](sandbox-network-isolation.md) (slidict/workspace#687). No adapter exists
-yet — ZAP is slidict/workspace#689.
+The second part of the single-tool penetration testing platform. The boundary itself is
+[network isolation](sandbox-network-isolation.md). No adapter exists yet; ZAP is the first one
+planned.
 
 ## The command
 
@@ -136,5 +135,5 @@ file is a test failure rather than a surprise.
 
 **There is no end-to-end test with a real scanner here, because there is no adapter yet.**
 Registering a test-only one at build time would be exactly the arbitrary tool addition #692
-rules out, so the real-WSLC scan e2e lands with ZAP in slidict/workspace#689. What this change
+rules out, so the real-WSLC scan e2e lands with the first adapter. What this change
 does keep green is the existing isolation e2e.

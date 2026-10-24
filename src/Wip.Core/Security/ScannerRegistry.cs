@@ -12,7 +12,7 @@ namespace Wip.Security;
 /// traffic and result handling reviewable at all.
 /// </para>
 /// <para>
-/// Empty until the first adapter lands (ZAP, slidict/workspace#689). An empty registry is a
+/// Empty until the first adapter lands. An empty registry is a
 /// state the engine reports plainly rather than a condition to work around.
 /// </para>
 /// </remarks>

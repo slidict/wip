@@ -12,8 +12,8 @@ namespace Wip.Security;
 /// <param name="Report">The report as the tool wrote it, or null when it wrote none.</param>
 /// <remarks>
 /// A tool's non-zero status is not an error here: scanners use exit codes to report findings.
-/// Distinguishing "ran and found things" from "did not run" belongs to the result format in
-/// slidict/workspace#690, so this carries the status and the report without judging either.
+/// Distinguishing "ran and found things" from "did not run" belongs to the result format that
+/// consumes this, so it carries the status and the report without judging either.
 /// </remarks>
 internal sealed record ScanOutcome(
     string Tool,
@@ -192,8 +192,8 @@ internal sealed class ScanEngine(
 
     /// <summary>
     /// The report as the tool left it, or null when there is none. Read as bytes through the
-    /// sandbox rather than trusted as text: the content is a tool's output, which
-    /// slidict/workspace#690 treats as untrusted input, and nothing here interprets it.
+    /// sandbox rather than trusted as text: the content is a tool's output, which is treated
+    /// as untrusted input downstream, and nothing here interprets it.
     /// </summary>
     private string? ReadReport(string sandbox, string reportPath)
     {

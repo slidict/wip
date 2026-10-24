@@ -133,9 +133,9 @@ public class ScanEngineTests
     [Fact]
     public void NoScannerIsRegisteredUntilAnAdapterLands()
     {
-        // The registry is a reviewed table, so it is empty before the first adapter (ZAP,
-        // slidict/workspace#689). Asserted rather than assumed: an entry appearing here
-        // without a pull request to this file is the thing #692 rules out.
+        // The registry is a reviewed table, so it is empty before the first adapter. Asserted
+        // rather than assumed: an entry appearing here without a pull request to this file is
+        // exactly what the platform's design rules out.
         Assert.Empty(ScanEngine.Tools);
     }
 
@@ -417,7 +417,7 @@ public class ScanEngineTests
     public void AToolsNonZeroStatusIsForwardedRatherThanTreatedAsAnError()
     {
         // Scanners report findings through their exit code. Deciding what that means belongs
-        // to the result format in slidict/workspace#690.
+        // to the result format that consumes the outcome.
         var fake = new Fake { ExecCode = 2 };
 
         var outcome = Engine(fake).Run(new StubScanner(), "scanner", ValidPlan());
