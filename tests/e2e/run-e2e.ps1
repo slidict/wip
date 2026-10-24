@@ -286,6 +286,10 @@ if (-not $resolvedWip) {
 }
 
 $script:WipPath = $resolvedWip.Path
+# Script-scoped for the same reason $script:WipPath is: a dot-sourced fixture that launches
+# wslc itself -- rather than through Invoke-Wslc -- needs the resolved command, not the
+# parameter, which is not in its scope.
+$script:WslcPath = $Wslc
 $fixture = $PSScriptRoot
 
 try {

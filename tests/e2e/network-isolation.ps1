@@ -9,12 +9,56 @@ function Invoke-NetworkIsolationE2E([string] $Namespace, [string] $Image) {
     $sandboxes = New-Object 'Collections.Generic.List[string]'
     $squatted = $null
 
+    # Every wip invocation here goes through a deadline, and the reason is measured: on
+    # 2026-10-24 this fixture hung the e2e job for the full 45-minute timeout, and because the
+    # job was killed mid-step GitHub kept no log at all -- so there was nothing to say where
+    # it stopped. A caller's `& $exe ... | Out-String` waits for the output stream to close,
+    # not for the child to exit, so a container-side process holding that handle waits
+    # forever. A deadline turns that into a failure that names the command, inside a job that
+    # completes and therefore keeps its log.
+    #
+    # The invocation itself stays `& $exe @argv`, the way the caller's Invoke-Capture does it,
+    # because that is what preserves argv: Start-Process -ArgumentList re-joins the arguments
+    # into one command line with its own quoting, which tears apart the `sh -c '<script>'`
+    # probes (measured: the listener came back as exit 127, the shell's "not found"). Running
+    # it inside a job is what makes it killable -- the same Start-Job/Wait-Job/Remove-Job
+    # shape run-e2e.ps1 already uses for cleanup and for `wslc logs`, and for the same reason.
+    function Invoke-Bounded([string] $Exe, [string[]] $Arguments, [int] $TimeoutSeconds = 180) {
+        $job = Start-Job -ScriptBlock {
+            param($exe, $argv, $cwd)
+            Set-Location $cwd
+            $text = & $exe @argv 2>&1 | Out-String
+            [pscustomobject]@{ Code = $LASTEXITCODE; Output = $text }
+        } -ArgumentList $Exe, $Arguments, $script:Workspace
+
+        if (-not (Wait-Job $job -Timeout $TimeoutSeconds)) {
+            Remove-Job $job -Force
+            throw "timed out after ${TimeoutSeconds}s: $Exe $($Arguments -join ' ')"
+        }
+        $result = Receive-Job $job
+        Remove-Job $job -Force
+        $code = $result.Code
+        $output = [string]$result.Output
+
+        Write-Host "`$ $Exe $($Arguments -join ' ')  -> exit $code"
+        if ($output.Trim()) { Write-Host $output.TrimEnd() }
+        return [pscustomobject]@{ Code = $code; Output = $output }
+    }
+
+    function Invoke-WipHere([string[]] $Arguments, [int] $TimeoutSeconds = 180) {
+        return Invoke-Bounded -Exe $script:WipPath -Arguments $Arguments -TimeoutSeconds $TimeoutSeconds
+    }
+
+    function Invoke-WslcHere([string[]] $Arguments, [int] $TimeoutSeconds = 120) {
+        return Invoke-Bounded -Exe $script:WslcPath -Arguments $Arguments -TimeoutSeconds $TimeoutSeconds
+    }
+
     # The address of a sandbox's own interface, read from inside it. Everything here is
     # addressed by IP: container-name resolution is absent on an internal network in the WSLC
     # measured for this test (2026-10-24), so a name-based check would fail for a reason that
     # has nothing to do with isolation.
     function Get-SandboxAddress([string] $Sandbox) {
-        $shown = Invoke-Wip @('sandbox', 'exec', $Sandbox, '--', 'ip', '-4', '-o', 'addr', 'show', 'eth0')
+        $shown = Invoke-WipHere @('sandbox', 'exec', $Sandbox, '--', 'ip', '-4', '-o', 'addr', 'show', 'eth0')
         Assert-Exit $shown 0 "read $Sandbox's address"
         $match = [regex]::Match($shown.Output, 'inet (\d+\.\d+\.\d+\.\d+)')
         if (-not $match.Success) { throw "cannot read $Sandbox's IPv4 address from: $($shown.Output.Trim())" }
@@ -25,7 +69,7 @@ function Invoke-NetworkIsolationE2E([string] $Namespace, [string] $Image) {
     # -c` so the probe's own non-zero status is what wip forwards -- which is the whole
     # assertion for a blocked path.
     function Assert-Reachable([string] $Sandbox, [string] $Probe, [string] $What) {
-        Assert-Exit (Invoke-Wip @('sandbox', 'exec', $Sandbox, '--', 'sh', '-c', $Probe)) 0 "$What is reachable"
+        Assert-Exit (Invoke-WipHere @('sandbox', 'exec', $Sandbox, '--', 'sh', '-c', $Probe)) 0 "$What is reachable"
     }
 
     # BusyBox's answer when an applet or an option does not exist. A probe that never ran
@@ -37,7 +81,7 @@ function Invoke-NetworkIsolationE2E([string] $Namespace, [string] $Image) {
     $unsupported = 'unrecognized option|invalid option|applet not found|: not found|(?m)^Usage:|BusyBox v'
 
     function Assert-Blocked([string] $Sandbox, [string] $Probe, [string] $What) {
-        $result = Invoke-Wip @('sandbox', 'exec', $Sandbox, '--', 'sh', '-c', $Probe)
+        $result = Invoke-WipHere @('sandbox', 'exec', $Sandbox, '--', 'sh', '-c', $Probe)
         if ($result.Output -match $unsupported) {
             throw "$What was not tested: the probe itself is unsupported -- $($result.Output.Trim())"
         }
@@ -48,7 +92,7 @@ function Invoke-NetworkIsolationE2E([string] $Namespace, [string] $Image) {
     # against the sandbox's own loopback or the local filesystem, which an internal network
     # does not touch either way.
     function Assert-ProbeWorks([string] $Sandbox, [string] $Probe, [string] $What) {
-        $result = Invoke-Wip @('sandbox', 'exec', $Sandbox, '--', 'sh', '-c', $Probe)
+        $result = Invoke-WipHere @('sandbox', 'exec', $Sandbox, '--', 'sh', '-c', $Probe)
         if ($result.Output -match $unsupported) {
             throw "$What is unsupported in this image, so the assertions built on it would test nothing -- $($result.Output.Trim())"
         }
@@ -59,17 +103,17 @@ function Invoke-NetworkIsolationE2E([string] $Namespace, [string] $Image) {
         Write-Step 'security scan sandboxes run behind a verified internal network'
 
         $sandboxes.Add('scan-target')
-        Assert-Exit (Invoke-Wip @('sandbox', 'create', 'scan-target')) 0 'create scan-target'
+        Assert-Exit (Invoke-WipHere @('sandbox', 'create', 'scan-target')) 0 'create scan-target'
         $sandboxes.Add('scan-scanner')
-        Assert-Exit (Invoke-Wip @('sandbox', 'create', 'scan-scanner')) 0 'create scan-scanner'
+        Assert-Exit (Invoke-WipHere @('sandbox', 'create', 'scan-scanner')) 0 'create scan-scanner'
         $sandboxes.Add('scan-outsider')
-        Assert-Exit (Invoke-Wip @('sandbox', 'create', 'scan-outsider')) 0 'create scan-outsider'
+        Assert-Exit (Invoke-WipHere @('sandbox', 'create', 'scan-outsider')) 0 'create scan-outsider'
 
         # ------------------------------------------------------------ the boundary itself
         #
         # wip's own view is not evidence here: what matters is that the network wslc holds is
         # internal and labelled as wip's, because `--internal` is the entire mechanism.
-        $networks = Invoke-Wslc @('network', 'list', '--format', 'json')
+        $networks = Invoke-WslcHere @('network', 'list', '--format', 'json')
         Assert-Exit $networks 0 'wslc network list'
         $owned = Read-WslcRecords $networks.Output |
             Where-Object { $_.Labels -match [regex]::Escape("io.slidict.wip.owner=v1:${Namespace}:network:scan-isolated") }
@@ -78,7 +122,7 @@ function Invoke-NetworkIsolationE2E([string] $Namespace, [string] $Image) {
         $isolatedName = @($owned)[0].Name
         if ($isolatedName -notmatch '^wip-n-[a-f0-9]{40}$') { throw "unexpected network name: $isolatedName" }
 
-        $inspected = Invoke-Wslc @('network', 'inspect', '--format', 'json', $isolatedName)
+        $inspected = Invoke-WslcHere @('network', 'inspect', '--format', 'json', $isolatedName)
         Assert-Exit $inspected 0 'wslc network inspect'
         $record = @(Read-WslcRecords $inspected.Output)[0]
         if ($record.Internal -ne $true) { throw "$isolatedName is not internal; the boundary does not exist" }
@@ -87,11 +131,11 @@ function Invoke-NetworkIsolationE2E([string] $Namespace, [string] $Image) {
         # attachment would be a second, unrestricted route out, and the network being internal
         # would say nothing about it.
         foreach ($sandbox in 'scan-scanner', 'scan-target') {
-            $status = Invoke-Wip @('sandbox', 'status', $sandbox)
+            $status = Invoke-WipHere @('sandbox', 'status', $sandbox)
             Assert-Exit $status 0 "status of $sandbox"
             $identity = [regex]::Match($status.Output, "(?m)^$([regex]::Escape($sandbox))\s+running\s+wip-s-[a-f0-9]+\s+(\S+)\s*$")
             if (-not $identity.Success) { throw "cannot read $sandbox's container ID from: $($status.Output.Trim())" }
-            $container = Invoke-Wslc @('inspect', '--type', 'container', '--format', 'json', $identity.Groups[1].Value)
+            $container = Invoke-WslcHere @('inspect', '--type', 'container', '--format', 'json', $identity.Groups[1].Value)
             Assert-Exit $container 0 "inspect $sandbox's container"
             $attached = @(Read-WslcRecords $container.Output)[0].NetworkSettings.Networks.PSObject.Properties.Name
             if (@($attached).Count -ne 1 -or @($attached)[0] -ne $isolatedName) {
@@ -107,8 +151,8 @@ function Invoke-NetworkIsolationE2E([string] $Namespace, [string] $Image) {
         # The listener outlives the exec that started it, which is what makes a TCP assertion
         # possible at all: `wip sandbox exec` returns when its own command does, and busybox
         # nc backgrounded here keeps accepting until the connection below arrives.
-        Assert-Exit (Invoke-Wip @('sandbox', 'exec', 'scan-target', '--', 'sh', '-c',
-                'nohup nc -l -p 9090 -e /bin/echo scan-target-reached >/dev/null 2>&1 & echo listening')) 0 `
+        Assert-Exit (Invoke-WipHere @('sandbox', 'exec', 'scan-target', '--', 'sh', '-c',
+                'nohup nc -l -p 9090 -e /bin/echo scan-target-reached </dev/null >/dev/null 2>&1 & echo listening')) 0 `
             'start the target listener'
 
         Assert-Reachable 'scan-scanner' "ping -c 1 -W 2 $targetAddress" 'the declared target over ICMP'
@@ -143,7 +187,7 @@ function Invoke-NetworkIsolationE2E([string] $Namespace, [string] $Image) {
         # stack is not evidence that a network blocked anything -- so the absence is asserted
         # directly, and the reachability assertion runs only once there is an address to
         # reach from.
-        $ipv6 = Invoke-Wip @('sandbox', 'exec', 'scan-scanner', '--', 'sh', '-c', 'ip -6 -o addr show scope global')
+        $ipv6 = Invoke-WipHere @('sandbox', 'exec', 'scan-scanner', '--', 'sh', '-c', 'ip -6 -o addr show scope global')
         Assert-Exit $ipv6 0 'read the sandbox IPv6 addresses'
         if ($ipv6.Output.Trim()) {
             Assert-Blocked 'scan-scanner' 'ping -6 -c 1 -W 2 2606:4700:4700::1111' 'an internet IPv6 address'
@@ -163,9 +207,9 @@ function Invoke-NetworkIsolationE2E([string] $Namespace, [string] $Image) {
         Assert-Blocked 'scan-scanner' "nc -z -w 3 $outsiderAddress 9090" 'a sandbox on another internal network over TCP'
 
         # ------------------------------------------------------------ isolation survives a resume
-        Assert-Exit (Invoke-Wip @('sandbox', 'stop', 'scan-scanner')) 0 'stop scan-scanner'
-        Assert-Exit (Invoke-Wip @('sandbox', 'create', 'scan-scanner')) 0 'resume scan-scanner'
-        Assert-Match (Invoke-Wip @('sandbox', 'status', 'scan-scanner')) 'scan-scanner\s+running' 'scan-scanner resumed'
+        Assert-Exit (Invoke-WipHere @('sandbox', 'stop', 'scan-scanner')) 0 'stop scan-scanner'
+        Assert-Exit (Invoke-WipHere @('sandbox', 'create', 'scan-scanner')) 0 'resume scan-scanner'
+        Assert-Match (Invoke-WipHere @('sandbox', 'status', 'scan-scanner')) 'scan-scanner\s+running' 'scan-scanner resumed'
         Assert-Blocked 'scan-scanner' 'nc -z -w 3 1.1.1.1 443' 'an internet IPv4 address after a resume'
         Assert-Blocked 'scan-scanner' 'nslookup example.com 8.8.8.8' 'a public DNS resolver after a resume'
         Assert-Blocked 'scan-scanner' 'nslookup example.com' 'DNS resolution after a resume'
@@ -181,38 +225,38 @@ function Invoke-NetworkIsolationE2E([string] $Namespace, [string] $Image) {
         # inspect` cannot answer -- it lists only running containers, and WSLC removes the
         # network regardless. The stopped container would then be unstartable for good, its
         # attachment pinned to the removed network's id.
-        Assert-Exit (Invoke-Wip @('sandbox', 'stop', 'scan-target')) 0 'stop scan-target'
-        Assert-Exit (Invoke-Wip @('sandbox', 'destroy', 'scan-scanner')) 0 'destroy scan-scanner while scan-target is stopped'
+        Assert-Exit (Invoke-WipHere @('sandbox', 'stop', 'scan-target')) 0 'stop scan-target'
+        Assert-Exit (Invoke-WipHere @('sandbox', 'destroy', 'scan-scanner')) 0 'destroy scan-scanner while scan-target is stopped'
         [void]$sandboxes.Remove('scan-scanner')
-        Assert-Match (Invoke-Wslc @('network', 'list')) ([regex]::Escape($isolatedName)) `
+        Assert-Match (Invoke-WslcHere @('network', 'list')) ([regex]::Escape($isolatedName)) `
             'the shared network survives while a stopped sandbox is attached'
         # And the stopped sandbox can still be resumed, which is what the kept network buys.
-        Assert-Exit (Invoke-Wip @('sandbox', 'create', 'scan-target')) 0 'resume scan-target after the scanner was destroyed'
-        Assert-Match (Invoke-Wip @('sandbox', 'status', 'scan-target')) 'scan-target\s+running' 'scan-target resumed'
+        Assert-Exit (Invoke-WipHere @('sandbox', 'create', 'scan-target')) 0 'resume scan-target after the scanner was destroyed'
+        Assert-Match (Invoke-WipHere @('sandbox', 'status', 'scan-target')) 'scan-target\s+running' 'scan-target resumed'
 
-        Assert-Exit (Invoke-Wip @('sandbox', 'destroy', 'scan-target')) 0 'destroy scan-target'
+        Assert-Exit (Invoke-WipHere @('sandbox', 'destroy', 'scan-target')) 0 'destroy scan-target'
         [void]$sandboxes.Remove('scan-target')
-        Assert-NoMatch (Invoke-Wslc @('network', 'list')) ([regex]::Escape($isolatedName)) `
+        Assert-NoMatch (Invoke-WslcHere @('network', 'list')) ([regex]::Escape($isolatedName)) `
             'destroying the last sandbox removed its network'
 
         $squatted = $isolatedName
-        Assert-Exit (Invoke-Wslc @('network', 'create', $isolatedName)) 0 'create a non-internal network under the derived name'
-        $refused = Invoke-Wip @('sandbox', 'create', 'scan-scanner')
+        Assert-Exit (Invoke-WslcHere @('network', 'create', $isolatedName)) 0 'create a non-internal network under the derived name'
+        $refused = Invoke-WipHere @('sandbox', 'create', 'scan-scanner')
         Assert-NonZero $refused 'sandbox create against an unverifiable boundary'
-        Assert-Match (Invoke-Wip @('sandbox', 'status', 'scan-scanner')) 'scan-scanner\s+not found' `
+        Assert-Match (Invoke-WipHere @('sandbox', 'status', 'scan-scanner')) 'scan-scanner\s+not found' `
             'no container was started without a verified boundary'
         # And the squatted network is still there: wip reports it rather than deleting a
         # network it could not establish ownership of.
-        Assert-Match (Invoke-Wslc @('network', 'list')) ([regex]::Escape($isolatedName)) `
+        Assert-Match (Invoke-WslcHere @('network', 'list')) ([regex]::Escape($isolatedName)) `
             'an unowned network is left alone'
     }
     finally {
         foreach ($sandbox in $sandboxes) {
-            try { Invoke-Wip @('sandbox', 'destroy', $sandbox) | Out-Null } catch { }
+            try { Invoke-WipHere @('sandbox', 'destroy', $sandbox) | Out-Null } catch { }
         }
         if ($squatted) {
             # wip refused to touch this one, so the fixture removes what it created itself.
-            try { Invoke-Wslc @('network', 'remove', $squatted) | Out-Null } catch { }
+            try { Invoke-WslcHere @('network', 'remove', $squatted) | Out-Null } catch { }
         }
     }
 }
