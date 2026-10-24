@@ -7,9 +7,18 @@ namespace Wip.Execution;
 
 public sealed record SandboxCommandResult(int Code, string Output);
 public sealed record SandboxMount(string Type, string Name, string Destination);
-public sealed record SandboxStatus(string Name, string BackendName, string? Id, string State, IReadOnlyList<SandboxMount>? Mounts = null)
+public sealed record SandboxStatus(
+    string Name,
+    string BackendName,
+    string? Id,
+    string State,
+    IReadOnlyList<SandboxMount>? Mounts = null,
+    IReadOnlyList<string>? Networks = null)
 {
     public IReadOnlyList<SandboxMount> Mounts { get; init; } = Mounts ?? [];
+
+    /// <summary>Backend names of every network the container is attached to.</summary>
+    public IReadOnlyList<string> Networks { get; init; } = Networks ?? [];
 }
 
 /// <summary>How a backend invocation uses wip's own console.</summary>
@@ -33,7 +42,11 @@ public enum SandboxConsoleMode
 /// <summary>Backend argv are passed directly, never through a shell. Capture is only needed for probes.</summary>
 public delegate SandboxCommandResult SandboxBackend(IReadOnlyList<string> arguments, TimeSpan timeout, SandboxConsoleMode console);
 
-public sealed class SandboxLifecycle(SandboxSettings settings, SandboxBackend backend, IVolumeLifecycle? volumes = null)
+public sealed class SandboxLifecycle(
+    SandboxSettings settings,
+    SandboxBackend backend,
+    IVolumeLifecycle? volumes = null,
+    INetworkLifecycle? networks = null)
 {
     public const string OwnerLabel = "io.slidict.wip.owner";
     private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(10);
@@ -79,7 +92,7 @@ public sealed class SandboxLifecycle(SandboxSettings settings, SandboxBackend ba
         var state = State(record);
         if (state == "deleted") return new(name, backendName, null, "not found");
         var mounts = ExtractMounts(record);
-        return new(name, backendName, inspectedId, state, mounts);
+        return new(name, backendName, inspectedId, state, mounts, ExtractNetworks(record));
     }
 
     public int Create(string name)
@@ -89,10 +102,15 @@ public sealed class SandboxLifecycle(SandboxSettings settings, SandboxBackend ba
         var volumeDefs = ValidateVolumes(name, definition);
         if (volumeDefs.Count != 0 && volumes is null)
             throw new ConfigException($"Sandbox {name}: volume lifecycle is not configured; no container was created");
+        // Before the container, and before any volume is touched: the declared boundary has to
+        // exist and be verifiable, or nothing starts. There is no path from here that falls
+        // back to the backend's default bridge.
+        var isolatedNetwork = PrepareNetwork(name, definition);
         var existing = Status(name);
         if (existing.Id is not null)
         {
             VerifyExistingMounts(name, existing, volumeDefs);
+            VerifyExistingNetworks(name, existing, isolatedNetwork);
             if (existing.State == "running")
             {
                 if (volumeDefs.Count != 0 && volumes is not null)
@@ -119,6 +137,11 @@ public sealed class SandboxLifecycle(SandboxSettings settings, SandboxBackend ba
                 "-d",
                 "--label", $"{OwnerLabel}={Identity(name)}",
             };
+            if (isolatedNetwork is not null)
+            {
+                runArgs.Add("--network");
+                runArgs.Add(isolatedNetwork);
+            }
             if (volumeDefs.Count != 0)
             {
                 if (volumes is null) throw new ConfigException($"Sandbox {name}: volume lifecycle is not configured; no container was created");
@@ -191,6 +214,15 @@ public sealed class SandboxLifecycle(SandboxSettings settings, SandboxBackend ba
             if (removed.Code != 0) return removed.Code;
             if (Status(name).Id is not null) throw Failure(name, "container still exists after removal; retry status before recovery");
         }
+        // After the container, so the network is never removed from under a live attachment.
+        // Only the declared one, and only when its ownership label and internal flag match.
+        if (definition.Network is { } networkName)
+        {
+            if (networks is null)
+                throw new ConfigException($"Sandbox {name}: network lifecycle is not configured; container removal cannot remove its network");
+            var code = networks.Destroy(networkName);
+            if (code != 0) return code;
+        }
         if (reconcileVolumes.Count != 0)
         {
             if (volumes is null) throw new ConfigException($"Sandbox {name}: volume lifecycle is not configured; container removal cannot reconcile volumes");
@@ -220,6 +252,40 @@ public sealed class SandboxLifecycle(SandboxSettings settings, SandboxBackend ba
             }
         }
         return result.ToArray();
+    }
+
+    /// <summary>
+    /// Creates and verifies the declared network, returning the backend name to attach to, or
+    /// null when the sandbox declares none. Throws on anything it cannot confirm: an
+    /// unverified boundary must stop the operation, because the alternative -- carrying on
+    /// without <c>--network</c> -- is the backend's default bridge, which is unrestricted.
+    /// </summary>
+    private string? PrepareNetwork(string name, SandboxDefinition definition)
+    {
+        if (definition.Network is not { } networkName) return null;
+        if (networks is null)
+            throw new ConfigException($"Sandbox {name}: network lifecycle is not configured; no container was created");
+        var code = networks.Create(networkName);
+        if (code != 0)
+            throw Failure(name, $"network {networkName} could not be created (exit {code}); isolation is unverified so no container was started");
+        return networks.VerifiedBackendName(networkName);
+    }
+
+    /// <summary>
+    /// An existing container's attachments are fixed at creation, so a declaration that has
+    /// since changed -- or a container that came back from an abnormal exit on a different
+    /// network -- is refused rather than started or re-attached.
+    /// </summary>
+    private void VerifyExistingNetworks(string name, SandboxStatus existing, string? isolatedNetwork)
+    {
+        if (isolatedNetwork is null)
+        {
+            // Nothing is declared, so nothing is asserted: a sandbox without a network block
+            // keeps whatever the backend attached, exactly as before this existed.
+            return;
+        }
+        if (existing.Networks.Count != 1 || existing.Networks[0] != isolatedNetwork)
+            throw Failure(name, "existing container is not attached to exactly the declared network; run sandbox destroy, confirm absence, then sandbox create");
     }
 
     private void VerifyExistingMounts(string name, SandboxStatus existing, IReadOnlyList<VolumeDefinition> volumeDefs)
@@ -440,6 +506,19 @@ public sealed class SandboxLifecycle(SandboxSettings settings, SandboxBackend ba
             }
         }
         throw new WipException("Sandbox backend returned malformed JSON; existence is unknown");
+    }
+
+    /// <summary>
+    /// Attachments as <c>inspect</c> reports them: <c>NetworkSettings.Networks</c> keyed by
+    /// network name. An absent or malformed block yields an empty list, which fails the
+    /// declared-network check rather than passing it.
+    /// </summary>
+    private static IReadOnlyList<string> ExtractNetworks(JsonElement record)
+    {
+        if (!record.TryGetProperty("NetworkSettings", out var settings) || settings.ValueKind != JsonValueKind.Object ||
+            !settings.TryGetProperty("Networks", out var attached) || attached.ValueKind != JsonValueKind.Object)
+            return [];
+        return attached.EnumerateObject().Select(n => n.Name).ToArray();
     }
 
     private static IReadOnlyList<SandboxMount> ExtractMounts(JsonElement record)

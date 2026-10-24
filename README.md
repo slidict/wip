@@ -248,7 +248,9 @@ ships is outside wip's scope.
 
 For the operations and their guarantees, see [wip sandbox](https://github.com/slidict/wip/wiki/wip-sandbox); for
 the configuration and ownership model, [Sandboxes](https://github.com/slidict/wip/wiki/Sandboxes);
-for declared volumes on their own, [volume storage](docs/volume-lifecycle.md).
+for declared volumes on their own, [volume storage](docs/volume-lifecycle.md); for putting a
+sandbox behind a network it cannot reach past,
+[network isolation](docs/sandbox-network-isolation.md).
 
 ## Development
 

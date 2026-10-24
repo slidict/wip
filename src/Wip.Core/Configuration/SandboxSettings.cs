@@ -23,23 +23,47 @@ public sealed record VolumeSyncDefinition(
 /// </param>
 public sealed record VolumeDefinition(string Name, bool Persistent, string Mount, VolumeSyncDefinition? Sync = null);
 
+/// <param name="Internal">
+/// Must be declared explicitly. <c>true</c> creates the network with WSLC's
+/// <c>--internal</c>: a boundary outside the container, which nothing running inside it can
+/// lift. A sandbox may only attach to an internal network, so declaring <c>false</c> leaves
+/// the network unreferenced rather than handing a sandbox unrestricted egress by accident.
+/// </param>
+public sealed record NetworkDefinition(string Name, bool Internal);
+
 /// <param name="ReportRelay">
 /// Opt-in: execs export the report FIFO's path so the sandbox's CLI can report agent state
 /// through <see cref="Execution.ReportRelay"/>. Off unless declared.
 /// </param>
-public sealed record SandboxDefinition(string Name, string Image, IReadOnlyList<string> Volumes, bool ReportRelay = false);
+/// <param name="Network">
+/// Opt-in: the only network the container is attached to. Declaring it replaces the
+/// backend's default bridge, which is what denies egress; leaving it out keeps the
+/// pre-existing behaviour of inheriting whatever the backend attaches by default.
+/// </param>
+public sealed record SandboxDefinition(
+    string Name,
+    string Image,
+    IReadOnlyList<string> Volumes,
+    bool ReportRelay = false,
+    string? Network = null);
 
 /// <summary>Declarative resources only; loading never creates, mounts or deletes resources.</summary>
 public sealed partial class SandboxSettings
 {
     public string? ResourceNamespace { get; }
     public IReadOnlyList<VolumeDefinition> Volumes { get; }
+    public IReadOnlyList<NetworkDefinition> Networks { get; }
     public IReadOnlyList<SandboxDefinition> Sandboxes { get; }
 
-    private SandboxSettings(string? resourceNamespace, List<VolumeDefinition> volumes, List<SandboxDefinition> sandboxes)
+    private SandboxSettings(
+        string? resourceNamespace,
+        List<VolumeDefinition> volumes,
+        List<NetworkDefinition> networks,
+        List<SandboxDefinition> sandboxes)
     {
         ResourceNamespace = resourceNamespace;
         Volumes = volumes.AsReadOnly();
+        Networks = networks.AsReadOnly();
         Sandboxes = sandboxes.AsReadOnly();
     }
 
@@ -64,11 +88,27 @@ public sealed partial class SandboxSettings
             volumes.Add(volume);
         }
 
+        // Parsed before the sandboxes so a sandbox's network reference resolves here, rather
+        // than at create time, where an undeclared name would only surface once a container
+        // had already been asked for.
+        var networks = new List<NetworkDefinition>();
+        var networksByName = new Dictionary<string, NetworkDefinition>(StringComparer.Ordinal);
+        foreach (var item in Sequence(raw, "networks"))
+        {
+            var entry = Entry(item, "networks", "name", "internal");
+            var name = Name(entry, "networks");
+            if (entry.GetValueOrDefault("internal") is not bool isInternal)
+                throw new ConfigException($"networks.{name}.internal must explicitly be true or false");
+            var network = new NetworkDefinition(name, isInternal);
+            if (!networksByName.TryAdd(name, network)) throw new ConfigException($"Duplicate network name: {name}");
+            networks.Add(network);
+        }
+
         var sandboxes = new List<SandboxDefinition>();
         var sandboxNames = new HashSet<string>(StringComparer.Ordinal);
         foreach (var item in Sequence(raw, "sandboxes"))
         {
-            var entry = Entry(item, "sandboxes", "name", "image", "volumes", "report_relay");
+            var entry = Entry(item, "sandboxes", "name", "image", "volumes", "report_relay", "network");
             var name = Name(entry, "sandboxes");
             if (!sandboxNames.Add(name)) throw new ConfigException($"Duplicate sandbox name: {name}");
             var image = Text(entry, "image", $"sandboxes.{name}");
@@ -90,15 +130,26 @@ public sealed partial class SandboxSettings
                     throw new ConfigException($"sandboxes.{name}.report_relay must explicitly be true or false");
                 reportRelay = relay;
             }
-            sandboxes.Add(new SandboxDefinition(name, image, references.AsReadOnly(), reportRelay));
+            string? network = null;
+            if (entry.ContainsKey("network"))
+            {
+                network = Text(entry, "network", $"sandboxes.{name}");
+                if (!networksByName.TryGetValue(network, out var networkDef))
+                    throw new ConfigException($"sandboxes.{name} references an undefined network: {network}");
+                // A non-internal network would hand the sandbox unrestricted egress under a
+                // key that reads as if it restricted one.
+                if (!networkDef.Internal)
+                    throw new ConfigException($"sandboxes.{name} references network {network}, which is not internal");
+            }
+            sandboxes.Add(new SandboxDefinition(name, image, references.AsReadOnly(), reportRelay, network));
         }
         string? resourceNamespace = null;
-        if (volumes.Count > 0 || sandboxes.Count > 0 || raw.ContainsKey("resource_namespace"))
+        if (volumes.Count > 0 || networks.Count > 0 || sandboxes.Count > 0 || raw.ContainsKey("resource_namespace"))
         {
             resourceNamespace = Text(raw, "resource_namespace", "");
             if (!ResourceName().IsMatch(resourceNamespace)) throw new ConfigException("resource_namespace must match [a-z][a-z0-9_-]{0,62}");
         }
-        return new SandboxSettings(resourceNamespace, volumes, sandboxes);
+        return new SandboxSettings(resourceNamespace, volumes, networks, sandboxes);
     }
 
     public OrderedDictionary<string, object?> ToMapping()
@@ -120,11 +171,19 @@ public sealed partial class SandboxSettings
             }
             return (object?)mapping;
         }).ToList();
+        // Emitted only when declared, so configs without networks normalize exactly as before.
+        if (Networks.Count > 0)
+        {
+            result["networks"] = Networks
+                .Select(n => (object?)Mapping(("name", n.Name), ("internal", n.Internal)))
+                .ToList();
+        }
         result["sandboxes"] = Sandboxes.Select(s =>
         {
             var mapping = Mapping(("name", s.Name), ("image", s.Image), ("volumes", s.Volumes.Cast<object?>().ToList()));
             // Emitted only when enabled, so configs without a relay normalize exactly as before.
             if (s.ReportRelay) mapping["report_relay"] = true;
+            if (s.Network is { } network) mapping["network"] = network;
             return (object?)mapping;
         }).ToList();
         return result;
