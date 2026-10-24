@@ -108,7 +108,7 @@ is disposable. Namespace changes do not authorize cleanup of old storage. Preser
 config/journal for recovery. Ambiguous generations or ownership mismatch require manual
 investigation and backend metadata inspection; there is no automatic broad cleanup.
 
-Snapshot/restore remains out of scope by the explicit slidict/workspace#194 decision:
+Snapshot/restore remains out of scope by an explicit decision recorded in the contract:
 retaining persistent storage is not a backup. A future snapshot unit must specify quiescence,
 data scope, retention and transactional restore/rollback; live copying is not substituted.
 
@@ -123,6 +123,6 @@ It calls storage CLI commands from separate processes to exercise journal durabi
 Consumers are inspected for the fixture label before removal; finalizers surface cleanup
 failures and preserve the scratch config/journal for recovery. No real user data is used.
 
-For slidict/workspace#197, `SandboxLifecycle` uses `VolumeLifecycle.Create/Status/Reconcile` and
+For mount integration, `SandboxLifecycle` uses `VolumeLifecycle.Create/Status/Reconcile` and
 backend names for volume attachment and post-detach cleanup. Sandboxes now mount declared volumes,
 reconciling usage on creation and cleaning up unreferenced ephemeral storage on destruction.
