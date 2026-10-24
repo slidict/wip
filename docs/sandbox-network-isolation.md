@@ -108,12 +108,26 @@ the fail-closed table against a fake backend, so it runs with no WSLC present.
 `tests/e2e/network-isolation.ps1` runs against real WSLC in CI on every pull request
 (`.github/workflows/e2e-windows.yml`). It asserts the allowed path works — ICMP and TCP to a
 sandbox on the same declared network — and that each forbidden path does not: an internet
-IPv4 address over TCP and ICMP, an internet IPv6 address, a public DNS resolver, name
-resolution, the default bridge's host gateway, the cloud metadata endpoint, and a sandbox on
-another internal network. It then stops and resumes the sandbox and asserts the same, and
-forces the fail-closed path by putting a non-internal network under the name wip derives.
+IPv4 address over TCP and ICMP, a public DNS resolver, name resolution, the default bridge's
+host gateway, the cloud metadata endpoint, and a sandbox on another internal network. It then
+stops and resumes the sandbox and asserts the same, and forces the fail-closed path by
+putting a non-internal network under the name wip derives.
+
+Each probe is validated before anything is called blocked, because a probe that never ran
+exits non-zero too and would otherwise read as a blocked network. `ping` and `nc` are
+asserted to work against the sandbox's own loopback, `nslookup` to exist, and any BusyBox
+"unrecognized option" or "applet not found" in a probe's output fails the assertion instead
+of passing it. Two earlier probes were replaced for failing this standard: `nc -u -z` returns
+non-zero even to loopback, so it cannot report UDP reachability at all and egress to a
+resolver is now probed with `nslookup example.com 8.8.8.8` (verified to exit 0 from the
+default bridge and non-zero here).
+
+IPv6 is asserted for whichever reason actually holds. The fixture image has no global IPv6
+address under the WSLC measured on 2026-10-24, and a `ping -6` that fails for want of a stack
+is not evidence that a network blocked anything — so the absence is asserted directly, and
+the reachability assertion runs only when the sandbox does hold an address to reach from.
 
 Not covered, and deliberately not a completion condition: behaviour on a host whose WSLC
-version differs from CI's. The metadata endpoint and IPv6 ULA reachability in particular can
-only be observed on the host in question. Treat a difference there as a new issue rather than
-as something this document promises.
+version differs from CI's. The metadata endpoint in particular can only be observed on the
+host in question. Treat a difference there as a new issue rather than as something this
+document promises.

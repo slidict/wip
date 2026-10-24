@@ -28,8 +28,31 @@ function Invoke-NetworkIsolationE2E([string] $Namespace, [string] $Image) {
         Assert-Exit (Invoke-Wip @('sandbox', 'exec', $Sandbox, '--', 'sh', '-c', $Probe)) 0 "$What is reachable"
     }
 
+    # BusyBox's answer when an applet or an option does not exist. A probe that never ran
+    # exits non-zero too, so without this a missing applet would read as a blocked network
+    # and the assertion would pass having tested nothing.
+    # `: not found` is the shell's form (`sh: nslookup: not found`) rather than a bare "not
+    # found", which a resolver's own answer can contain; `(?m)` is needed because PowerShell's
+    # -match anchors ^ to the start of the whole string otherwise.
+    $unsupported = 'unrecognized option|invalid option|applet not found|: not found|(?m)^Usage:|BusyBox v'
+
     function Assert-Blocked([string] $Sandbox, [string] $Probe, [string] $What) {
-        Assert-NonZero (Invoke-Wip @('sandbox', 'exec', $Sandbox, '--', 'sh', '-c', $Probe)) "$What is blocked"
+        $result = Invoke-Wip @('sandbox', 'exec', $Sandbox, '--', 'sh', '-c', $Probe)
+        if ($result.Output -match $unsupported) {
+            throw "$What was not tested: the probe itself is unsupported -- $($result.Output.Trim())"
+        }
+        Assert-NonZero $result "$What is blocked"
+    }
+
+    # A probe asserted to work, so that the forbidden ones failing means something. Run
+    # against the sandbox's own loopback or the local filesystem, which an internal network
+    # does not touch either way.
+    function Assert-ProbeWorks([string] $Sandbox, [string] $Probe, [string] $What) {
+        $result = Invoke-Wip @('sandbox', 'exec', $Sandbox, '--', 'sh', '-c', $Probe)
+        if ($result.Output -match $unsupported) {
+            throw "$What is unsupported in this image, so the assertions built on it would test nothing -- $($result.Output.Trim())"
+        }
+        Assert-Exit $result 0 "$What works"
     }
 
     try {
@@ -91,16 +114,43 @@ function Invoke-NetworkIsolationE2E([string] $Namespace, [string] $Image) {
         Assert-Reachable 'scan-scanner' "ping -c 1 -W 2 $targetAddress" 'the declared target over ICMP'
         Assert-Reachable 'scan-scanner' "nc -z -w 3 $targetAddress 9090" 'the declared target port'
 
+        # ------------------------------------------------------------ the probes themselves
+        #
+        # Asserted before anything is called blocked. ICMP and TCP are already proven by the
+        # allowed path above; these are the ones whose absence would otherwise be read as a
+        # block. Measured 2026-10-24: `nc -u -z` returns non-zero even to the sandbox's own
+        # loopback, so UDP reachability is not something it can report at all -- which is why
+        # egress to a resolver is probed below with nslookup against that resolver instead.
+        Assert-ProbeWorks 'scan-scanner' 'ping -c 1 -W 2 127.0.0.1' 'ping'
+        Assert-ProbeWorks 'scan-scanner' 'command -v nc' 'nc'
+        Assert-ProbeWorks 'scan-scanner' 'command -v nslookup' 'nslookup'
+
         # ------------------------------------------------------------ the forbidden paths
         #
         # The list #687 names. Each is one probe whose success would be the leak.
         Assert-Blocked 'scan-scanner' 'nc -z -w 3 1.1.1.1 443' 'an internet IPv4 address over TCP'
         Assert-Blocked 'scan-scanner' 'ping -c 1 -W 2 1.1.1.1' 'an internet IPv4 address over ICMP'
-        Assert-Blocked 'scan-scanner' 'ping -6 -c 1 -W 2 2606:4700:4700::1111' 'an internet IPv6 address'
-        Assert-Blocked 'scan-scanner' 'nc -u -z -w 2 8.8.8.8 53' 'a public DNS resolver'
-        # Name resolution, separately from reaching a resolver: a scanner handed a hostname
-        # must not be able to turn it into an address it could then be redirected to.
+        # Egress to a public resolver, as a query actually addressed to it. Verified to
+        # discriminate: this exits 0 from a container on the default bridge and non-zero here.
+        Assert-Blocked 'scan-scanner' 'nslookup example.com 8.8.8.8' 'a public DNS resolver'
+        # Name resolution through whatever resolver the sandbox was given, separately from
+        # reaching one: a scanner handed a hostname must not be able to turn it into an
+        # address it could then be redirected to.
         Assert-Blocked 'scan-scanner' 'nslookup example.com' 'DNS resolution'
+
+        # IPv6 is asserted for whichever reason actually holds. The fixture image has no IPv6
+        # address on this WSLC (measured 2026-10-24), and a `ping -6` that fails for want of a
+        # stack is not evidence that a network blocked anything -- so the absence is asserted
+        # directly, and the reachability assertion runs only once there is an address to
+        # reach from.
+        $ipv6 = Invoke-Wip @('sandbox', 'exec', 'scan-scanner', '--', 'sh', '-c', 'ip -6 -o addr show scope global')
+        Assert-Exit $ipv6 0 'read the sandbox IPv6 addresses'
+        if ($ipv6.Output.Trim()) {
+            Assert-Blocked 'scan-scanner' 'ping -6 -c 1 -W 2 2606:4700:4700::1111' 'an internet IPv6 address'
+        }
+        else {
+            Write-Host '  IPv6: the sandbox holds no global IPv6 address, so there is no IPv6 egress to block'
+        }
         # The gateway of the backend's default bridge -- the host-facing route a container on
         # the ordinary network has. Being off that network is what must make it unreachable.
         Assert-Blocked 'scan-scanner' 'nc -z -w 3 172.17.0.1 22' "the default bridge's host gateway"
@@ -117,6 +167,7 @@ function Invoke-NetworkIsolationE2E([string] $Namespace, [string] $Image) {
         Assert-Exit (Invoke-Wip @('sandbox', 'create', 'scan-scanner')) 0 'resume scan-scanner'
         Assert-Match (Invoke-Wip @('sandbox', 'status', 'scan-scanner')) 'scan-scanner\s+running' 'scan-scanner resumed'
         Assert-Blocked 'scan-scanner' 'nc -z -w 3 1.1.1.1 443' 'an internet IPv4 address after a resume'
+        Assert-Blocked 'scan-scanner' 'nslookup example.com 8.8.8.8' 'a public DNS resolver after a resume'
         Assert-Blocked 'scan-scanner' 'nslookup example.com' 'DNS resolution after a resume'
         Assert-Reachable 'scan-scanner' "ping -c 1 -W 2 $targetAddress" 'the declared target after a resume'
 
