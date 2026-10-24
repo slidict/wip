@@ -270,6 +270,20 @@ public class NetworkIsolationTests
         Assert.False(Ran(fake, "run"));
     }
 
+    [Fact]
+    public void DestroyRefusesBeforeRemovingAnythingWhenNoNetworkLifecycleIsConfigured()
+    {
+        // The guard has to fire while there is still something to remove the network. Refusing
+        // after the container is gone would leave the declared network with no owner left to
+        // clean it up.
+        var fake = new Fake { ContainerExists = true, NetworkExists = true };
+
+        Assert.Throws<ConfigException>(() => new SandboxLifecycle(Isolated(), fake.Run).Destroy("scanner"));
+
+        Assert.False(Ran(fake, "remove"), "the container must not be removed first");
+        Assert.False(Ran(fake, "network", "remove"));
+    }
+
     [Theory]
     [InlineData("created")]
     [InlineData("exited")]

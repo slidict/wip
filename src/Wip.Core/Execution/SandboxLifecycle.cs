@@ -198,6 +198,11 @@ public sealed class SandboxLifecycle(
         var reconcileVolumes = VolumesToReconcileOnDestroy(definition, existing);
         if (reconcileVolumes.Count != 0 && volumes is null)
             throw new ConfigException($"Sandbox {name}: volume lifecycle is not configured; container removal cannot reconcile volumes");
+        // Hoisted to join the volume guard, for the reason that one is here: refusing further
+        // down would mean refusing after the container and its volumes were already gone,
+        // leaving the declared network with nothing left to remove it.
+        if (definition.Network is not null && networks is null)
+            throw new ConfigException($"Sandbox {name}: network lifecycle is not configured; container removal cannot remove its network");
 
         if (existing.Id is not null)
         {

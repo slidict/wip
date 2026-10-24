@@ -46,7 +46,18 @@ function Invoke-NetworkIsolationE2E([string] $Namespace) {
             # hit it (the blocked probes pass today), but the assertions depend on exit codes,
             # not on exceptions.
             $result = Receive-Job $job -ErrorAction SilentlyContinue
+            # A job whose scriptblock was aborted -- by exactly the re-raised error the comment
+            # above describes -- emits no object, and silence must not read as a result.
+            # Measured: $null.Code is $null, `$null -eq 0` is $false, so Assert-NonZero would
+            # *pass* on it and every blocked probe would report success having run nothing.
+            # $output would be empty too, so the unsupported-probe guard could not fire either.
+            if ($null -eq $result) {
+                throw "no result from: $Exe $($Arguments -join ' ')"
+            }
             $code = $result.Code
+            if ($null -eq $code) {
+                throw "no exit status from: $Exe $($Arguments -join ' ')"
+            }
             $output = [string]$result.Output
         }
         finally {
