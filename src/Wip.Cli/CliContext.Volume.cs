@@ -58,7 +58,14 @@ internal sealed partial class CliContext
         return WslPath.ForWslc(source, $"volumes.{name}.sync.source");
     }
 
-    private SandboxBackend ResourceBackend()
+    /// <param name="streamOutput">
+    /// Where a streamed child's stdout goes. Defaults to the console's, which is what every
+    /// sandbox, volume and network command wants. A caller that writes its own result to
+    /// stdout -- a scan handing on a tool's report -- passes stderr instead, so the child's
+    /// progress cannot be mixed into it. Passed per call rather than changed in place,
+    /// because this backend is shared.
+    /// </param>
+    private SandboxBackend ResourceBackend(TextWriter? streamOutput = null, TextWriter? streamError = null)
     {
         var executable = Resolver.Resolve(Config.WslcCommand);
         return (arguments, timeout, console) =>
@@ -68,7 +75,7 @@ internal sealed partial class CliContext
                 var result = Probe([executable, .. arguments], timeout);
                 return new(result.Code, result.Output);
             }
-            var runner = new CommandRunner(Interpreter, debug: Debug, quiet: Quiet);
+            var runner = new CommandRunner(Interpreter, output: streamOutput, error: streamError, debug: Debug, quiet: Quiet);
             if (console == SandboxConsoleMode.Interactive)
             {
                 // The child owns the console, so there is no stream for CommandRunner to

@@ -94,6 +94,9 @@ internal sealed class ScanEngine(
         RequireDeclaredNetwork(definition, sandbox);
         var plan = scanner.Plan(target);
         plan.Validate(scanner.Name);
+        // Before the pull, so a sandbox that would run a different image is refused rather
+        // than having an image fetched for it that nothing will use.
+        RequirePinnedImage(definition, sandbox, plan);
         // The pull is the preparation. A pinned reference is what makes it meaningful: pulling
         // a floating tag here and running it later would be two different images, which is why
         // Validate refuses one above.
@@ -119,9 +122,16 @@ internal sealed class ScanEngine(
         var definition = Definition(sandbox);
         var declared = RequireDeclaredNetwork(definition, sandbox);
         plan.Validate(scanner.Name);
+        // Re-checked here for the reason the plan is re-validated: a caller can reach Run with
+        // a plan it built itself, so neither the plan nor the pairing is taken on trust.
+        RequirePinnedImage(definition, sandbox, plan);
 
         var deadline = timeout ?? DefaultScanTimeout;
-        if (deadline <= TimeSpan.Zero) throw new ConfigException("Scan timeout must be positive");
+        // Both bounds here, not just the lower one: the upper is what Exec enforces, and
+        // leaving it to that would reject the deadline only after the boundary checks below
+        // had run, in a place that reads as a scan failure rather than a bad argument.
+        if (deadline <= TimeSpan.Zero || deadline.TotalMilliseconds > int.MaxValue)
+            throw new ConfigException("Scan timeout must be positive and at most 2147483 seconds");
 
         // The boundary is verified here, immediately before anything executes, and not taken
         // on trust from `sandbox create`. A container created before the network was declared
@@ -155,6 +165,25 @@ internal sealed class ScanEngine(
     /// The declared network's name, or a refusal. A sandbox with no boundary declared is not
     /// a sandbox a scan may run in: there is no unrestricted mode to fall back to.
     /// </summary>
+    /// <summary>
+    /// Refuses a sandbox whose declared image is not the one the plan pinned.
+    /// </summary>
+    /// <remarks>
+    /// Without this the pin guarantees nothing. The scan runs as an exec inside the declared
+    /// sandbox, so the tool that actually executes is whatever that sandbox's image provides;
+    /// pulling the plan's image would leave it unused, and the outcome would name an image
+    /// that had not run. Binding the two is what makes "which tool ran" answerable, so the
+    /// scanner's image belongs in the sandbox declaration and the pull keeps it current.
+    /// </remarks>
+    private static void RequirePinnedImage(SandboxDefinition definition, string sandbox, ScanPlan plan)
+    {
+        if (string.Equals(definition.Image, plan.Image.Reference, StringComparison.Ordinal)) return;
+        throw new ConfigException(
+            $"Sandbox {sandbox}: declares image '{definition.Image}', but the tool pins " +
+            $"'{plan.Image.Reference}'. The scan runs inside this sandbox, so its declaration must name " +
+            "the pinned image -- otherwise the tool that runs is not the one that was pinned.");
+    }
+
     private static string RequireDeclaredNetwork(SandboxDefinition definition, string sandbox) =>
         definition.Network
         ?? throw new ConfigException(

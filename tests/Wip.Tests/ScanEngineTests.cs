@@ -17,27 +17,34 @@ public class ScanEngineTests
     private static readonly string ScanNet = NetworkLifecycle.BackendName(Namespace, "scan");
     private static readonly string SandboxName = SandboxLifecycle.BackendName(Namespace, "scanner");
 
+    /// <summary>
+    /// The image both the sandbox declaration and the plan name. They have to agree: the
+    /// scan runs as an exec inside the declared sandbox, so its image is what actually
+    /// executes, and a plan pinning anything else would pin nothing.
+    /// </summary>
+    private const string Pinned = "example.test/zap@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
     private static SandboxSettings Settings(string body) => new Config(YamlLoader.LoadText("""
         version: 1
         resource_namespace: test
         """ + body, allowAliases: false)).SandboxResources;
 
-    private static SandboxSettings Isolated() => Settings("""
+    private static SandboxSettings Isolated() => Settings($"""
 
         networks:
           - name: scan
             internal: true
         sandboxes:
           - name: scanner
-            image: fixture:latest
+            image: {Pinned}
             network: scan
           - name: unisolated
-            image: fixture:latest
+            image: {Pinned}
         """);
 
     /// <summary>A plan that passes validation, so a test can vary one thing at a time.</summary>
     private static ScanPlan ValidPlan(string reportPath = "/out/report.json") => new(
-        new PinnedImage("example.test/zap@sha256:" + new string('b', 64)),
+        new PinnedImage(Pinned),
         ["zap-baseline", "-t", "http://app.test:8080"],
         reportPath,
         "2.15.0");
@@ -215,12 +222,41 @@ public class ScanEngineTests
     [InlineData("registry.test:5000/zap:2.15.0")]
     public void APinnedImageIsAccepted(string reference)
     {
+        // Asserted on the plan rather than through Prepare: pinning is the plan's property,
+        // while Prepare additionally requires the sandbox to declare the same image, which
+        // would refuse these for an unrelated reason.
+        (ValidPlan() with { Image = new PinnedImage(reference) }).Validate("stub");
+    }
+
+    [Fact]
+    public void ASandboxDeclaringADifferentImageIsRefused()
+    {
+        // Without this the pin guarantees nothing: Prepare would fetch the tool's image while
+        // the scan ran whatever the sandbox's own image provides, and the outcome would name
+        // an image that never ran.
         var fake = new Fake();
-        var scanner = new StubScanner(ValidPlan() with { Image = new PinnedImage(reference) });
+        var scanner = new StubScanner(ValidPlan() with
+        {
+            Image = new PinnedImage("example.test/other@sha256:" + new string('d', 64)),
+        });
 
-        var plan = Engine(fake).Prepare(scanner, "scanner", new ScanTarget("app.test"));
+        var error = Assert.Throws<ConfigException>(() => Engine(fake).Prepare(scanner, "scanner", new ScanTarget("app.test")));
 
-        Assert.Equal(reference, plan.Image.Reference);
+        Assert.Contains("must name the pinned image", error.Message);
+        Assert.False(Ran(fake, "pull"), "nothing is fetched for a sandbox that would run something else");
+    }
+
+    [Fact]
+    public void RunRefusesAPlanThatDoesNotMatchTheSandboxImage()
+    {
+        // Re-checked in Run for the reason the plan is re-validated there: a caller can build
+        // a plan itself and never go through Prepare.
+        var fake = new Fake();
+        var plan = ValidPlan() with { Image = new PinnedImage("example.test/other@sha256:" + new string('d', 64)) };
+
+        Assert.Throws<ConfigException>(() => Engine(fake).Run(new StubScanner(plan), "scanner", plan));
+
+        Assert.False(Ran(fake, "exec"));
     }
 
     [Fact]

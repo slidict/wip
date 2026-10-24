@@ -18,7 +18,9 @@ internal sealed partial class CliContext
     internal int SecurityScan(string sandbox, string tool, string target, int timeoutSeconds)
     {
         if (timeoutSeconds <= 0) throw new ConfigException("--timeout must be a positive number of seconds");
-        var backend = ResourceBackend();
+        // Both sinks to stderr: this command writes the report to stdout, and a scanner's
+        // own progress arriving there would be mixed into it.
+        var backend = ResourceBackend(streamOutput: Console.Error, streamError: Console.Error);
         var networks = new NetworkLifecycle(Config.SandboxResources, backend);
         var lifecycle = new SandboxLifecycle(Config.SandboxResources, backend, null, networks);
         var engine = new ScanEngine(Config.SandboxResources, lifecycle, networks, backend);

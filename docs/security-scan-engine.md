@@ -20,6 +20,12 @@ The sandbox and its internal network stay declared in `wip.yml`. The command cho
 and a target, not an environment: the boundary belongs to the configuration, which is what
 keeps it out of reach of whatever is being scanned.
 
+**The sandbox must declare the image the tool pins.** The scan is an exec inside that
+sandbox, so its image is the tool that actually runs; a plan pinning anything else would
+pin nothing, and the recorded provenance would name an image that never executed. Both
+`Prepare` and `Run` refuse the pair when they differ, so the scanner sandbox declares the
+scanner image and the pull keeps that image current.
+
 `--target` is an address or alias reachable **only inside the declared network** — a
 `--network-alias` of another sandbox on it, or its address. A host or public name does not
 resolve there, and that is the boundary working rather than a misconfiguration.
@@ -28,6 +34,10 @@ The tool's own exit status is forwarded. Scanners use it to report findings, so 
 to 0 would hide what a scan found. The report is written to stdout exactly as the tool wrote
 it; provenance (tool, sandbox, network, pinned image, rules version, status) goes to stderr as
 one line.
+
+A scanner's own streamed progress goes to stderr too. The scan path asks the backend for
+that, rather than changing the shared runner, because the same backend serves the sandbox,
+volume and network commands, where stdout is the right place for it.
 
 ## The adapter contract
 
@@ -91,6 +101,7 @@ otherwise produce is a scan that ran somewhere it could reach the internet.
 | --- | --- |
 | `--tool` names nothing registered, or is absent | Refused, listing what is registered |
 | The sandbox declares no network | Refused; there is no unrestricted mode to fall back to |
+| The sandbox's declared image is not the one the plan pins | Refused before the pull, and again in `Run` |
 | The image is not pinned (`latest`, `stable`, `edge`, `main`, `master`, `nightly`, or no tag) | Refused before the pull |
 | No rules version is given | Refused; an unpinned rule set is fetched at scan time, which the boundary forbids |
 | The report path is not a canonical absolute path | Refused |
@@ -101,12 +112,16 @@ otherwise produce is a scan that ran somewhere it could reach the internet.
 | The sandbox is attached to anything other than exactly its declared network | Refused |
 | The timeout is not positive | Refused |
 
-The last two are the point of this layer, and they close a gap the isolation work left open
-(slidict/wip#263): `sandbox create` refuses a container that is not behind its declared
-boundary, but `exec` did not, and a scan is an `exec`. The engine therefore verifies the
-attachment itself, immediately before running anything, rather than trusting that create did.
-A container created before `network:` was added to `wip.yml` is still on whatever it was
-given; this is where that is caught.
+The boundary checks close a gap the isolation work left open (slidict/wip#263): `sandbox
+create` refuses a container that is not behind its declared boundary, but `exec` did not,
+and a scan is an `exec`. A container created before `network:` was added to `wip.yml` is
+still on whatever it was given.
+
+That check now lives in `SandboxLifecycle.RunningId`, the guard `exec`, `capture`,
+`attach`, the relay and this engine all pass through, rather than in the engine alone — so
+it holds for every way into a running sandbox and not only for a scan. The engine keeps its
+own check as well, which is where the refusal names the scan. A sandbox declaring no
+network is unaffected, so this costs nothing where there is no boundary to verify.
 
 ## What is tested, and what is not
 
