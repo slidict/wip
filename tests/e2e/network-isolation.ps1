@@ -5,7 +5,9 @@
 # boundary. It cannot prove the boundary blocks anything, because a fake backend has no
 # packets. That is what this file is for: a scan sandbox on a declared internal network, and
 # assertions that the one allowed path works while every forbidden one does not.
-function Invoke-NetworkIsolationE2E([string] $Namespace, [string] $Image) {
+# $Image is not taken: the sandboxes come from wip.yml's own declarations, unlike the volume
+# and mount fixtures that run throwaway containers of their own.
+function Invoke-NetworkIsolationE2E([string] $Namespace) {
     $sandboxes = New-Object 'Collections.Generic.List[string]'
     $squatted = $null
 
@@ -31,14 +33,27 @@ function Invoke-NetworkIsolationE2E([string] $Namespace, [string] $Image) {
             [pscustomobject]@{ Code = $LASTEXITCODE; Output = $text }
         } -ArgumentList $Exe, $Arguments, $script:Workspace
 
-        if (-not (Wait-Job $job -Timeout $TimeoutSeconds)) {
-            Remove-Job $job -Force
-            throw "timed out after ${TimeoutSeconds}s: $Exe $($Arguments -join ' ')"
+        try {
+            if (-not (Wait-Job $job -Timeout $TimeoutSeconds)) {
+                throw "timed out after ${TimeoutSeconds}s: $Exe $($Arguments -join ' ')"
+            }
+            # -ErrorAction SilentlyContinue for the reason the three Start-Job sites in
+            # run-e2e.ps1 use it: a job runspace inherits neither this script's
+            # $ErrorActionPreference nor its $PSNativeCommandUseErrorActionPreference = $false,
+            # and under pwsh 7.4+ that preference defaults to $true -- so a probe that is
+            # *expected* to exit non-zero can arrive as an error record and be re-raised here
+            # as a terminating error, instead of as the status the assertion reads. CI has not
+            # hit it (the blocked probes pass today), but the assertions depend on exit codes,
+            # not on exceptions.
+            $result = Receive-Job $job -ErrorAction SilentlyContinue
+            $code = $result.Code
+            $output = [string]$result.Output
         }
-        $result = Receive-Job $job
-        Remove-Job $job -Force
-        $code = $result.Code
-        $output = [string]$result.Output
+        finally {
+            # In the finally so a throw above -- deadline or re-raised error -- does not leak
+            # the job.
+            Remove-Job $job -Force -ErrorAction SilentlyContinue
+        }
 
         Write-Host "`$ $Exe $($Arguments -join ' ')  -> exit $code"
         if ($output.Trim()) { Write-Host $output.TrimEnd() }
@@ -151,9 +166,12 @@ function Invoke-NetworkIsolationE2E([string] $Namespace, [string] $Image) {
         # The listener outlives the exec that started it, which is what makes a TCP assertion
         # possible at all: `wip sandbox exec` returns when its own command does, and busybox
         # nc backgrounded here keeps accepting until the connection below arrives.
+        # Exit 0 only says the shell ran: a backgrounded nc reports nothing about itself, so
+        # whether the listener is really there is established by the reachability assertion
+        # below, not here.
         Assert-Exit (Invoke-WipHere @('sandbox', 'exec', 'scan-target', '--', 'sh', '-c',
                 'nohup nc -l -p 9090 -e /bin/echo scan-target-reached </dev/null >/dev/null 2>&1 & echo listening')) 0 `
-            'start the target listener'
+            'ask scan-target to start a listener'
 
         Assert-Reachable 'scan-scanner' "ping -c 1 -W 2 $targetAddress" 'the declared target over ICMP'
         Assert-Reachable 'scan-scanner' "nc -z -w 3 $targetAddress 9090" 'the declared target port'

@@ -159,6 +159,18 @@ public class NetworkIsolationTests
         return new(resolved, fake.Run, null, new NetworkLifecycle(resolved, fake.Run));
     }
 
+    /// <summary>
+    /// Records its reconciles into the backend's own call log, so a test can assert what ran
+    /// before what across both the volume and the network side.
+    /// </summary>
+    private sealed class RecordingVolumes(Fake fake) : IVolumeLifecycle
+    {
+        public VolumeStatus Status(string name) => new(name, "wip-v-stub-" + name, false, [], false);
+        public int Create(string name) { fake.Calls.Add(["volume-create", name]); return 0; }
+        public int Destroy(string name) { fake.Calls.Add(["volume-destroy", name]); return 0; }
+        public int Reconcile(string name) { fake.Calls.Add(["volume-reconcile", name]); return 0; }
+    }
+
     private static bool Ran(Fake fake, params string[] prefix) =>
         fake.Calls.Any(c => c.Length >= prefix.Length && c.Take(prefix.Length).SequenceEqual(prefix));
 
@@ -354,6 +366,42 @@ public class NetworkIsolationTests
         Assert.Throws<WipException>(() => Lifecycle(fake).Destroy("scanner"));
 
         Assert.False(Ran(fake, "network", "remove"));
+    }
+
+    [Fact]
+    public void AFailedNetworkRemovalStillReconcilesTheVolumes()
+    {
+        // The reconcile after the container is removed is the one that frees volumes now
+        // nothing holds them, and it must not be skipped by a network that cannot be removed:
+        // on a retry the container is already gone, so the names are no longer recoverable
+        // from its mounts.
+        var settings = Settings("""
+
+            volumes:
+              - name: scratch
+                persistent: false
+                mount: /scratch
+            networks:
+              - name: scan
+                internal: true
+            sandboxes:
+              - name: scanner
+                image: fixture:latest
+                volumes: [scratch]
+                network: scan
+            """);
+        // Owned by something else, so the removal refuses -- the squatted-name case the e2e
+        // fixture builds on purpose.
+        var fake = new Fake { ContainerExists = true, NetworkExists = true, NetworkOwner = "v1:other:network:scan" };
+        var lifecycle = new SandboxLifecycle(settings, fake.Run, new RecordingVolumes(fake), new NetworkLifecycle(settings, fake.Run));
+
+        Assert.Throws<WipException>(() => lifecycle.Destroy("scanner"));
+
+        var containerRemoval = fake.Calls.FindIndex(c => c[0] == "remove");
+        var reconciles = fake.Calls.Select((c, i) => (c, i)).Where(x => x.c[0] == "volume-reconcile").Select(x => x.i).ToArray();
+        Assert.True(containerRemoval >= 0, "the container is removed");
+        Assert.Contains(reconciles, i => i < containerRemoval);
+        Assert.Contains(reconciles, i => i > containerRemoval);
     }
 
     [Fact]

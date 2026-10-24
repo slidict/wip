@@ -459,7 +459,7 @@ try {
     Invoke-RelayLifecycleE2E -Namespace $sandboxNamespace -Image 'wip-e2e:latest'
 
     . (Join-Path $PSScriptRoot 'network-isolation.ps1')
-    Invoke-NetworkIsolationE2E -Namespace $sandboxNamespace -Image 'wip-e2e:latest'
+    Invoke-NetworkIsolationE2E -Namespace $sandboxNamespace
 
     . (Join-Path $PSScriptRoot 'shim-persistence.ps1')
     Invoke-ShimPersistenceE2E
@@ -487,7 +487,10 @@ catch {
 finally {
     if ($script:Workspace -and (Test-Path (Join-Path $script:Workspace 'wip.yml'))) {
         # The lifecycle verifies labels and IDs before removing this run's resource.
-        foreach ($sb in @('fixture', 'mount-shared-first', 'mount-shared-second', 'relay-fixture', 'shim-first', 'shim-second', 'scan-scanner', 'scan-target', 'scan-outsider')) {
+        # The scan-* sandboxes are destroyed by the network fixture's own bounded cleanup.
+        # Repeating them here would reach them through the unbounded Invoke-Wip, which is the
+        # hang that cleanup exists to avoid; the fixture reports its own failures as warnings.
+        foreach ($sb in @('fixture', 'mount-shared-first', 'mount-shared-second', 'relay-fixture', 'shim-first', 'shim-second')) {
             try {
                 $cleanup = Invoke-Wip @('sandbox', 'destroy', $sb)
                 if ($cleanup.Code -ne 0) {

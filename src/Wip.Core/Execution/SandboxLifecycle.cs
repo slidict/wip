@@ -214,15 +214,6 @@ public sealed class SandboxLifecycle(
             if (removed.Code != 0) return removed.Code;
             if (Status(name).Id is not null) throw Failure(name, "container still exists after removal; retry status before recovery");
         }
-        // After the container, so the network is never removed from under a live attachment.
-        // Only the declared one, and only when its ownership label and internal flag match.
-        if (definition.Network is { } networkName)
-        {
-            if (networks is null)
-                throw new ConfigException($"Sandbox {name}: network lifecycle is not configured; container removal cannot remove its network");
-            var code = networks.Destroy(networkName);
-            if (code != 0) return code;
-        }
         if (reconcileVolumes.Count != 0)
         {
             if (volumes is null) throw new ConfigException($"Sandbox {name}: volume lifecycle is not configured; container removal cannot reconcile volumes");
@@ -231,6 +222,19 @@ public sealed class SandboxLifecycle(
                 var code = volumes.Reconcile(vName);
                 if (code != 0) return code;
             }
+        }
+        // Last, and for two reasons. After the container, so the network is never removed
+        // from under a live attachment -- and after the reconcile above, because that is the
+        // one that frees volumes now the container is gone. Removing the network first meant
+        // a squatted name or a failing `network remove` skipped it, and the names could not
+        // be recovered on a retry: the container is already gone by then, so
+        // VolumesToReconcileOnDestroy no longer learns them from its mounts.
+        if (definition.Network is { } networkName)
+        {
+            if (networks is null)
+                throw new ConfigException($"Sandbox {name}: network lifecycle is not configured; container removal cannot remove its network");
+            var code = networks.Destroy(networkName);
+            if (code != 0) return code;
         }
         return 0;
     }
