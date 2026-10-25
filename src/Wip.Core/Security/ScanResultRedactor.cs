@@ -17,8 +17,9 @@ internal static class ScanResultRedactor
     private static readonly Regex NamedSecrets = new(
         """(\b(?:""" + SecretNames + """)["']?\s*=\s*["']?)[^&\s"'<>;,}\]]+""", Options, Deadline);
     // Colon syntax is explicit only for a quoted object key or a key at a line boundary.
+    // The key is captured so the alias exemption below can see which name it was.
     private static readonly Regex ColonSecrets = new(
-        """((?:(?<line>(?:^|[\r\n])\s*(?:""" + SecretNames + """)\s*:\s*["']?)|["'](?:""" + SecretNames + """)["']\s*:\s*["']?))(?<value>[^&\s"'<>;,}\]]+)""", Options, Deadline);
+        """((?:(?<line>(?:^|[\r\n])\s*(?<key>""" + SecretNames + """)\s*:\s*["']?)|["'](?:""" + SecretNames + """)["']\s*:\s*["']?))(?<value>[^&\s"'<>;,}\]]+)""", Options, Deadline);
     private static readonly Regex QueryValues = new(
         """((?:^|[?&\s])[^=&\s]+\s*=)([^&\s"'<>]+)""", Options, Deadline);
     private static readonly Regex UserInfo = new(
@@ -44,8 +45,7 @@ internal static class ScanResultRedactor
             redacted = Credentials.Replace(redacted, match => match.Groups[1].Value + Marker);
             redacted = NamedSecrets.Replace(redacted, match => match.Groups[1].Value + Marker);
             redacted = ColonSecrets.Replace(redacted, match =>
-                match.Groups["line"].Success && match.Groups["value"].Value.All(char.IsAsciiDigit)
-                    ? match.Value : match.Groups[1].Value + Marker);
+                IsAliasAndPort(match) ? match.Value : match.Groups[1].Value + Marker);
             redacted = QueryValues.Replace(redacted, match =>
                 match.Groups[1].Value + (LooksLikeToken(match.Groups[2].Value) ? Marker : match.Groups[2].Value));
             if (redactPaths)
@@ -73,6 +73,25 @@ internal static class ScanResultRedactor
             return Redact(evidence);
         }
         catch (RegexMatchTimeoutException) { return Marker; }
+    }
+
+    /// <summary>
+    /// The one case a line-leading <c>name: digits</c> is not a secret: raw scanner output
+    /// quotes a service alias and its port, as in <c>auth:8080 - crawled 12 URLs</c>.
+    /// </summary>
+    /// <remarks>
+    /// Narrow on purpose. Exempting every numeric value let <c>password: 123456</c> and
+    /// <c>token: 987654321</c> through, which are credentials however short they are. Of the
+    /// names this redactor knows, only <c>auth</c> plausibly names a service, and a port is at
+    /// most five digits -- so that pair is the exemption, and nothing else is.
+    /// </remarks>
+    private static bool IsAliasAndPort(Match match)
+    {
+        if (!match.Groups["line"].Success || !match.Groups["key"].Success) return false;
+        if (!string.Equals(match.Groups["key"].Value, "auth", StringComparison.OrdinalIgnoreCase)) return false;
+        var value = match.Groups["value"].Value;
+        return value.Length is > 0 and <= 5 && value.All(char.IsAsciiDigit) &&
+               int.TryParse(value, out var port) && port is > 0 and <= 65535;
     }
 
     private static bool PathLooksLikeToken(string value)

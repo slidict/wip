@@ -124,6 +124,25 @@ public sealed class ScanResultRedactorTests
             ScanResultRedactor.RedactMetadata(target));
     }
 
+    /// <summary>
+    /// The alias exemption is for a service name and a port, nothing else. Exempting every
+    /// numeric value once let these through, and a short digit string is still a credential.
+    /// </summary>
+    [Theory]
+    [InlineData("password: 123456")]
+    [InlineData("token: 987654321")]
+    [InlineData("session: 20481234")]
+    [InlineData("secret: 42")]
+    [InlineData("passwd: 0000")]
+    [InlineData("auth: 123456")]
+    [InlineData("auth: 70000")]
+    public void ANumericSecretValueIsStillRedacted(string input)
+    {
+        var redacted = ScanResultRedactor.Redact(input);
+        Assert.EndsWith(ScanResultRedactor.Marker, redacted);
+        Assert.DoesNotContain(input.Split(':')[1].Trim(), redacted);
+    }
+
     [Fact]
     public void OrdinaryEvidenceIsPreserved()
     {
