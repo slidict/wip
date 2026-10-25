@@ -25,6 +25,7 @@ someone's terminal.
 | `wip exec` (failing command) | a non-zero status inside the container is forwarded as wip's own |
 | `wip run` | exit 0, the marker is echoed, and the long-lived container is untouched |
 | `wip down` | exit 0; the container is gone from `wslc list --all` |
+| sandbox command override | a one-shot CMD image remains running with a declared command; without it, create reports failure and the container exits |
 
 ## Running it locally
 
@@ -56,6 +57,20 @@ volume fixtures use a unique resource namespace; their consumers are inspected f
 ownership before removal. Volume finalizers explicitly remove only the declared owned
 storage after consumers are gone. Nonzero cleanup fails the run. Failed runs keep the scratch
 configuration/journal for recovery, even without `-KeepWorkspace`.
+
+## Sandbox command overrides
+
+`sandbox-command.ps1`, called by `run-e2e.ps1`, builds `Dockerfile.sandbox-command` from the
+already built fixture image. It clears ENTRYPOINT and uses a one-shot `/bin/true` CMD. Two
+sandbox configurations use that same image: `command: [sleep, '600']` must create a running
+sandbox with sleep as PID 1 and remain running after a delayed check; omitting `command`
+must fail creation and report an exited container.
+
+This tests command/CMD replacement, not ENTRYPOINT replacement. A fixed image ENTRYPOINT is
+unchanged by the sandbox command field. Each external invocation in this scenario, including
+build, status and cleanup, has a bounded deadline. Its fixture namespaces and ownership checks
+keep cleanup scoped to the resources created by the test. Real WSLC execution runs in the
+Windows e2e workflow; the unit suite does not execute this scenario.
 
 ## The terminal half
 

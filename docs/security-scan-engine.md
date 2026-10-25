@@ -27,27 +27,34 @@ references are refused.
 ### Keeping the scanner container running
 
 `SandboxLifecycle.Create` starts the image with `run -d` and requires the resulting container
-to remain running. The sandbox definition currently has no command or entrypoint override.
-A one-shot scanner image whose entrypoint exits therefore cannot be used directly.
+to remain running. Declare `command` as an argv list to replace a one-shot image CMD with a
+persistent foreground command while keeping the upstream image digest:
 
-Package a scanner runtime image with a persistent entrypoint before adding its adapter. For
-example, a derived image can replace the upstream entrypoint with a keepalive process:
-
-```dockerfile
-FROM upstream-scanner@sha256:<upstream digest>
-ENTRYPOINT ["sleep", "infinity"]
+```yaml
+sandboxes:
+  - name: scanner
+    image: scanner-runtime@sha256:<64 hexadecimal characters>
+    network: scan-network
+    command: [sleep, infinity]
 ```
 
-This example requires a `sleep` implementation supporting `infinity`; choose a persistent
-foreground process available in the actual image. Publish the derived image and use its
-resolved repository digest in both the adapter's `ScanPlan.Image` and the sandbox's `image:`.
-The adapter executes the scanner binary explicitly through `Argv`, since the original image
-entrypoint is no longer the container's main process. Keep the container running until scan
-cleanup stops it. The derived runtime must also provide the report-reading utilities used by
-the engine.
+The image must provide `sleep` with `infinity` support; choose a persistent foreground command
+available in the actual scanner image. The adapter's `ScanPlan.Image` and the sandbox's
+`image:` still name the same upstream digest. Its `Argv` explicitly runs the scanner binary
+through exec while the declared main command keeps the container alive until cleanup.
 
-A future configuration override would need typed argv fields, backend argument validation
-and lifecycle tests; it is not implemented by this engine.
+The list is passed after the image reference, never through shell splitting or expansion.
+It cannot become backend options. Loading rejects an empty list, nonstring or empty elements,
+control characters, and any element beginning with `-`. Omit `command` to retain the image's
+original CMD and ENTRYPOINT unchanged. The declaration applies when a container is created;
+starting or reusing an existing container preserves its original command. To apply an edited
+command, explicitly destroy and recreate the sandbox.
+
+This overrides CMD, not ENTRYPOINT. An image with a fixed scanner ENTRYPOINT still receives
+the declared list as arguments to that entrypoint. The keepalive example therefore requires
+an image with no ENTRYPOINT or an entrypoint that executes the supplied command; `command`
+alone cannot replace a fixed one-shot ENTRYPOINT. It does not add an entrypoint override.
+The image must also provide the report-reading utilities used by the engine.
 
 ## Internal adapter contract
 

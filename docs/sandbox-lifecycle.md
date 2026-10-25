@@ -1,8 +1,8 @@
 # Named sandbox lifecycle
 
 The runtime implements the sandbox portion of [the resource contract](sandbox-volume-contract.md).
-It has no built-in agent roles. Declare an explicit namespace and a sandbox image whose default
-CMD/ENTRYPOINT keeps the container running:
+It has no built-in agent roles. Declare an explicit namespace and an image, optionally with
+an argv list that keeps the container running:
 
 ```yaml
 version: 1
@@ -10,7 +10,16 @@ resource_namespace: example
 sandboxes:
   - name: first
     image: example/tool:1
+    command: [sleep, infinity]
 ```
+
+`command` is a list of strings passed after the image reference, without shell splitting or
+expansion. It replaces the image CMD, not ENTRYPOINT; a fixed entrypoint still receives these
+arguments. Choose a command available in the image and compatible with its entrypoint.
+Omit the field to preserve the image defaults. Empty lists, empty or nonstring elements,
+control characters and elements beginning with `-` are rejected during configuration loading.
+Command edits affect new containers only: destroy and recreate an existing sandbox to apply
+them; starting or reusing it preserves its original command.
 
 ```powershell
 wip sandbox create first
@@ -68,8 +77,8 @@ After confirmed container removal, `VolumeLifecycle.Reconcile` is invoked for ea
 persistent volumes are retained; ephemeral volumes remain intact while any referencing container
 is still active, and are cleaned up only after the last referencing container detaches.
 Re-creating a sandbox reuses retained persistent volumes while provisioning fresh ephemeral storage.
-The image default command controls sandbox lifetime; an immediately exiting image is reported as
-unsuccessful creation with a recoverable residue.
+The declared command, or image defaults when absent, controls sandbox lifetime. A main
+process that exits immediately is reported as unsuccessful creation with a recoverable residue.
 
 ## Interactive sessions
 

@@ -1,0 +1,6 @@
+FROM wip-e2e:latest
+
+# An explicit empty ENTRYPOINT makes this a one-shot CMD fixture. Arguments after the
+# image replace CMD; they do not override a fixed ENTRYPOINT.
+ENTRYPOINT []
+CMD ["/bin/true"]

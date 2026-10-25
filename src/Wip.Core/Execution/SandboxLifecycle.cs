@@ -175,6 +175,7 @@ public sealed class SandboxLifecycle(
                 }
             }
             runArgs.Add(definition.Image);
+            if (definition.Command is { } command) runArgs.AddRange(command);
             var created = backend(runArgs, MutationTimeout, SandboxConsoleMode.Stream);
             // Even a failed/timed-out run can leave a container. Keep it for ownership-checked recovery.
             if (created.Code != 0) return created.Code;

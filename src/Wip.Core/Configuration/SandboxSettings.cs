@@ -40,12 +40,17 @@ public sealed record NetworkDefinition(string Name, bool Internal);
 /// backend's default bridge, which is what denies egress; leaving it out keeps the
 /// pre-existing behaviour of inheriting whatever the backend attaches by default.
 /// </param>
+/// <param name="Command">
+/// Optional argv appended after the image reference, without shell parsing. Null preserves
+/// the image's default command; an explicitly empty list is invalid.
+/// </param>
 public sealed record SandboxDefinition(
     string Name,
     string Image,
     IReadOnlyList<string> Volumes,
     bool ReportRelay = false,
-    string? Network = null);
+    string? Network = null,
+    IReadOnlyList<string>? Command = null);
 
 /// <summary>Declarative resources only; loading never creates, mounts or deletes resources.</summary>
 public sealed partial class SandboxSettings
@@ -108,7 +113,7 @@ public sealed partial class SandboxSettings
         var sandboxNames = new HashSet<string>(StringComparer.Ordinal);
         foreach (var item in Sequence(raw, "sandboxes"))
         {
-            var entry = Entry(item, "sandboxes", "name", "image", "volumes", "report_relay", "network");
+            var entry = Entry(item, "sandboxes", "name", "image", "volumes", "report_relay", "network", "command");
             var name = Name(entry, "sandboxes");
             if (!sandboxNames.Add(name)) throw new ConfigException($"Duplicate sandbox name: {name}");
             var image = Text(entry, "image", $"sandboxes.{name}");
@@ -141,7 +146,7 @@ public sealed partial class SandboxSettings
                 if (!networkDef.Internal)
                     throw new ConfigException($"sandboxes.{name} references network {network}, which is not internal");
             }
-            sandboxes.Add(new SandboxDefinition(name, image, references.AsReadOnly(), reportRelay, network));
+            sandboxes.Add(new SandboxDefinition(name, image, references.AsReadOnly(), reportRelay, network, ReadCommand(entry, name)));
         }
         string? resourceNamespace = null;
         if (volumes.Count > 0 || networks.Count > 0 || sandboxes.Count > 0 || raw.ContainsKey("resource_namespace"))
@@ -184,9 +189,28 @@ public sealed partial class SandboxSettings
             // Emitted only when enabled, so configs without a relay normalize exactly as before.
             if (s.ReportRelay) mapping["report_relay"] = true;
             if (s.Network is { } network) mapping["network"] = network;
+            if (s.Command is { } command) mapping["command"] = command.Cast<object?>().ToList();
             return (object?)mapping;
         }).ToList();
         return result;
+    }
+
+    private static IReadOnlyList<string>? ReadCommand(OrderedDictionary<string, object?> entry, string name)
+    {
+        if (!entry.ContainsKey("command")) return null;
+        var path = $"sandboxes.{name}.command";
+        var argv = RubyValue.AsSequence(entry["command"])
+            ?? throw new ConfigException($"{path} must be a sequence of arguments");
+        if (argv.Count == 0) throw new ConfigException($"{path} must not be empty");
+        var command = new List<string>();
+        foreach (var argument in argv)
+        {
+            if (argument is not string text || string.IsNullOrWhiteSpace(text) || text.Any(char.IsControl))
+                throw new ConfigException($"{path} entries must be nonempty strings without control characters");
+            if (text.StartsWith('-')) throw new ConfigException($"{path} entries must not start with '-'");
+            command.Add(text);
+        }
+        return command.AsReadOnly();
     }
 
     /// <summary>

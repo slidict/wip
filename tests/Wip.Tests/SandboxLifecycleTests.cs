@@ -15,6 +15,36 @@ public class SandboxLifecycleTests
             image: fixture:latest
         """ + suffix, allowAliases: false)).SandboxResources;
 
+    [Fact]
+    public void CreatePlacesTheDeclaredCommandAfterTheImageWithoutShellInterpretation()
+    {
+        var fake = new Fake();
+        var settings = Settings("\n    command: [sleep, '600', 'literal ; $(touch /tmp/marker)']");
+
+        Assert.Equal(0, new SandboxLifecycle(settings, fake.Run).Create("first"));
+
+        var run = Assert.Single(fake.Calls, argv => argv[0] == "run");
+        Assert.Equal(new[]
+        {
+            "run", "--name", fake.Name, "-d", "--label", "io.slidict.wip.owner=v1:test:sandbox:first",
+            "fixture:latest", "sleep", "600", "literal ; $(touch /tmp/marker)"
+        }, run);
+    }
+
+    [Fact]
+    public void CreateWithoutACommandRetainsTheOriginalBackendArguments()
+    {
+        var fake = new Fake();
+
+        Assert.Equal(0, new SandboxLifecycle(Settings(), fake.Run).Create("first"));
+
+        var run = Assert.Single(fake.Calls, argv => argv[0] == "run");
+        Assert.Equal(new[]
+        {
+            "run", "--name", fake.Name, "-d", "--label", "io.slidict.wip.owner=v1:test:sandbox:first", "fixture:latest"
+        }, run);
+    }
+
     [Theory]
     [InlineData(null)]
     [InlineData("")]
