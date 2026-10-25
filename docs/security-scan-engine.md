@@ -119,6 +119,10 @@ Each file is written to a temporary name and moved into place; `result.json` is 
 last. Consumers should begin with that document, not infer success from an artifact's presence.
 Omitting `--output` skips persistence. Stdout remains the raw report in both cases.
 
+The directory is checked and created before the scan starts, and before the image request, so
+an unusable path costs neither a pull nor a run. Persistence happens after the scan, so a path
+rejected there would take a completed scan's report with it.
+
 The JSON contract is versioned and written through `Utf8JsonWriter`:
 
 | Field | Consumer contract |

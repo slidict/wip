@@ -21,6 +21,9 @@ internal sealed partial class CliContext
         string? outputDirectory = null, string? commit = null)
     {
         ValidateSecurityTimeout(timeoutSeconds);
+        // Before Prepare, which requests a pinned image of about a gigabyte. The engine
+        // checks this again for callers that reach Run directly.
+        if (outputDirectory is not null) ScanResultStore.RequireUsable(outputDirectory);
         // Both sinks to stderr: this command writes the report to stdout, and a scanner's
         // own progress arriving there would be mixed into it.
         var backend = ResourceBackend(streamOutput: Console.Error, streamError: Console.Error);

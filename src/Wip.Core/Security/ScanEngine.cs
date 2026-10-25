@@ -148,6 +148,7 @@ internal sealed class ScanEngine(
         var startedAt = DateTimeOffset.UtcNow;
         var runId = Guid.NewGuid().ToString("N");
         target.Validate();
+        if (outputDirectory is not null) ScanResultStore.RequireUsable(outputDirectory);
         var definition = Definition(sandbox);
         var declared = RequireDeclaredNetwork(definition, sandbox);
         plan.Validate(scanner.Name);

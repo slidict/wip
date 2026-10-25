@@ -164,6 +164,39 @@ public sealed class ScanResultStoreTests : IDisposable
         Assert.Throws<ConfigException>(() => new ScanResultStore(directory).Write(result, "raw", "omitted"));
     }
 
+    /// <summary>
+    /// An unusable output path used to surface from Write, which runs after the scan: the
+    /// ArgumentException from an empty path is neither IO failure Write converts, so it left
+    /// the CLI through the top-level handler and took a completed scan's report with it.
+    /// </summary>
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void AnEmptyOutputDirectoryIsRefusedBeforeAnythingRuns(string requested)
+    {
+        var exception = Assert.Throws<ConfigException>(() => ScanResultStore.RequireUsable(requested));
+        Assert.Contains("--output", exception.Message);
+    }
+
+    [Fact]
+    public void AUsableOutputDirectoryIsAcceptedAndCreated()
+    {
+        var nested = Path.Combine(directory, "results", "nested");
+        ScanResultStore.RequireUsable(nested);
+        Assert.True(Directory.Exists(nested));
+        // Idempotent: the CLI checks before the image pull and the engine checks again.
+        ScanResultStore.RequireUsable(nested);
+    }
+
+    [Fact]
+    public void AnOutputPathThatIsAFileIsRefused()
+    {
+        Directory.CreateDirectory(directory);
+        var file = Path.Combine(directory, "occupied");
+        File.WriteAllText(file, "not a directory");
+        Assert.Throws<WipException>(() => ScanResultStore.RequireUsable(file));
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);

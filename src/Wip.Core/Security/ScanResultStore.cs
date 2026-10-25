@@ -5,6 +5,29 @@ namespace Wip.Security;
 /// <summary>Publishes complete run artifacts, with result.json acting as the final commit marker.</summary>
 internal sealed class ScanResultStore(string outputDirectory, Action<string, string>? publish = null)
 {
+    /// <summary>
+    /// Rejects an output directory that could not receive artifacts, before a scan runs.
+    /// </summary>
+    /// <remarks>
+    /// Write happens after the scan, so an unusable path discovered there costs the whole run:
+    /// Path.GetFullPath raises ArgumentException on an empty or whitespace path, which is
+    /// neither of the IO failures Write converts, so it would leave the CLI through Program's
+    /// handler and take the report with it. Called where the other scan inputs are validated.
+    /// Creating the directory now is the check -- a path that cannot hold a directory has to
+    /// fail before the scan, not after it. Later write failures remain Write's to report.
+    /// </remarks>
+    internal static void RequireUsable(string directory)
+    {
+        if (string.IsNullOrWhiteSpace(directory))
+            throw new ConfigException("--output must name a directory");
+        try { Directory.CreateDirectory(Path.GetFullPath(directory)); }
+        catch (ArgumentException exception) { throw new ConfigException($"--output is not a usable directory: {exception.Message}", exception); }
+        catch (NotSupportedException exception) { throw new ConfigException($"--output is not a usable directory: {exception.Message}", exception); }
+        catch (PathTooLongException exception) { throw new ConfigException($"--output is not a usable directory: {exception.Message}", exception); }
+        catch (IOException exception) { throw new WipException("Scan result output directory could not be created", exception); }
+        catch (UnauthorizedAccessException exception) { throw new WipException("Scan result output directory is inaccessible", exception); }
+    }
+
     internal string Write(ScanResult result, string? rawReport, string? rawUnperformedChecks)
     {
         ScanResultWriter.Validate(result);
