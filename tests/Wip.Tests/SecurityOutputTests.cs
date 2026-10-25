@@ -172,6 +172,26 @@ public sealed class SecurityOutputTests
         Assert.Contains("unperformed-check diagnostics unavailable: collection timed out", error.ToString());
     }
 
+    /// <summary>
+    /// An empty sidecar used to print its header with nothing under it, which reads as "no
+    /// checks were skipped" -- the one reading this collection exists to prevent. The scanner
+    /// asked for the file, so an empty one means the record was lost.
+    /// </summary>
+    [Fact]
+    public void AnEmptyUnperformedCheckRecordIsReportedRatherThanShownAsNone()
+    {
+        var outcome = new ScanOutcome("zap", "scanner", "image", "rules", "isolated", 0, "{\"alerts\":[]}",
+            UnperformedChecks: "");
+        using var output = new StringWriter();
+        using var error = new StringWriter();
+
+        Assert.Equal(0, CliContext.WriteScanOutcome(outcome, "/report.json", output, error, true));
+
+        var written = error.ToString();
+        Assert.DoesNotContain("Unperformed checks (raw):", written);
+        Assert.Contains("came back empty", written);
+    }
+
     private sealed class CountingWriter : StringWriter
     {
         internal int Writes { get; private set; }

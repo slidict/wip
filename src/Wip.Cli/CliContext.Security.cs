@@ -45,14 +45,20 @@ internal sealed partial class CliContext
         else if (outcome.TimedOut) error.WriteLine($"{outcome.Tool}: timed out; requested sandbox stop without collecting a partial report");
         else if (outcome.ReportError is { } reason) error.WriteLine($"{outcome.Tool}: {reason}");
         else error.WriteLine($"{outcome.Tool}: wrote no report at {reportPath}");
-        if (outcome.UnperformedChecks is { } diagnostics)
+        // An empty sidecar is reported, not printed as a bare header. A header with nothing
+        // under it reads as "nothing was skipped", which is the one reading this collection
+        // exists to prevent: the scanner asked for the file, so an empty one means the record
+        // was lost rather than that every check ran.
+        if (!string.IsNullOrEmpty(outcome.UnperformedChecks))
         {
             error.WriteLine("Unperformed checks (raw):");
-            WriteSecurityReport(error, diagnostics, isErrorRedirected);
-            if (!diagnostics.EndsWith('\n')) error.WriteLine();
+            WriteSecurityReport(error, outcome.UnperformedChecks, isErrorRedirected);
+            if (!outcome.UnperformedChecks.EndsWith('\n')) error.WriteLine();
         }
         else if (outcome.UnperformedChecksError is { } diagnosticsError)
             error.WriteLine($"{outcome.Tool}: unperformed-check diagnostics unavailable: {diagnosticsError}");
+        else if (outcome.UnperformedChecks is not null)
+            error.WriteLine($"{outcome.Tool}: the unperformed-check record came back empty; which checks were skipped is unknown");
         return outcome.ExitCode;
     }
 

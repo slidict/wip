@@ -5,6 +5,18 @@
     <RootNamespace>Wip.ScanHarness</RootNamespace>
     <IsPackable>false</IsPackable>
     <IsAotCompatible>false</IsAotCompatible>
+    <!--
+      No lock file, unlike the rest of the repository. Directory.Build.props turns them on,
+      and a committed one here would be a lock nobody validates: scripts/Test-LockedRestore.ps1
+      restores wip.slnx, and this project is deliberately absent from it, so adding it to that
+      script's project list would copy the lock without ever restoring against it. Through its
+      reference to Wip.Core this project does resolve a package, so its lock would carry a real
+      version and content hash and go stale the next time Directory.Packages.props moves,
+      updated by nothing and checked by nothing. PtyHarness keeps its lock because it has no
+      package references at all, which makes it empty and harmless. The e2e workflow publishes
+      this project without a locked restore, so nothing needs one.
+    -->
+    <RestorePackagesWithLockFile>false</RestorePackagesWithLockFile>
   </PropertyGroup>
   <!-- Test-only executable, kept out of the shipping solution like PtyHarness. -->
   <ItemGroup>
