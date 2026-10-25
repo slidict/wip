@@ -24,8 +24,8 @@ public class WikiTapeTests
 
     // docs/tapes ships in a public repository and the wiki links straight to its raw URLs.
     // The tracker's name comes from PrivateTrackerReferenceTests rather than being written
-    // here: that test searches every tracked file for it, and a file spelling it out would
-    // have to be excluded from its own search.
+    // here: that test searches every tracked file for it, and this repository is public, so
+    // the name is assembled at run time instead of appearing in any file.
     private static readonly string[] PrivateMarkers =
     [
         "herdr", "relay", "worktrees", PrivateTrackerReferenceTests.PrivateTracker,

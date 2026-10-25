@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace Wip.Tests;
 
@@ -23,16 +25,24 @@ namespace Wip.Tests;
 /// hold, which a content search never sees.
 /// </para>
 /// <para>
-/// The name is written here, exactly once, and the search is required to come back with
-/// <em>this file and nothing else</em>. That is what makes the pattern itself checked: a typo
-/// in <see cref="PrivateTracker"/> finds nothing, and finding nothing now fails. An earlier
-/// revision assembled the name at run time so that no file contained it, which made an empty
-/// result the correct answer and therefore worthless as evidence. A canary searching for some
-/// other string did not fix that: it proved a search worked, not that this pattern did.
+/// The expected result is that nothing matches, which on its own is worthless as evidence: a
+/// pattern that is wrong, and a search that is not running, both produce it. So two things are
+/// proved separately. <see cref="PatternIsTheTrackerName"/> hashes the pattern and compares the
+/// digest, which catches a typo without writing the name into a tracked file.
+/// <see cref="SearchReachesThisRepository"/> runs the same search for a string this repository
+/// certainly contains and requires the file holding it back, which catches a search that
+/// matches nothing and a run that is reading some other repository -- <c>GIT_DIR</c> and
+/// friends override <c>WorkingDirectory</c>.
 /// </para>
 /// <para>
-/// Nothing is allowlisted. <see cref="WikiTapeTests"/> takes the name from
-/// <see cref="PrivateTracker"/> instead of spelling it out, so it stays inside the search like
+/// <b>The name is deliberately not written out here.</b> An earlier revision spelled it into
+/// the constant so the search would find its own declaration, which did prove the pattern --
+/// by putting the exact string this test exists to keep out of the repository into a tracked,
+/// published file. Hashing proves the same thing without publishing it. Do not inline it.
+/// </para>
+/// <para>
+/// Nothing is allowlisted either. <see cref="WikiTapeTests"/> takes the name from
+/// <see cref="PrivateTracker"/> rather than spelling it out, so it stays inside the search like
 /// every other file; excluding it would have left 300 lines of ordinary test code unsearched.
 /// </para>
 /// <para>
@@ -43,14 +53,50 @@ namespace Wip.Tests;
 /// </remarks>
 public class PrivateTrackerReferenceTests
 {
-    internal const string PrivateTracker = "slidict/workspace";
+    /// <summary>
+    /// The private tracker's name, assembled so that no tracked file in this public repository
+    /// contains it. Verified by <see cref="PatternIsTheTrackerName"/>.
+    /// </summary>
+    internal static readonly string PrivateTracker = string.Join('/', "slidict", "workspace");
 
     /// <summary>
-    /// This file, as git reports it, and the one line in it that may hold the name: the
-    /// declaration above. Required rather than excused, so the search has to prove it ran.
+    /// SHA-256 of <see cref="PrivateTracker"/>. A digest is not the name: it pins the pattern
+    /// without disclosing it to a reader of this public file.
     /// </summary>
+    private const string PatternDigest = "e4c06a3a20b44c903e50773f56d02011b978d64eb2653a9b8fc0afaa04415b1b";
+
+    /// <summary>
+    /// A string this repository certainly contains, used to prove the search runs and reads
+    /// this repository, and the file it has to come back with.
+    /// </summary>
+    private const string KnownNeedle = nameof(PrivateTrackerReferenceTests);
     private const string ThisFile = "tests/Wip.Tests/PrivateTrackerReferenceTests.cs";
-    private const int AllowedMatchesInThisFile = 1;
+
+    /// <summary>
+    /// Without this, a misspelled pattern would match nothing, and matching nothing is what
+    /// passing looks like.
+    /// </summary>
+    [Fact]
+    public void PatternIsTheTrackerName()
+    {
+        var digest = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(PrivateTracker)));
+        Assert.Equal(PatternDigest, digest);
+    }
+
+    /// <summary>
+    /// Without this, a search that silently matches nothing -- a flag git stopped accepting, a
+    /// redirected repository -- would also look like passing.
+    /// </summary>
+    [Fact]
+    public void SearchReachesThisRepository()
+    {
+        var root = RepositoryRoot();
+        Assert.Contains(ThisFile, Split(Git(root, ["ls-files", "-z"])));
+        foreach (var index in new[] { true, false })
+        {
+            Assert.Contains(ThisFile, Split(Grep(root, KnownNeedle, index)));
+        }
+    }
 
     [Fact]
     public void NoTrackedFileNamesThePrivateTracker()
@@ -59,69 +105,39 @@ public class PrivateTrackerReferenceTests
 
         var paths = Split(Git(root, ["ls-files", "-z"]));
         Assert.NotEmpty(paths);
-        // The path list has to contain this file, or it is a list of something else.
-        Assert.Contains(ThisFile, paths);
 
         var offenders = new SortedSet<string>(StringComparer.Ordinal);
+        // A content search reads blobs and never looks at where they live.
         foreach (var relative in paths)
         {
             if (relative.Contains(PrivateTracker, StringComparison.OrdinalIgnoreCase)) offenders.Add(relative);
         }
-
         foreach (var index in new[] { true, false })
         {
-            var naming = Split(Grep(root, index, ["-l"]));
-            // This file must be there: it declares the name. Anything else named it.
-            Assert.Contains(ThisFile, naming);
-            offenders.UnionWith(naming.Where(path => path != ThisFile));
+            offenders.UnionWith(Split(Grep(root, PrivateTracker, index)));
         }
 
         Assert.True(offenders.Count == 0, string.Join("\n", [
             "これらのファイルが非公開の管理リポジトリ名を含む。",
             "公開リポジトリの読み手は辿れないため、指していた対象そのものを書く。",
-            .. offenders.Select(o => $"  {o}"),
+            // Redacted: a path can be the thing that names the tracker, and this message
+            // lands in a public CI log.
+            .. offenders.Select(o => $"  {Redact(o)}"),
         ]));
-
-        foreach (var index in new[] { true, false })
-        {
-            var matches = CountIn(root, index, ThisFile);
-            Assert.True(matches == AllowedMatchesInThisFile, string.Join("\n", [
-                $"{ThisFile} が管理リポジトリ名を {matches} 行で含む（宣言の {AllowedMatchesInThisFile} 行だけが許される）。",
-                index ? "対象: index" : "対象: 作業ツリー",
-            ]));
-        }
     }
 
     /// <summary>
-    /// Runs the content search over the index or the working tree.
+    /// Tracked files whose content matches, from the index or from the working tree.
     /// </summary>
     /// <remarks>
-    /// <c>git grep</c> exits 1 for "no match". That is tolerated only so the callers can assert
-    /// on the result; for them an empty result is a failure, not a pass. Binary blobs are
-    /// searched too rather than excluded: a name in one is published just the same.
+    /// <c>git grep</c> exits 1 for "no match". That is tolerated here because the callers decide
+    /// what an empty result means -- nothing for the tracker, a failure for the known needle.
+    /// Binary blobs are searched too rather than excluded: a name in one is published just the
+    /// same.
     /// </remarks>
-    private static string Grep(string root, bool index, string[] options, string? path = null)
-    {
-        // git refuses an option after a non-option argument, so the pathspec goes last, after
-        // the pattern, behind its own `--`.
-        string[] arguments = [
-            "grep", .. index ? new[] { "--cached" } : [], .. options, "-i", "-z", "-F", "-e", PrivateTracker,
-            .. path is null ? Array.Empty<string>() : ["--", path],
-        ];
-        return Git(root, arguments, allowNoMatch: true);
-    }
-
-    /// <summary>
-    /// How many lines of <paramref name="path"/> name the tracker. Measured: <c>grep -c -z</c>
-    /// writes one record per file as the path, a NUL, the count and a newline, so restricting it
-    /// to a single path keeps the output to one record and two fields.
-    /// </summary>
-    private static int CountIn(string root, bool index, string path)
-    {
-        var fields = Split(Grep(root, index, ["-c"], path));
-        if (fields.Length != 2) return 0;
-        return int.TryParse(fields[1].Trim(), out var count) ? count : 0;
-    }
+    private static string Grep(string root, string pattern, bool index) =>
+        Git(root, ["grep", .. index ? new[] { "--cached" } : [], "-l", "-i", "-z", "-F", "-e", pattern],
+            allowNoMatch: true);
 
     private static string[] Split(string output) => output.Split('\0', StringSplitOptions.RemoveEmptyEntries);
 
@@ -137,10 +153,11 @@ public class PrivateTrackerReferenceTests
     /// <para>
     /// A missing git binary fails rather than skips. Skipping would remove the only guard
     /// against publishing the name, and remove it silently: the run would stay green with
-    /// nothing checked. The one case that does skip is a source tree with no repository in it
-    /// -- a downloaded archive, a Docker stage that copies sources in -- where there is no
-    /// tracked set to read at all. A redirected repository does not reach that path: it answers
-    /// normally, and the assertions above catch it, because they require this file back.
+    /// nothing checked. The one case that skips is a source tree with no repository in it -- a
+    /// downloaded archive, a Docker stage that copies sources in -- where there is no tracked
+    /// set to read at all. It is decided on the first call, by
+    /// <see cref="RepositoryIsReadable"/>, rather than on any call: deciding it late would let
+    /// a later failure discard findings the earlier calls had already collected.
     /// </para>
     /// <para>
     /// Failure messages name the subcommand but never the arguments, and redact git's own
@@ -148,6 +165,61 @@ public class PrivateTrackerReferenceTests
     /// </para>
     /// </remarks>
     private static string Git(string root, string[] arguments, bool allowNoMatch = false)
+    {
+        var subcommand = arguments.Length > 0 ? arguments[0] : "(none)";
+        var (output, error, exitCode) = RunGit(root, arguments);
+
+        if (exitCode != 0 && NotARepository(error))
+        {
+            // Only reachable before the first assertion: RepositoryIsReadable has already
+            // skipped when there is no repository, so reaching it here means git stopped
+            // seeing one mid-run, which is a failure and not a reason to drop findings.
+            Assert.Fail($"git {subcommand} lost the repository: {Redact(error)}");
+        }
+
+        var tolerated = exitCode == 0 || (allowNoMatch && exitCode == 1);
+        Assert.True(tolerated, $"git {subcommand} exited {exitCode}: {Redact(error)}");
+        return output;
+    }
+
+    /// <summary>
+    /// Decided once, before anything is collected, so that a repository that is simply not
+    /// there skips while anything else fails.
+    /// </summary>
+    /// <remarks>
+    /// Lazy rather than a field initialiser. Static fields initialise in declaration order, and
+    /// running git needs <see cref="RepositoryLocationVariables"/>, which is declared below --
+    /// so computing this eagerly dereferenced a null array and surfaced as a
+    /// <c>TypeInitializationException</c> in every test touching this class.
+    /// </remarks>
+    private static readonly Lazy<bool> ReadableRepository = new(CheckRepository);
+
+    private static bool RepositoryIsReadable => ReadableRepository.Value;
+
+    private static bool CheckRepository()
+    {
+        var (_, error, exitCode) = RunGitRaw(RepositoryRoot(), ["rev-parse", "--git-dir"]);
+        return exitCode == 0 || !NotARepository(error);
+    }
+
+    /// <summary>
+    /// Runs git with the guard applied. Separate from <see cref="RunGitRaw"/> because the guard
+    /// is itself computed by running git: routing that first call through the guard would have
+    /// it read its own uninitialised field, and asserting from a static initialiser surfaces as
+    /// a <c>TypeInitializationException</c> in every test that touches this class --
+    /// <see cref="WikiTapeTests"/> included, since it reads <see cref="PrivateTracker"/>.
+    /// </summary>
+    private static (string Output, string Error, int ExitCode) RunGit(string root, string[] arguments)
+    {
+        if (!RepositoryIsReadable)
+        {
+            Assert.Skip("gitリポジトリではないため追跡ファイルの照合を省略する。");
+        }
+
+        return RunGitRaw(root, arguments);
+    }
+
+    private static (string Output, string Error, int ExitCode) RunGitRaw(string root, string[] arguments)
     {
         var start = new ProcessStartInfo("git")
         {
@@ -163,29 +235,14 @@ public class PrivateTrackerReferenceTests
         start.Environment["LC_ALL"] = "C";
         start.Environment["LANG"] = "C";
 
-        var subcommand = arguments.Length > 0 ? arguments[0] : "(none)";
-        string output;
-        string error;
-        int exitCode;
-        using (var process = Process.Start(start))
-        {
-            Assert.NotNull(process);
-            var readOutput = process.StandardOutput.ReadToEndAsync();
-            var readError = process.StandardError.ReadToEndAsync();
-            output = readOutput.GetAwaiter().GetResult();
-            error = readError.GetAwaiter().GetResult();
-            process.WaitForExit();
-            exitCode = process.ExitCode;
-        }
-
-        if (exitCode != 0 && NotARepository(error))
-        {
-            Assert.Skip("gitリポジトリではないため追跡ファイルの照合を省略する。");
-        }
-
-        var tolerated = exitCode == 0 || (allowNoMatch && exitCode == 1);
-        Assert.True(tolerated, $"git {subcommand} exited {exitCode}: {Redact(error)}");
-        return output;
+        using var process = Process.Start(start);
+        Assert.NotNull(process);
+        var readOutput = process.StandardOutput.ReadToEndAsync();
+        var readError = process.StandardError.ReadToEndAsync();
+        var output = readOutput.GetAwaiter().GetResult();
+        var error = readError.GetAwaiter().GetResult();
+        process.WaitForExit();
+        return (output, error, process.ExitCode);
     }
 
     /// <summary>
@@ -198,14 +255,14 @@ public class PrivateTrackerReferenceTests
         || error.Contains("this operation must be run in a work tree", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
-    /// git's own stderr can quote the pattern back -- a usage error does -- so the name is taken
-    /// out before the text reaches a public log.
+    /// Takes the name out of text on its way to a public log. git's own stderr can quote the
+    /// pattern back -- a usage error does -- and an offending path can contain it outright.
     /// </summary>
-    private static string Redact(string error)
+    private static string Redact(string text)
     {
-        var text = error.Replace('\r', ' ').Replace('\n', ' ').Trim();
-        text = text.Replace(PrivateTracker, "<redacted>", StringComparison.OrdinalIgnoreCase);
-        return text.Length == 0 ? "(stderrは空)" : text;
+        var flattened = text.Replace('\r', ' ').Replace('\n', ' ').Trim();
+        flattened = flattened.Replace(PrivateTracker, "<redacted>", StringComparison.OrdinalIgnoreCase);
+        return flattened.Length == 0 ? "(空)" : flattened;
     }
 
     /// <summary>
@@ -240,4 +297,3 @@ public class PrivateTrackerReferenceTests
         throw new DirectoryNotFoundException($"Could not find wip.slnx walking up from {AppContext.BaseDirectory}");
     }
 }
-
