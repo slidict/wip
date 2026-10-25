@@ -33,13 +33,17 @@ $quotedWslc = $wslcPath.Replace("'", "''")
 # $TargetImage directly is what failed the first dispatched run of this scenario with
 # `exec: "httpd": executable file not found in $PATH`. One Dockerfile keeps the HTTP target
 # defined in a single place rather than twice.
-$targetImage = "wip-e2e-zap-target-${namespace}:latest"
+# Named so it cannot collide with the $TargetImage parameter: PowerShell variable names are
+# case-insensitive, so an earlier $targetImage here overwrote the parameter and the generated
+# Dockerfile said `FROM <the derived tag>` -- which failed the dispatched run with
+# "pull access denied, repository does not exist".
+$derivedTarget = "wip-e2e-zap-target-${namespace}:latest"
 $targetBuildDirectory = Join-Path $workspace 'zap-target-build'
 New-Item -ItemType Directory -Path $targetBuildDirectory -Force | Out-Null
 $targetDockerfile = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'Dockerfile.security-scan'))
 $targetDockerfile = $targetDockerfile.Replace('FROM wip-e2e:latest', "FROM $TargetImage")
 [IO.File]::WriteAllText((Join-Path $targetBuildDirectory 'Dockerfile'), $targetDockerfile)
-$quotedTarget = $targetImage.Replace("'", "''")
+$quotedTarget = $derivedTarget.Replace("'", "''")
 [IO.File]::WriteAllText($configPath, @"
 version: 1
 resource_namespace: $namespace
@@ -110,8 +114,8 @@ try {
     # The image is about 1.12 GiB compressed. Bound the one real download separately from
     # execution; later Prepare still performs its own availability check outside isolation.
     Assert-ZapExit (Invoke-ZapBounded -Exe $wslcPath -Arguments @('pull', $zapImage) -TimeoutSeconds 600) 0 'pull the immutable ZAP image'
-    $builtImages.Add($targetImage)
-    Assert-ZapExit (Invoke-ZapBounded -Exe $wslcPath -Arguments @('build', '-t', $targetImage, $targetBuildDirectory) -TimeoutSeconds 300) 0 'build the HTTP target with httpd available'
+    $builtImages.Add($derivedTarget)
+    Assert-ZapExit (Invoke-ZapBounded -Exe $wslcPath -Arguments @('build', '-t', $derivedTarget, $targetBuildDirectory) -TimeoutSeconds 300) 0 'build the HTTP target with httpd available'
     $sandboxes.Add('zap-target')
     Assert-ZapExit (Invoke-ZapWip @('sandbox', 'create', 'zap-target')) 0 'create the unauthenticated HTTP target'
     $address = Invoke-ZapWip @('sandbox', 'exec', 'zap-target', '--', 'ip', '-4', '-o', 'addr', 'show', 'eth0')
@@ -171,7 +175,10 @@ finally {
     foreach ($tag in $builtImages) {
         try {
             $removed = Invoke-ZapBounded -Exe $wslcPath -Arguments @('rmi', $tag) -TimeoutSeconds 120
-            if ($removed.Code -ne 0) {
+            # A tag is recorded before its build so a partial build is still cleaned up, which
+            # means a build that failed outright leaves nothing to remove. Reporting that as a
+            # cleanup failure buries the real one -- the dispatched run printed both.
+            if ($removed.Code -ne 0 -and $removed.Output -notmatch 'WSLC_E_IMAGE_NOT_FOUND|No such image') {
                 $failed = $true
                 Write-Warning "ZAP fixture image cleanup failed (${tag}): $($removed.Output.Trim())"
             }
