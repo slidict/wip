@@ -1,9 +1,10 @@
-using System.Text.RegularExpressions;
+using System.Diagnostics;
 
 namespace Wip.Tests;
 
 /// <summary>
-/// The private management repository's name must not appear anywhere this repository ships.
+/// The private management repository's name must not appear in anything this repository
+/// tracks.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -14,9 +15,16 @@ namespace Wip.Tests;
 /// failed. A guard whose scope excludes where the problem lives is not a guard.
 /// </para>
 /// <para>
-/// This one reads the tracked tree instead. The name is never legitimate in published content:
-/// a reader of a public repository cannot open it, and it discloses how the work is tracked
-/// privately. The allowlist holds the two places that must name it in order to forbid it.
+/// The file list comes from <c>git ls-files</c> rather than from walking the directory. What
+/// matters is what the repository publishes, and a working tree also holds scratch notes,
+/// ignored build output and published binaries; failing <c>dotnet test</c> over a local note
+/// that never ships would be a false alarm, and reading a published tree as text is pointless
+/// work. Tracked content is exactly the set this is about.
+/// </para>
+/// <para>
+/// Only the literal name is matched. A bare <c>#NNN</c> cannot be checked here, because this
+/// repository's own issue references are the same shape and are legitimate -- those are caught
+/// by reading, not by this test.
 /// </para>
 /// </remarks>
 public class PrivateTrackerReferenceTests
@@ -33,30 +41,26 @@ public class PrivateTrackerReferenceTests
         "tests/Wip.Tests/PrivateTrackerReferenceTests.cs",
     ];
 
-    /// <summary>
-    /// Directories that are build output or vendored content rather than something this
-    /// repository publishes. Matching the path separator both ways keeps this working on
-    /// Windows and Linux, since the suite runs on both.
-    /// </summary>
-    private static readonly string[] SkippedDirectories = ["bin", "obj", ".git", "node_modules", "TestResults"];
-
     [Fact]
     public void NoTrackedFileNamesThePrivateTracker()
     {
         var root = RepositoryRoot();
+        var tracked = TrackedFiles(root);
+        Assert.NotEmpty(tracked);
+
         var offenders = new List<string>();
-        foreach (var path in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
+        foreach (var relative in tracked)
         {
-            var relative = Path.GetRelativePath(root, path).Replace('\\', '/');
-            if (SkippedDirectories.Any(d => relative.Split('/').Contains(d, StringComparer.Ordinal))) continue;
             if (Allowed.Contains(relative, StringComparer.Ordinal)) continue;
-            // Binary assets have no prose to leak; reading them as text would only produce
-            // noise, and the GIFs beside the tapes are the reason this matters.
-            if (IsBinary(relative)) continue;
+            var path = Path.Combine(root, relative.Replace('/', Path.DirectorySeparatorChar));
+            // A tracked path can be absent from the working tree -- a sparse checkout, or a
+            // file deleted but not yet committed. Nothing to read is nothing to leak.
+            if (!File.Exists(path)) continue;
 
             string text;
             try { text = File.ReadAllText(path); }
             catch (IOException) { continue; }
+            catch (UnauthorizedAccessException) { continue; }
             if (text.Contains(PrivateTracker, StringComparison.OrdinalIgnoreCase)) offenders.Add(relative);
         }
 
@@ -67,11 +71,40 @@ public class PrivateTrackerReferenceTests
         ]));
     }
 
-    private static bool IsBinary(string relative)
+    /// <summary>
+    /// Tracked paths, repository-relative with forward slashes, as git reports them.
+    /// </summary>
+    /// <remarks>
+    /// <c>-z</c> so a path with a newline or a non-ASCII character arrives verbatim instead of
+    /// quoted. The test skips rather than falls back to walking the tree: a fallback would
+    /// quietly check a different set of files than the one it claims to.
+    /// </remarks>
+    private static IReadOnlyList<string> TrackedFiles(string root)
     {
-        var extension = Path.GetExtension(relative).ToLowerInvariant();
-        return extension is ".gif" or ".png" or ".jpg" or ".jpeg" or ".ico" or ".pdf"
-            or ".dll" or ".exe" or ".pdb" or ".zip" or ".gz" or ".nupkg";
+        var start = new ProcessStartInfo("git")
+        {
+            WorkingDirectory = root,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        start.ArgumentList.Add("ls-files");
+        start.ArgumentList.Add("-z");
+
+        try
+        {
+            using var process = Process.Start(start);
+            Assert.NotNull(process);
+            var output = process.StandardOutput.ReadToEnd();
+            process.WaitForExit();
+            Assert.True(process.ExitCode == 0, $"git ls-files exited {process.ExitCode}");
+            return output.Split('\0', StringSplitOptions.RemoveEmptyEntries);
+        }
+        catch (Exception error) when (error is System.ComponentModel.Win32Exception or FileNotFoundException)
+        {
+            Assert.Skip($"gitを実行できないため追跡ファイルの照合を省略する（{error.GetType().Name}）。");
+            return [];
+        }
     }
 
     /// <summary>

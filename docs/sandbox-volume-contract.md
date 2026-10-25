@@ -11,6 +11,13 @@ The work was split into four parts -- sandbox execution, volume lifecycle, mount
 and adopting the declarations in a real configuration -- each landing separately. This
 document is the contract they share.
 
+This repository is public. Documentation, comments and pull request descriptions describe the
+technical change; they do not carry the team's issue tracking, credentials, or local paths.
+`PrivateTrackerReferenceTests` checks the tracked tree for the private tracker's name, and
+`WikiTapeTests.PrivateMarkers` checks `docs/tapes` -- which the wiki serves as raw URLs -- for
+internal tool names and host paths as well. Neither covers prose outside those rules, so the
+rule is the thing to follow.
+
 ## Schema, version 1 additive extension
 
 ```yaml
