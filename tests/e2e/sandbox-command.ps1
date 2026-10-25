@@ -68,32 +68,18 @@ dependencies:
         Invoke-CommandFixture -Exe $script:WipPath -Arguments (@('--config', $configPath) + $Arguments)
     }
 
-    # Use only an image deletion verb advertised by this installation instead of
-    # assuming Docker aliases; fail cleanup if no supported verb can be identified.
+    # `wslc rmi <image>`, measured on wslc 3.0.3.0: it is advertised by `wslc --help` as
+    # "Deletes an image" and `wslc rmi --help` exits 0. Named directly rather than discovered
+    # by reading the help text, which is localised -- the same help on a Japanese host answers
+    # in Japanese, so parsing it reads a translation and the verb is the only stable part of it.
+    # A failure is reported rather than thrown: this runs in cleanup, after the assertions, and
+    # a leftover image must not be what a reader sees instead of the real failure.
     function Remove-CommandImage {
-        $help = Invoke-CommandFixture -Exe $script:WslcPath -Arguments @('--help') -TimeoutSeconds 30
-        Assert-Exit $help 0 'read WSLC image cleanup commands'
-        $removeArguments = $null
-        if ($help.Output -match '(?m)^[ \t]*rmi(?:[ \t,]|$)') {
-            $removeArguments = @('rmi')
+        $removed = Invoke-CommandFixture -Exe $script:WslcPath -Arguments @('rmi', $commandImage) -TimeoutSeconds 120
+        if ($removed.Code -ne 0) {
+            $script:Failed = $true
+            Write-Warning "command fixture image cleanup failed (${commandImage}): $($removed.Output.Trim())"
         }
-        else {
-            foreach ($group in @('image', 'images')) {
-                if ($help.Output -notmatch ("(?m)^[ \t]*" + $group + '(?:[ \t,]|$)')) { continue }
-                $groupHelp = Invoke-CommandFixture -Exe $script:WslcPath -Arguments @($group, '--help') -TimeoutSeconds 30
-                if ($groupHelp.Code -ne 0) { continue }
-                foreach ($verb in @('remove', 'rm')) {
-                    if ($groupHelp.Output -match ("(?m)^[ \t]*" + $verb + '(?:[ \t,]|$)')) {
-                        $removeArguments = @($group, $verb)
-                        break
-                    }
-                }
-                if ($removeArguments) { break }
-            }
-        }
-        if (-not $removeArguments) { throw 'WSLC help advertises no supported image deletion command' }
-        $removed = Invoke-CommandFixture -Exe $script:WslcPath -Arguments ($removeArguments + @($commandImage)) -TimeoutSeconds 120
-        Assert-Exit $removed 0 "remove the namespaced command fixture image $commandImage"
     }
 
     try {
