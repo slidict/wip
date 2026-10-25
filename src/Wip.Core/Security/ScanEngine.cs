@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Wip.Configuration;
 using Wip.Execution;
 
@@ -14,6 +15,7 @@ namespace Wip.Security;
 /// <param name="ReportError">The collection failure reason, independent of the scanner status.</param>
 /// <param name="UnperformedChecks">Unmodified tool diagnostics and profile omissions, when requested.</param>
 /// <param name="UnperformedChecksError">Why requested diagnostics could not be collected.</param>
+/// <param name="PersistenceError">Why artifacts could not be saved, without replacing the scan result.</param>
 /// <remarks>
 /// A tool's non-zero status is not an error here: scanners use exit codes to report findings.
 /// Distinguishing "ran and found things" from "did not run" belongs to the result format that
@@ -30,7 +32,24 @@ internal sealed record ScanOutcome(
     bool TimedOut = false,
     string? ReportError = null,
     string? UnperformedChecks = null,
-    string? UnperformedChecksError = null);
+    string? UnperformedChecksError = null,
+    ScanResult? Result = null,
+    string? PersistenceError = null)
+{
+    /// <remarks>
+    /// An incomplete result outranks a failed save: a scan that did not finish is the more
+    /// serious of the two, and its reason is in the document either way. A scanner's own use
+    /// of a reserved code folds to 1 rather than claiming a condition that did not occur.
+    /// </remarks>
+    internal int ProcessExitCode => Result?.Status switch
+    {
+        "incomplete" => ScanEngine.IncompleteExitCode,
+        "completed" when PersistenceError is not null => ScanEngine.PersistenceFailedExitCode,
+        "completed" when ExitCode == ScanEngine.IncompleteExitCode
+            || ExitCode == ScanEngine.PersistenceFailedExitCode => 1,
+        _ => ExitCode
+    };
+}
 
 /// <summary>
 /// Drives exactly one registered scanner inside one declared sandbox, behind the boundary
@@ -73,6 +92,20 @@ internal sealed class ScanEngine(
 
     /// <summary>The complete report must fit this retained-text budget.</summary>
     internal const int MaxReportCharacters = 1024 * 1024;
+
+    // Reserve EX_SOFTWARE (70), in the application's conventional sysexits 64..78 range.
+    // Unlike 256 it stays nonzero through POSIX/WSL shells; 125..127 overlap timeout or
+    // shell invocation failures. Completed scanners that return 70 map to 1 so only an
+    // incomplete run returns 70; provenance and result.json retain the original tool code.
+    internal const int IncompleteExitCode = 70;
+
+    // EX_IOERR (74), from the same sysexits range, for a scan that finished but whose
+    // artifacts did not reach the requested directory. Distinct from 70 because the two call
+    // for different responses: an incomplete scan has to be run again, while a completed one
+    // whose save failed has its report on stdout and needs the output path looked at. Exit 0
+    // would be the hole this result format exists to close -- asking for --output and getting
+    // neither a file nor a nonzero status is "nothing happened" presented as success.
+    internal const int PersistenceFailedExitCode = 74;
 
     private SandboxDefinition Definition(string sandbox) =>
         settings.Sandboxes.SingleOrDefault(s => s.Name == sandbox)
@@ -126,8 +159,13 @@ internal sealed class ScanEngine(
     /// A plan, normally returned by Prepare. It is independently validated here; the type
     /// carries no preparation history and callers can supply a plan without calling Prepare.
     /// </param>
-    internal ScanOutcome Run(ISecurityScanner scanner, string sandbox, ScanPlan plan, TimeSpan? timeout = null)
+    internal ScanOutcome Run(ISecurityScanner scanner, string sandbox, ScanPlan plan, ScanTarget target, TimeSpan? timeout = null,
+        string? outputDirectory = null, string? commit = null)
     {
+        var startedAt = DateTimeOffset.UtcNow;
+        var runId = Guid.NewGuid().ToString("N");
+        target.Validate();
+        if (outputDirectory is not null) ScanResultStore.RequireUsable(outputDirectory);
         var definition = Definition(sandbox);
         var declared = RequireDeclaredNetwork(definition, sandbox);
         plan.Validate(scanner.Name);
@@ -147,6 +185,9 @@ internal sealed class ScanEngine(
         // is still running on whatever it was given: create refuses it, but nothing else did
         // until now (slidict/wip#263). This is the check at the moment it matters.
         var network = networks.VerifiedBackendName(declared);
+        // Set only after the owned/internal verification succeeds, and pass the attestation
+        // to result construction instead of assuming that every finishing path verified it.
+        var networkVerifiedInternal = true;
         var status = sandboxes.Status(sandbox);
         if (status.Id is null || status.State != "running")
             throw new WipException($"Sandbox {sandbox}: is not running; run sandbox create before a scan");
@@ -166,35 +207,71 @@ internal sealed class ScanEngine(
                 $"Sandbox {sandbox}: is running image '{running}', but the tool pins '{plan.Image.Reference}'. " +
                 "The declaration changed after the container was created, so run sandbox destroy, confirm absence, then sandbox create.");
 
-        var stopped = false;
         try
         {
             var execution = sandboxes.ExecWithResult(sandbox, plan.Argv, deadline);
             var code = execution.Code;
             if (execution.TimedOut)
             {
-                // Killing the host exec client does not stop processes inside the container.
-                // Stop before any collection; exec cannot read a stopped container, and a
-                // partial report must not be presented as a completed scanner result.
-                stopped = true;
-                Stop(sandbox);
-                return new(scanner.Name, sandbox, plan.Image.Reference, plan.RulesVersion, network, code, null, TimedOut: true,
-                    UnperformedChecksError: plan.UnperformedChecksPath is null ? null : "scan timed out before diagnostics could be collected");
+                // Do not collect a report that may still be changing. Persist only the
+                // incomplete metadata before the finally block stops the container.
+                var timedOut = new ScanOutcome(scanner.Name, sandbox, plan.Image.Reference, plan.RulesVersion, network, code, null, TimedOut: true,
+                    UnperformedChecksError: "scan timed out before diagnostics could be collected");
+                return FinishResult(scanner, target, timedOut, runId, startedAt, networkVerifiedInternal, outputDirectory, commit);
             }
             var collectionDeadline = deadline < CollectionTimeout ? deadline : CollectionTimeout;
             var (report, reportError) = ReadReport(sandbox, plan.ReportPath, collectionDeadline);
-            var (unperformed, diagnosticsError) = plan.UnperformedChecksPath is { } diagnosticsPath
-                ? ReadReport(sandbox, diagnosticsPath, collectionDeadline)
-                : (null, null);
-            return new(scanner.Name, sandbox, plan.Image.Reference, plan.RulesVersion, network, code, report,
+            var (unperformed, diagnosticsError) = ReadReport(sandbox, plan.UnperformedChecksPath, collectionDeadline);
+            var outcome = new ScanOutcome(scanner.Name, sandbox, plan.Image.Reference, plan.RulesVersion, network, code, report,
                 ReportError: reportError, UnperformedChecks: unperformed, UnperformedChecksError: diagnosticsError);
+            return FinishResult(scanner, target, outcome, runId, startedAt, networkVerifiedInternal, outputDirectory, commit);
         }
         finally
         {
             // The container stop includes the tool's children. Removal remains sandbox
             // destroy's responsibility, so failed runs leave the container inspectable.
-            if (!stopped) Stop(sandbox);
+            Stop(sandbox);
         }
+    }
+
+    private static ScanOutcome FinishResult(ISecurityScanner scanner, ScanTarget target, ScanOutcome outcome,
+        string runId, DateTimeOffset startedAt, bool networkVerifiedInternal, string? outputDirectory, string? commit)
+    {
+        string? reason = outcome.TimedOut ? "timeout"
+            : outcome.ReportError is not null || outcome.Report is null ? "report-collection-failed"
+            : string.IsNullOrWhiteSpace(outcome.Report) ? "report-empty" : null;
+        IReadOnlyList<ScanFinding>? findings = null;
+        if (reason is null)
+        {
+            try { findings = scanner.ConvertReport(outcome.Report!); }
+            catch (JsonException) { reason = "report-unparseable"; }
+            catch (FormatException) { reason = "report-unparseable"; }
+        }
+        var missingCoverage = outcome.UnperformedChecksError;
+        if (missingCoverage is null && string.IsNullOrWhiteSpace(outcome.UnperformedChecks))
+            missingCoverage = "The unperformed-check record was not collected or was empty";
+        if (reason is null && missingCoverage is not null) reason = "unperformed-checks-lost";
+
+        var run = new ScanRunMetadata(runId, startedAt, DateTimeOffset.UtcNow, outcome.Tool, outcome.Image,
+            outcome.RulesVersion, outcome.Sandbox, outcome.Network, networkVerifiedInternal, target.Address, commit);
+        var result = new ScanResult(run, reason is null ? "completed" : "incomplete",
+            Findings: reason is null ? findings : null, IncompleteReason: reason,
+            UnperformedChecks: missingCoverage is null ? outcome.UnperformedChecks : null,
+            CoverageMissingReason: missingCoverage, ScannerExitCode: outcome.ExitCode);
+        // The adapter only converts report text. The engine alone chooses the output path
+        // and publishes all artifacts while the sandbox is still available, before teardown.
+        var finished = outcome with { Result = result };
+        if (outputDirectory is not null)
+        {
+            try { new ScanResultStore(outputDirectory).Write(result, outcome.Report, outcome.UnperformedChecks); }
+            catch (WipException error)
+            {
+                // Preflight cannot prevent a later disk failure. Keep the primary report,
+                // scanner status and normalized result, and report storage failure separately.
+                return finished with { PersistenceError = error.Message };
+            }
+        }
+        return finished;
     }
 
     /// <summary>

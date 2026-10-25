@@ -35,12 +35,16 @@ internal sealed record PinnedImage(string Reference);
 /// because "which rules ran" is part of what makes a result meaningful, and because an
 /// unpinned set is fetched at scan time -- which an isolated network forbids.
 /// </param>
+/// <param name="UnperformedChecksPath">
+/// Required absolute path to the raw coverage record. Without it, omitted checks cannot
+/// be distinguished from checks that ran without findings.
+/// </param>
 internal sealed record ScanPlan(
     PinnedImage Image,
     IReadOnlyList<string> Argv,
     string ReportPath,
     string RulesVersion,
-    string? UnperformedChecksPath = null)
+    string UnperformedChecksPath)
 {
     /// <summary>
     /// Rejects a plan that could not produce a repeatable, isolated scan. Called by the
@@ -66,9 +70,11 @@ internal sealed record ScanPlan(
         if (!ReportPath.StartsWith('/') || ReportPath.Any(char.IsControl) ||
             ReportPath.Split('/').Any(part => part is "." or ".."))
             throw new ConfigException($"Scanner {tool}: report path must be a canonical absolute Linux path");
-        if (UnperformedChecksPath is { } diagnostics &&
-            (!diagnostics.StartsWith('/') || diagnostics.Any(char.IsControl) ||
-             diagnostics.Split('/').Any(part => part is "." or "..")))
+        if (string.IsNullOrWhiteSpace(UnperformedChecksPath))
+            throw new ConfigException(
+                $"Scanner {tool}: unperformed-checks path is required, because not checked must remain distinct from nothing found");
+        if (!UnperformedChecksPath.StartsWith('/') || UnperformedChecksPath.Any(char.IsControl) ||
+            UnperformedChecksPath.Split('/').Any(part => part is "." or ".."))
             throw new ConfigException($"Scanner {tool}: unperformed-checks path must be a canonical absolute Linux path");
         if (string.IsNullOrWhiteSpace(RulesVersion) || RulesVersion.Any(char.IsControl))
             throw new ConfigException(
@@ -104,6 +110,12 @@ internal interface ISecurityScanner
     /// reachable only inside the declared network.
     /// </summary>
     ScanPlan Plan(ScanTarget target);
+
+    /// <summary>
+    /// Converts this scanner's raw report without accessing execution or output resources.
+    /// Invalid report syntax or structure raises JsonException or FormatException.
+    /// </summary>
+    IReadOnlyList<ScanFinding> ConvertReport(string report);
 }
 
 /// <param name="Address">

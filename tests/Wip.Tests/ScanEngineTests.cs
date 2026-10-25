@@ -48,11 +48,19 @@ public class ScanEngineTests
         new PinnedImage(Pinned),
         ["zap-baseline", "-t", "http://app.test:8080"],
         reportPath,
-        "2.15.0");
+        "2.15.0",
+        "/out/unperformed.txt");
 
-    private sealed class StubScanner(ScanPlan? plan = null, string name = "stub") : ISecurityScanner
+    private sealed class StubScanner(ScanPlan? plan = null, string name = "stub", IReadOnlyList<ScanFinding>? findings = null) : ISecurityScanner
     {
         public string Name => name;
+        public IReadOnlyList<ScanFinding> ConvertReport(string report)
+        {
+            using var document = JsonDocument.Parse(report);
+            if (!document.RootElement.TryGetProperty("alerts", out var alerts) || alerts.ValueKind != JsonValueKind.Array)
+                throw new FormatException("Fixture report must contain an alerts array");
+            return findings ?? [];
+        }
         public ScanTarget? Seen { get; private set; }
         public ScanPlan Plan(ScanTarget target)
         {
@@ -83,6 +91,8 @@ public class ScanEngineTests
         public bool ReportLimitExceeded;
         public bool ReportThrows;
         public bool StopThrows;
+        public Action? BeforeStop;
+        public Action? AfterExec;
 
         /// <summary>
         /// What the running container was created from. Defaults to the declared image; a test
@@ -145,10 +155,12 @@ public class ScanEngineTests
             if (argv[0] == "exec")
             {
                 if (ExecThrows) throw new WipException("scanner failed to start");
+                AfterExec?.Invoke();
                 return new(ExecCode, "") { TimedOut = ExecTimedOut };
             }
             if (argv[0] == "stop")
             {
+                BeforeStop?.Invoke();
                 if (StopThrows) throw new InvalidOperationException("stop failed unexpectedly");
                 ContainerState = "exited";
                 return new(0, "");
@@ -310,7 +322,7 @@ public class ScanEngineTests
         // old one running while the plan and the outcome name the new one.
         var fake = new Fake { ContainerImage = "example.test/old@sha256:" + new string('e', 64) };
 
-        var error = Assert.Throws<WipException>(() => Engine(fake).Run(new StubScanner(), "scanner", ValidPlan()));
+        var error = Assert.Throws<WipException>(() => Engine(fake).Run(new StubScanner(), "scanner", ValidPlan(), new ScanTarget("http://app.test:8080")));
 
         Assert.Contains("is running image", error.Message);
         Assert.False(Ran(fake, "exec"), "nothing runs in a container that is not the pinned tool");
@@ -323,7 +335,7 @@ public class ScanEngineTests
         // check pass exactly when it cannot tell.
         var fake = new Fake { ContainerImage = null };
 
-        var error = Assert.Throws<WipException>(() => Engine(fake).Run(new StubScanner(), "scanner", ValidPlan()));
+        var error = Assert.Throws<WipException>(() => Engine(fake).Run(new StubScanner(), "scanner", ValidPlan(), new ScanTarget("http://app.test:8080")));
 
         Assert.Contains("could not be read", error.Message);
         Assert.False(Ran(fake, "exec"));
@@ -337,7 +349,7 @@ public class ScanEngineTests
         var fake = new Fake();
         var plan = ValidPlan() with { Image = new PinnedImage("example.test/other@sha256:" + new string('d', 64)) };
 
-        Assert.Throws<ConfigException>(() => Engine(fake).Run(new StubScanner(plan), "scanner", plan));
+        Assert.Throws<ConfigException>(() => Engine(fake).Run(new StubScanner(plan), "scanner", plan, new ScanTarget("http://app.test:8080")));
 
         Assert.False(Ran(fake, "exec"));
     }
@@ -368,6 +380,23 @@ public class ScanEngineTests
         Assert.False(Ran(fake, "pull"));
     }
 
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void APlanWithoutACoveragePathFailsValidationBeforeAnyBackendCall(string? coveragePath)
+    {
+        var fake = new Fake();
+        var plan = ValidPlan() with { UnperformedChecksPath = coveragePath! };
+
+        var validation = Assert.Throws<ConfigException>(() => plan.Validate("stub"));
+        Assert.Contains("unperformed-checks path is required", validation.Message);
+        Assert.Contains("not checked", validation.Message);
+        Assert.Throws<ConfigException>(() =>
+            Engine(fake).Prepare(new StubScanner(plan), "scanner", new ScanTarget("http://app.test:8080")));
+        Assert.Empty(fake.Calls);
+    }
+
     [Fact]
     public void AnEmptyArgvIsRefused()
     {
@@ -387,7 +416,7 @@ public class ScanEngineTests
         // check, `exec` did not -- and exec is where a scan actually runs.
         var fake = new Fake { Attachments = ["bridge"] };
 
-        var error = Assert.Throws<WipException>(() => Engine(fake).Run(new StubScanner(), "scanner", ValidPlan()));
+        var error = Assert.Throws<WipException>(() => Engine(fake).Run(new StubScanner(), "scanner", ValidPlan(), new ScanTarget("http://app.test:8080")));
 
         Assert.Contains("not attached to exactly its declared network", error.Message);
         Assert.False(Ran(fake, "exec"), "nothing runs in a sandbox whose boundary is not the declared one");
@@ -398,7 +427,7 @@ public class ScanEngineTests
     {
         var fake = new Fake { Attachments = [ScanNet, "bridge"] };
 
-        Assert.Throws<WipException>(() => Engine(fake).Run(new StubScanner(), "scanner", ValidPlan()));
+        Assert.Throws<WipException>(() => Engine(fake).Run(new StubScanner(), "scanner", ValidPlan(), new ScanTarget("http://app.test:8080")));
 
         Assert.False(Ran(fake, "exec"));
     }
@@ -408,7 +437,7 @@ public class ScanEngineTests
     {
         var fake = new Fake { NetworkVerifiable = false };
 
-        Assert.Throws<WipException>(() => Engine(fake).Run(new StubScanner(), "scanner", ValidPlan()));
+        Assert.Throws<WipException>(() => Engine(fake).Run(new StubScanner(), "scanner", ValidPlan(), new ScanTarget("http://app.test:8080")));
 
         Assert.False(Ran(fake, "exec"));
     }
@@ -420,7 +449,7 @@ public class ScanEngineTests
     {
         var fake = new Fake { ContainerState = state };
 
-        var error = Assert.Throws<WipException>(() => Engine(fake).Run(new StubScanner(), "scanner", ValidPlan()));
+        var error = Assert.Throws<WipException>(() => Engine(fake).Run(new StubScanner(), "scanner", ValidPlan(), new ScanTarget("http://app.test:8080")));
 
         Assert.Contains("is not running", error.Message);
         Assert.False(Ran(fake, "exec"));
@@ -431,7 +460,7 @@ public class ScanEngineTests
     {
         var fake = new Fake();
 
-        Assert.Throws<ConfigException>(() => Engine(fake).Run(new StubScanner(), "unisolated", ValidPlan()));
+        Assert.Throws<ConfigException>(() => Engine(fake).Run(new StubScanner(), "unisolated", ValidPlan(), new ScanTarget("http://app.test:8080")));
 
         Assert.False(Ran(fake, "exec"));
     }
@@ -444,7 +473,7 @@ public class ScanEngineTests
         var fake = new Fake();
 
         Assert.Throws<ConfigException>(() =>
-            Engine(fake).Run(new StubScanner(), "scanner", ValidPlan() with { Image = new PinnedImage("zap:latest") }));
+            Engine(fake).Run(new StubScanner(), "scanner", ValidPlan() with { Image = new PinnedImage("zap:latest") }, new ScanTarget("http://app.test:8080")));
 
         Assert.False(Ran(fake, "exec"));
     }
@@ -454,7 +483,7 @@ public class ScanEngineTests
     {
         var fake = new Fake();
 
-        Assert.Throws<ConfigException>(() => Engine(fake).Run(new StubScanner(), "scanner", ValidPlan(), TimeSpan.Zero));
+        Assert.Throws<ConfigException>(() => Engine(fake).Run(new StubScanner(), "scanner", ValidPlan(), new ScanTarget("http://app.test:8080"), TimeSpan.Zero));
 
         Assert.False(Ran(fake, "exec"));
     }
@@ -467,7 +496,7 @@ public class ScanEngineTests
         var fake = new Fake();
         var plan = ValidPlan();
 
-        var outcome = Engine(fake).Run(new StubScanner(), "scanner", plan);
+        var outcome = Engine(fake).Run(new StubScanner(), "scanner", plan, new ScanTarget("http://app.test:8080"));
 
         // The argv the adapter asked for, after the container id, and nothing of the adapter's
         // in the backend's own options.
@@ -488,7 +517,7 @@ public class ScanEngineTests
         var fake = new Fake();
         var plan = ValidPlan() with { Argv = ["sh", "--network", "bridge", "-v", "/:/host"] };
 
-        Engine(fake).Run(new StubScanner(plan), "scanner", plan);
+        Engine(fake).Run(new StubScanner(plan), "scanner", plan, new ScanTarget("http://app.test:8080"));
 
         var exec = fake.Calls.First(c => c[0] == "exec" && c.Contains("sh"));
         Assert.Equal("container-id", exec[1]);
@@ -503,7 +532,7 @@ public class ScanEngineTests
         // to the result format that consumes the outcome.
         var fake = new Fake { ExecCode = 2 };
 
-        var outcome = Engine(fake).Run(new StubScanner(), "scanner", ValidPlan());
+        var outcome = Engine(fake).Run(new StubScanner(), "scanner", ValidPlan(), new ScanTarget("http://app.test:8080"));
 
         Assert.Equal(2, outcome.ExitCode);
     }
@@ -513,7 +542,7 @@ public class ScanEngineTests
     {
         var fake = new Fake { ReportMissing = true };
 
-        var outcome = Engine(fake).Run(new StubScanner(), "scanner", ValidPlan());
+        var outcome = Engine(fake).Run(new StubScanner(), "scanner", ValidPlan(), new ScanTarget("http://app.test:8080"));
 
         Assert.Null(outcome.Report);
     }
@@ -525,9 +554,9 @@ public class ScanEngineTests
         // executable.
         var fake = new Fake();
 
-        Engine(fake).Run(new StubScanner(), "scanner", ValidPlan());
+        Engine(fake).Run(new StubScanner(), "scanner", ValidPlan(), new ScanTarget("http://app.test:8080"));
 
-        var read = fake.Calls.Single(c => c.Contains("cat"));
+        var read = fake.Calls.Single(c => c.Contains("cat") && c.Contains("/out/report.json"));
         Assert.Equal(["exec", "container-id", "cat", "/out/report.json"], read);
         Assert.DoesNotContain("sh", read);
     }
@@ -537,7 +566,7 @@ public class ScanEngineTests
     {
         var fake = new Fake { ExecCode = CommandRunner.TimeoutExitCode, ExecTimedOut = true, Report = "unfinished" };
 
-        var outcome = Engine(fake).Run(new StubScanner(), "scanner", ValidPlan());
+        var outcome = Engine(fake).Run(new StubScanner(), "scanner", ValidPlan(), new ScanTarget("http://app.test:8080"));
 
         Assert.Null(outcome.Report);
         Assert.True(outcome.TimedOut);
@@ -550,7 +579,7 @@ public class ScanEngineTests
     {
         var fake = new Fake();
 
-        Engine(fake).Run(new StubScanner(), "scanner", ValidPlan(), TimeSpan.FromSeconds(60));
+        Engine(fake).Run(new StubScanner(), "scanner", ValidPlan(), new ScanTarget("http://app.test:8080"), TimeSpan.FromSeconds(60));
 
         Assert.Single(fake.ReportTimeouts);
         Assert.InRange(fake.ReportTimeouts[0], TimeSpan.FromMilliseconds(1), TimeSpan.FromSeconds(10));
@@ -561,7 +590,7 @@ public class ScanEngineTests
     {
         var fake = new Fake { ExecCode = 2, Report = new string('x', 1024 * 1024 + 1) };
 
-        var outcome = Engine(fake).Run(new StubScanner(), "scanner", ValidPlan());
+        var outcome = Engine(fake).Run(new StubScanner(), "scanner", ValidPlan(), new ScanTarget("http://app.test:8080"));
 
         Assert.Equal(2, outcome.ExitCode);
         Assert.Null(outcome.Report);
@@ -572,7 +601,7 @@ public class ScanEngineTests
         using var error = new StringWriter();
         var code = CliContext.WriteScanOutcome(outcome, "/out/report.json", output, error, isOutputRedirected: true);
 
-        Assert.Equal(2, code);
+        Assert.Equal(ScanEngine.IncompleteExitCode, code);
         Assert.Equal("", output.ToString());
         Assert.Contains($"stub\tscanner\t{ScanNet}\t{Pinned}\trules=2.15.0\texit=2\tstatus=exited", error.ToString());
         Assert.Contains("retention limit", error.ToString());
@@ -583,7 +612,7 @@ public class ScanEngineTests
     {
         var fake = new Fake { ExecCode = 2, ReportThrows = true };
 
-        var outcome = Engine(fake).Run(new StubScanner(), "scanner", ValidPlan());
+        var outcome = Engine(fake).Run(new StubScanner(), "scanner", ValidPlan(), new ScanTarget("http://app.test:8080"));
 
         Assert.Equal(2, outcome.ExitCode);
         Assert.Null(outcome.Report);
@@ -596,7 +625,7 @@ public class ScanEngineTests
     {
         var fake = new Fake { ExecCode = 2, ReportCode = 7 };
 
-        var outcome = Engine(fake).Run(new StubScanner(), "scanner", ValidPlan());
+        var outcome = Engine(fake).Run(new StubScanner(), "scanner", ValidPlan(), new ScanTarget("http://app.test:8080"));
 
         Assert.Equal(2, outcome.ExitCode);
         Assert.Null(outcome.Report);
@@ -608,7 +637,7 @@ public class ScanEngineTests
     {
         var fake = new Fake { ExecCode = 2, ReportCode = 124, ReportTimedOut = true };
 
-        var outcome = Engine(fake).Run(new StubScanner(), "scanner", ValidPlan());
+        var outcome = Engine(fake).Run(new StubScanner(), "scanner", ValidPlan(), new ScanTarget("http://app.test:8080"));
 
         Assert.Equal(2, outcome.ExitCode);
         Assert.False(outcome.TimedOut);
@@ -621,7 +650,7 @@ public class ScanEngineTests
     {
         var fake = new Fake { ExecCode = 2, ReportLimitExceeded = true };
 
-        var outcome = Engine(fake).Run(new StubScanner(), "scanner", ValidPlan());
+        var outcome = Engine(fake).Run(new StubScanner(), "scanner", ValidPlan(), new ScanTarget("http://app.test:8080"));
 
         Assert.Equal(2, outcome.ExitCode);
         Assert.Null(outcome.Report);
@@ -633,7 +662,7 @@ public class ScanEngineTests
     {
         var fake = new Fake { ExecCode = 124 };
 
-        var outcome = Engine(fake).Run(new StubScanner(), "scanner", ValidPlan());
+        var outcome = Engine(fake).Run(new StubScanner(), "scanner", ValidPlan(), new ScanTarget("http://app.test:8080"));
 
         Assert.Equal(124, outcome.ExitCode);
         Assert.False(outcome.TimedOut);
@@ -645,7 +674,7 @@ public class ScanEngineTests
     {
         var fake = new Fake { ExecCode = CommandRunner.TimeoutExitCode, ExecTimedOut = true, StopThrows = true };
 
-        Assert.Throws<InvalidOperationException>(() => Engine(fake).Run(new StubScanner(), "scanner", ValidPlan()));
+        Assert.Throws<InvalidOperationException>(() => Engine(fake).Run(new StubScanner(), "scanner", ValidPlan(), new ScanTarget("http://app.test:8080")));
 
         Assert.Single(fake.Calls, c => c[0] == "stop");
     }
@@ -656,7 +685,7 @@ public class ScanEngineTests
         var fake = new Fake();
         var plan = ValidPlan() with { UnperformedChecksPath = "/out/unperformed.txt" };
 
-        var outcome = Engine(fake).Run(new StubScanner(plan), "scanner", plan);
+        var outcome = Engine(fake).Run(new StubScanner(plan), "scanner", plan, new ScanTarget("http://app.test:8080"));
 
         Assert.Equal("{\"alerts\":[]}", outcome.Report);
         Assert.Equal(fake.Diagnostics, outcome.UnperformedChecks);
@@ -669,7 +698,7 @@ public class ScanEngineTests
         var fake = new Fake { DiagnosticsMissing = true };
         var plan = ValidPlan() with { UnperformedChecksPath = "/out/unperformed.txt" };
 
-        var outcome = Engine(fake).Run(new StubScanner(plan), "scanner", plan);
+        var outcome = Engine(fake).Run(new StubScanner(plan), "scanner", plan, new ScanTarget("http://app.test:8080"));
 
         Assert.Null(outcome.UnperformedChecks);
         Assert.NotNull(outcome.UnperformedChecksError);
@@ -681,7 +710,7 @@ public class ScanEngineTests
         var fake = new Fake { ReportMissing = true };
         var plan = ValidPlan() with { UnperformedChecksPath = "/out/unperformed.txt" };
 
-        var outcome = Engine(fake).Run(new StubScanner(plan), "scanner", plan);
+        var outcome = Engine(fake).Run(new StubScanner(plan), "scanner", plan, new ScanTarget("http://app.test:8080"));
 
         Assert.Null(outcome.Report);
         Assert.Equal(fake.Diagnostics, outcome.UnperformedChecks);
@@ -693,11 +722,20 @@ public class ScanEngineTests
         var fake = new Fake { ExecCode = 124, ExecTimedOut = true };
         var plan = ValidPlan() with { UnperformedChecksPath = "/out/unperformed.txt" };
 
-        var outcome = Engine(fake).Run(new StubScanner(plan), "scanner", plan);
+        var outcome = Engine(fake).Run(new StubScanner(plan), "scanner", plan, new ScanTarget("http://app.test:8080"));
 
         Assert.True(outcome.TimedOut);
         Assert.Null(outcome.UnperformedChecks);
         Assert.NotNull(outcome.UnperformedChecksError);
+
+        using var output = new StringWriter();
+        using var error = new StringWriter();
+        var code = CliContext.WriteScanOutcome(outcome, plan.ReportPath, output, error,
+            isOutputRedirected: true, isErrorRedirected: true);
+        Assert.Equal(70, code);
+        Assert.Contains("timed out; requested sandbox stop without collecting a partial report", error.ToString());
+        Assert.Contains("unperformed-check diagnostics unavailable: scan timed out before diagnostics could be collected", error.ToString());
+        Assert.DoesNotContain("wrote no report", error.ToString());
     }
 
     [Fact]
@@ -706,10 +744,170 @@ public class ScanEngineTests
         var fake = new Fake { DiagnosticsTimedOut = true };
         var plan = ValidPlan() with { UnperformedChecksPath = "/out/unperformed.txt" };
 
-        var outcome = Engine(fake).Run(new StubScanner(plan), "scanner", plan);
+        var outcome = Engine(fake).Run(new StubScanner(plan), "scanner", plan, new ScanTarget("http://app.test:8080"));
 
         Assert.Null(outcome.UnperformedChecks);
         Assert.Contains("timed out", outcome.UnperformedChecksError);
+    }
+
+    [Fact]
+    public void ACompletedResultCarriesRunMetadataAndAnExplicitEmptyFindingList()
+    {
+        var fake = new Fake();
+        var plan = ValidPlan() with { UnperformedChecksPath = "/out/unperformed.txt" };
+        var target = new ScanTarget("http://app.test:8080/scoped");
+
+        var outcome = Engine(fake).Run(new StubScanner(plan), "scanner", plan, target, commit: "deadbeef");
+
+        var result = Assert.IsType<ScanResult>(outcome.Result);
+        Assert.Equal("completed", result.Status);
+        Assert.NotNull(result.Findings);
+        Assert.Empty(result.Findings);
+        Assert.Null(result.IncompleteReason);
+        Assert.True(Guid.TryParseExact(result.Run.RunId, "N", out _));
+        Assert.Equal(TimeSpan.Zero, result.Run.StartedAt.Offset);
+        Assert.Equal(TimeSpan.Zero, result.Run.EndedAt.Offset);
+        Assert.True(result.Run.StartedAt <= result.Run.EndedAt);
+        Assert.Equal("stub", result.Run.Tool);
+        Assert.Equal(Pinned, result.Run.Image);
+        Assert.Equal(plan.RulesVersion, result.Run.RulesVersion);
+        Assert.Equal("scanner", result.Run.Sandbox);
+        Assert.Equal(ScanNet, result.Run.Network);
+        Assert.True(result.Run.NetworkVerifiedInternal);
+        Assert.Equal(target.Address, result.Run.Target);
+        Assert.Equal("deadbeef", result.Run.Commit);
+        Assert.Equal(fake.Diagnostics, result.UnperformedChecks);
+        Assert.Equal(0, outcome.ProcessExitCode);
+    }
+
+    [Theory]
+    [InlineData(2, 2)]
+    [InlineData(70, 1)]
+    [InlineData(124, 124)]
+    public void ACompletedResultPreservesNormalizedFindingsAndTheToolStatus(int scannerCode, int processCode)
+    {
+        var fake = new Fake { ExecCode = scannerCode };
+        var plan = ValidPlan() with { UnperformedChecksPath = "/out/unperformed.txt" };
+        var finding = new ScanFinding("rule", "finding", "low", "high", new ScanLocation("/path", "GET", null), "evidence");
+
+        var outcome = Engine(fake).Run(new StubScanner(plan, findings: [finding]), "scanner", plan, new ScanTarget("http://app.test"));
+
+        Assert.Equal("completed", outcome.Result!.Status);
+        Assert.Equal(finding, Assert.Single(outcome.Result.Findings!));
+        Assert.Equal(scannerCode, outcome.Result.ScannerExitCode);
+        Assert.Equal(processCode, outcome.ProcessExitCode);
+    }
+
+    [Theory]
+    [InlineData("timeout")]
+    [InlineData("report-collection-failed")]
+    [InlineData("report-empty")]
+    [InlineData("report-unparseable")]
+    [InlineData("unperformed-checks-lost")]
+    public void IncompleteResultsCannotLookLikeCleanEmptyFindings(string reason)
+    {
+        var fake = new Fake();
+        switch (reason)
+        {
+            case "timeout": fake.ExecTimedOut = true; fake.ExecCode = 124; break;
+            case "report-collection-failed": fake.ReportMissing = true; break;
+            case "report-empty": fake.Report = " \n"; break;
+            case "report-unparseable": fake.Report = "not JSON"; break;
+            case "unperformed-checks-lost": fake.DiagnosticsMissing = true; break;
+        }
+        var plan = ValidPlan() with { UnperformedChecksPath = "/out/unperformed.txt" };
+
+        var outcome = Engine(fake).Run(new StubScanner(plan), "scanner", plan, new ScanTarget("http://app.test"));
+
+        Assert.Equal("incomplete", outcome.Result!.Status);
+        Assert.Equal(reason, outcome.Result.IncompleteReason);
+        Assert.Null(outcome.Result.Findings);
+        Assert.Equal(ScanEngine.IncompleteExitCode, outcome.ProcessExitCode);
+        Assert.NotEqual(outcome.ExitCode, outcome.ProcessExitCode);
+        Assert.Contains(fake.Calls, argv => argv[0] == "stop");
+    }
+
+    [Theory]
+    [InlineData(false, 0, 0)]
+    [InlineData(false, 70, 1)]
+    [InlineData(false, 74, 1)]
+    [InlineData(false, 124, 124)]
+    [InlineData(true, 124, 70)]
+    public void ResultAndBothRawArtifactsArePublishedBeforeTeardown(bool timedOut, int scannerCode, int processCode)
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "wip-result-" + Guid.NewGuid().ToString("N"));
+        var fake = new Fake { ExecTimedOut = timedOut, ExecCode = scannerCode };
+        var plan = ValidPlan() with { UnperformedChecksPath = "/out/unperformed.txt" };
+        var observed = false;
+        fake.BeforeStop = () =>
+        {
+            var runDirectory = Assert.Single(Directory.GetDirectories(directory));
+            Assert.True(File.Exists(Path.Combine(runDirectory, "result.json")));
+            Assert.True(File.Exists(Path.Combine(runDirectory, "report.json")));
+            Assert.True(File.Exists(Path.Combine(runDirectory, "unperformed-checks.txt")));
+            Assert.Empty(Directory.GetFiles(runDirectory, "*.tmp"));
+            using var document = JsonDocument.Parse(File.ReadAllText(Path.Combine(runDirectory, "result.json")));
+            Assert.Equal(timedOut ? "incomplete" : "completed", document.RootElement.GetProperty("status").GetString());
+            Assert.Equal(scannerCode, document.RootElement.GetProperty("scannerExitCode").GetInt32());
+            Assert.Equal(timedOut ? "" : fake.Report, File.ReadAllText(Path.Combine(runDirectory, "report.json")));
+            Assert.Equal(timedOut ? "" : fake.Diagnostics, File.ReadAllText(Path.Combine(runDirectory, "unperformed-checks.txt")));
+            observed = true;
+        };
+        try
+        {
+            var outcome = Engine(fake).Run(new StubScanner(plan), "scanner", plan, new ScanTarget("http://app.test"), outputDirectory: directory);
+            Assert.Equal(processCode, outcome.ProcessExitCode);
+            Assert.True(observed);
+        }
+        finally { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+    }
+
+    /// <summary>
+    /// The scan is kept, and the failed save still reaches the exit code: asking for --output
+    /// and receiving neither a file nor a nonzero status is the reading this format exists to
+    /// prevent. The scanner's own status stays in the outcome and the result document.
+    /// </summary>
+    [Theory]
+    [InlineData(0, ScanEngine.PersistenceFailedExitCode)]
+    [InlineData(7, ScanEngine.PersistenceFailedExitCode)]
+    [InlineData(70, ScanEngine.PersistenceFailedExitCode)]
+    [InlineData(74, ScanEngine.PersistenceFailedExitCode)]
+    public void PersistenceFailureAfterPreflightPreservesTheCompletedScan(int scannerCode, int processCode)
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "wip-result-failure-" + Guid.NewGuid().ToString("N"));
+        var fake = new Fake { ExecCode = scannerCode };
+        fake.AfterExec = () =>
+        {
+            Assert.True(Directory.Exists(directory));
+            Directory.Delete(directory);
+            File.WriteAllText(directory, "the output location became a file after preflight");
+        };
+        try
+        {
+            var outcome = Engine(fake).Run(new StubScanner(), "scanner", ValidPlan(),
+                new ScanTarget("http://app.test"), outputDirectory: directory);
+
+            Assert.Equal(fake.Report, outcome.Report);
+            Assert.Equal(fake.Diagnostics, outcome.UnperformedChecks);
+            Assert.Equal(scannerCode, outcome.ExitCode);
+            Assert.Equal(processCode, outcome.ProcessExitCode);
+            Assert.Equal("completed", outcome.Result!.Status);
+            Assert.Equal(scannerCode, outcome.Result.ScannerExitCode);
+            Assert.Contains("could not be saved", outcome.PersistenceError);
+            Assert.Single(fake.Calls, argv => argv[0] == "stop");
+
+            using var output = new StringWriter();
+            using var error = new StringWriter();
+            Assert.Equal(processCode, CliContext.WriteScanOutcome(outcome, ValidPlan().ReportPath, output, error, true, true));
+            Assert.Equal(fake.Report, output.ToString());
+            Assert.Contains($"exit={scannerCode}", error.ToString());
+            Assert.Contains("result persistence failed", error.ToString());
+        }
+        finally
+        {
+            if (File.Exists(directory)) File.Delete(directory);
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
     }
 
     // ----------------------------------------------------------------- cleanup
@@ -719,7 +917,7 @@ public class ScanEngineTests
     {
         var fake = new Fake();
 
-        Engine(fake).Run(new StubScanner(), "scanner", ValidPlan());
+        Engine(fake).Run(new StubScanner(), "scanner", ValidPlan(), new ScanTarget("http://app.test:8080"));
 
         Assert.True(Ran(fake, "stop"));
         Assert.False(Ran(fake, "remove"), "removal is sandbox destroy's, so a scan leaves the sandbox inspectable");
@@ -731,7 +929,7 @@ public class ScanEngineTests
         var fake = new Fake { ExecThrows = true };
 
         var error = Assert.Throws<WipException>(() =>
-            Engine(fake).Run(new StubScanner(), "scanner", ValidPlan()));
+            Engine(fake).Run(new StubScanner(), "scanner", ValidPlan(), new ScanTarget("http://app.test:8080")));
 
         Assert.Contains("scanner failed to start", error.Message);
         Assert.True(Ran(fake, "exec"));

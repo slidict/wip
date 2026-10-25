@@ -80,6 +80,83 @@ internal sealed class ZapScanner : ISecurityScanner
             ReportPath, ImageReference + "/wip-passive-v1", UnperformedPath);
     }
 
+    /// <summary>Reads the native traditional-json report without touching execution resources.</summary>
+    public IReadOnlyList<ScanFinding> ConvertReport(string report)
+    {
+        // The traditional-json template emits pluginid/alertRef, name/alert, riskcode,
+        // confidence and instances containing uri/method/param/evidence. Numeric codes
+        // follow ZAP's alert risk and confidence levels; omitted values remain null.
+        // https://www.zaproxy.org/docs/desktop/addons/report-generation/
+        using var document = JsonDocument.Parse(report);
+        var findings = new List<ScanFinding>();
+        foreach (var site in ReportArray(document.RootElement, "site").EnumerateArray())
+        {
+            foreach (var alert in ReportArray(site, "alerts").EnumerateArray())
+            {
+                if (alert.ValueKind != JsonValueKind.Object)
+                    throw new FormatException("ZAP alerts must be objects");
+                var risk = ReportText(alert, "riskcode");
+                var confidence = ReportText(alert, "confidence");
+                var finding = new ScanFinding(
+                    ReportText(alert, "pluginid") ?? ReportText(alert, "alertRef"),
+                    ReportText(alert, "name") ?? ReportText(alert, "alert"),
+                    risk switch { "0" => "informational", "1" => "low", "2" => "medium", "3" => "high", _ => risk },
+                    confidence switch { "0" => "false-positive", "1" => "low", "2" => "medium", "3" => "high", "4" => "confirmed", _ => confidence },
+                    new ScanLocation(null, null, null), null);
+                if (!alert.TryGetProperty("instances", out var instances) || instances.ValueKind == JsonValueKind.Null)
+                {
+                    findings.Add(finding);
+                    continue;
+                }
+                if (instances.ValueKind != JsonValueKind.Array)
+                    throw new FormatException("ZAP instances must be an array");
+                if (instances.GetArrayLength() == 0) findings.Add(finding);
+                foreach (var instance in instances.EnumerateArray())
+                {
+                    if (instance.ValueKind != JsonValueKind.Object)
+                        throw new FormatException("ZAP instances must be objects");
+                    findings.Add(finding with
+                    {
+                        Location = new ScanLocation(ReportPathOnly(instance),
+                            ReportText(instance, "method")?.ToUpperInvariant(), ReportText(instance, "param")),
+                        Evidence = ReportText(instance, "evidence")
+                    });
+                }
+            }
+        }
+        return findings.AsReadOnly();
+    }
+
+    private static JsonElement ReportArray(JsonElement parent, string name)
+    {
+        if (parent.ValueKind != JsonValueKind.Object || !parent.TryGetProperty(name, out var value) || value.ValueKind != JsonValueKind.Array)
+            throw new FormatException($"ZAP report requires a {name} array");
+        return value;
+    }
+
+    private static string? ReportText(JsonElement parent, string name)
+    {
+        if (!parent.TryGetProperty(name, out var value) || value.ValueKind == JsonValueKind.Null) return null;
+        return value.ValueKind switch
+        {
+            JsonValueKind.String => value.GetString(),
+            JsonValueKind.Number => value.GetRawText(),
+            _ => throw new FormatException($"ZAP {name} must be text or a number")
+        };
+    }
+
+    private static string? ReportPathOnly(JsonElement instance)
+    {
+        // A damaged URI field does not invalidate the rest of this instance or report.
+        // Root and collection structure are still validated separately above.
+        if (!instance.TryGetProperty("uri", out var value) || value.ValueKind != JsonValueKind.String)
+            return null;
+        if (!Uri.TryCreate(value.GetString(), UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https"))
+            return null;
+        // Query strings may carry credentials and are not part of a stable endpoint key.
+        return uri.AbsolutePath;
+    }
+
     private static string Quote(string text)
     {
         using var buffer = new MemoryStream();

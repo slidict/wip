@@ -9,7 +9,7 @@ OWASP ZAP is the first built-in adapter, selected as `--tool zap`.
 
 ```sh
 wip security tools
-wip security scan <sandbox> --tool <name> --target <address> [--timeout <seconds>]
+wip security scan <sandbox> --tool <name> --target <address> [--timeout <seconds>] [--output <dir>] [--commit <sha>]
 ```
 
 The sandbox and its internal network remain declared in `wip.yml`. The target is an address
@@ -86,17 +86,16 @@ callbacks. The declared internal network remains the enforcement boundary for eg
 
 The report job writes ZAP's native `traditional-json` report. The rules identifier combines
 the immutable image digest with the reviewed `wip-passive-v1` profile; rules and add-ons come
-from that image rather than a scan-time update. Exit codes remain ZAP's own: Automation
-Framework returns zero on completion, one on errors, or two on warnings. A completed passive
+from that image rather than a scan-time update. Completed runs retain ZAP's own exit code:
+Automation Framework returns zero on completion, one on errors, or two on warnings. A completed passive
 scan with no alerts does not establish that active or authenticated checks passed.
 
 `/tmp/wip-zap-unperformed.txt` retains the profile's omitted checks and crawl limits together
 with the native Automation Framework log. The engine collects that sidecar separately and
 the CLI writes it to stderr under `Unperformed checks (raw):`; stdout remains the original
 JSON report. Sidecars use the same collection deadline and retention limit as reports;
-missing, unreadable or oversized diagnostics are reported explicitly. These raw artifacts
-are not a normalized result schema; common result formatting is tracked in
-[the result-format work](https://github.com/slidict/wip/issues/269).
+missing, unreadable or oversized diagnostics are reported explicitly. Raw artifacts remain
+available alongside the versioned normalized result described below.
 
 Only unauthenticated targets are supported here. Credentials are not accepted through argv;
 [authenticated scanning](https://github.com/slidict/wip/issues/277) requires a separate secret
@@ -108,6 +107,70 @@ Scheduled and manually triggered runs additionally scan a single internal HTTP p
 real adapter. The pinned image is about 1.12 GiB compressed, so its download and registry
 availability are deliberately kept off unrelated pull requests. The real scenario has a
 bounded pull and short scan inside the workflow's 45-minute job budget.
+
+## Result document and persisted artifacts
+
+`--output <dir>` writes `<dir>/<runId>/result.json`, `report.json` and
+`unperformed-checks.txt`. `--commit <sha>` adds caller-supplied application revision metadata;
+it is never inferred from the sandbox. The raw report and coverage files retain their original
+text. Unavailable artifacts are empty files whose reason is recorded in `result.json`.
+Persistence finishes before sandbox teardown, including for an incomplete timeout result.
+Each file is written to a temporary name and moved into place; `result.json` is published
+last. Consumers should begin with that document, not infer success from an artifact's presence.
+Omitting `--output` skips persistence. Stdout remains the raw report in both cases.
+
+The directory is checked and created before the scan starts, and before the image request, so
+an unusable path costs neither a pull nor a run. Persistence happens after the scan, so a path
+rejected there would take a completed scan's report with it.
+
+If storage fails after the preflight check, the CLI reports the persistence error on stderr
+and still returns the captured report, coverage and scan status. The primary scan outcome is
+preserved; a persistence error does not invent a new incomplete-scan reason or change the
+scanner's completed status. Verify that `result.json` was published before consuming artifacts.
+
+The JSON contract is versioned and written through `Utf8JsonWriter`:
+
+| Field | Consumer contract |
+| --- | --- |
+| `version` | Currently `1`; reject unsupported versions |
+| `run` | `runId`, UTC ISO-8601 `startedAt`/`endedAt`, `tool`, `image`, `rulesVersion`, `sandbox`, `network`, `networkVerifiedInternal`, `target`, and optional `commit` |
+| `status` | Exactly `completed` or `incomplete` |
+| `scannerExitCode` | The original scanner status, independent of result completeness |
+| `findings` | Present only for `completed`; an empty array means no findings were reported within the recorded coverage |
+| `reason` | Present only for `incomplete`: `timeout`, `report-collection-failed`, `report-empty`, `report-unparseable` or `unperformed-checks-lost` |
+| `coverage` | Redacted `unperformedChecks`, or `missingReason` explaining why it is unavailable |
+
+Each finding has optional `ruleId`, `name`, `severity`, `confidence` and `evidence`, plus
+`location` containing optional `path`, `method` and `parameter`. Absent scanner fields remain
+absent. ZAP severity codes map to `informational`, `low`, `medium` and `high`; confidence
+codes map to `false-positive`, `low`, `medium`, `high` and `confirmed`. Unknown codes remain
+strings rather than fabricated defaults. Location drops the deployment's scheme, host, port, query string and fragment so a
+finding remains comparable across deployment authorities. A blank or unusable instance URI omits
+only that instance's path; malformed report structure still makes the run incomplete. Locations
+are not unique across origins within a multi-site report, so consumers must not merge different
+sites by location alone. Origins remain in the raw report; a stable logical-site mapping is not
+yet part of this format. Secret-shaped values in normalized
+fields are replaced with `[REDACTED]` before writing; the separate raw artifacts are unchanged.
+JSON string escaping preserves document structure even when scanner text contains controls,
+quotes or markup. The embedded coverage copy uses the same redaction as other result strings;
+`unperformed-checks.txt` remains verbatim for investigation and may contain sensitive diagnostics.
+
+Check `status` before consuming `findings`. An incomplete result has a reason and no findings
+array, so it cannot appear as a clean empty scan. A completed result still has coverage:
+omitted active, authenticated or other checks are not evidence that those checks passed.
+The CLI reserves two exit codes, both nonzero through a WSL shell. `70` means the result is
+incomplete. `74` means the scan completed but its artifacts did not reach the requested
+directory, which can still happen after the preflight check — a full volume, or a directory
+removed mid-run. The two call for different responses: an incomplete scan has to be run again,
+while a completed one whose save failed has its report on stdout and needs the output path
+looked at. An incomplete result takes precedence when both apply, since its reason is in the
+document either way.
+
+A completed scanner that itself returns `70` or `74` maps to CLI exit `1`; its original status
+remains in `scannerExitCode` and provenance. Other completed scanner statuses are forwarded
+unchanged. So each reserved code means only what the CLI uses it for, and a completed scan whose
+result was not saved never returns `0` — asking for `--output` and receiving neither a file nor
+a nonzero status is the reading this format exists to prevent.
 
 ## Internal adapter contract
 
@@ -124,7 +187,12 @@ An adapter supplies a `ScanPlan`:
 | `Argv` | Executable and arguments inside the sandbox, passed directly without a shell |
 | `ReportPath` | Canonical absolute path of the report inside the container |
 | `RulesVersion` | Version or digest of the applied rule, template or add-on set |
-| `UnperformedChecksPath` | Optional absolute path for raw omitted-check information |
+| `UnperformedChecksPath` | Required canonical absolute path for raw omitted-check information; missing paths are rejected before execution |
+
+Every adapter must declare a coverage record so an empty finding list cannot imply that
+unreported checks ran. Plan validation rejects missing coverage paths before backend calls;
+`unperformed-checks-lost` is reserved for a requested record that is lost, unreadable,
+oversized or empty after execution.
 
 The plan cannot set backend options, networks, mounts or environment variables. Its argv
 appears after the container ID and can only become the scanner command's arguments. The
@@ -151,19 +219,20 @@ command's current design.
 Cleanup retains the container for inspection; removal remains an explicit `sandbox destroy`
 operation.
 
-A tool's own exit code is retained because a nonzero code can represent findings. A timeout
-is identified separately in the outcome and provenance. On timeout the engine immediately requests a
-sandbox stop and returns no report: a stopped container cannot serve a report through
-exec, and reading before stopping could collect a file still being written by the scanner.
+The tool's own exit code is retained in the outcome and provenance because a nonzero code
+can represent findings. Incomplete runs use a distinct CLI exit status. A timeout is
+identified separately in the outcome and provenance. On timeout the engine records an
+incomplete result, requests sandbox stop during cleanup and returns no report. It never
+collects from the timed-out scanner, which may still be writing a partial file.
 Timeout metadata is carried separately from the exit code. A scanner that exits normally
 with code 124 retains that exit code and its report; it is not classified as timed out.
 Stopping the backend client alone does not establish that container processes have stopped.
 
 Normal report collection uses the shorter of the scan timeout and ten seconds. A collection
 timeout, nonzero read exit or capture-limit overflow yields no report and a specific stderr
-diagnostic. These failures preserve the scanner's exit code and provenance; they do not mean
-that the scanner wrote no file. Collection does not restart the scanner or extend its
-execution timeout.
+diagnostic. These failures preserve the scanner's exit code in provenance and the result,
+but make the CLI return the incomplete status; they do not mean the scanner wrote no file.
+Collection does not restart the scanner or extend its execution timeout.
 
 Reports contain untrusted target-controlled text. Captured report text uses UTF-8 decoding
 and a 1,048,576-character limit applied only to report collection. Existing probe callers,
