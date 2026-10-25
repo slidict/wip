@@ -19,7 +19,7 @@ internal sealed partial class CliContext
     /// </remarks>
     internal int SecurityScan(string sandbox, string tool, string target, int timeoutSeconds)
     {
-        if (timeoutSeconds <= 0) throw new ConfigException("--timeout must be a positive number of seconds");
+        ValidateSecurityTimeout(timeoutSeconds);
         // Both sinks to stderr: this command writes the report to stdout, and a scanner's
         // own progress arriving there would be mixed into it.
         var backend = ResourceBackend(streamOutput: Console.Error, streamError: Console.Error);
@@ -32,17 +32,26 @@ internal sealed partial class CliContext
         var plan = engine.Prepare(scanner, sandbox, scanTarget);
         var outcome = engine.Run(scanner, sandbox, plan, TimeSpan.FromSeconds(timeoutSeconds));
 
+        return WriteScanOutcome(outcome, plan.ReportPath, Console.Out, Console.Error, Console.IsOutputRedirected);
+    }
+
+    internal static int WriteScanOutcome(ScanOutcome outcome, string reportPath, TextWriter output, TextWriter error, bool isOutputRedirected)
+    {
         // Reports are untrusted tool output. Preserve redirected artifacts, but render
         // terminal controls visibly when displaying a report to a person.
-        Console.Error.WriteLine(
+        error.WriteLine(
             $"{outcome.Tool}\t{outcome.Sandbox}\t{outcome.Network}\t{outcome.Image}\trules={outcome.RulesVersion}\texit={outcome.ExitCode}\tstatus={(outcome.TimedOut ? "timeout" : "exited")}");
-        if (outcome.Report is { } report) WriteSecurityReport(Console.Out, report, Console.IsOutputRedirected);
-        else if (outcome.TimedOut) Console.Error.WriteLine($"{outcome.Tool}: timed out; requested sandbox stop without collecting a partial report");
-        else Console.Error.WriteLine($"{outcome.Tool}: wrote no report at {plan.ReportPath}");
-
-        // The tool's own status, forwarded: a scanner uses it to report findings, so
-        // flattening it to 0 would hide what the scan found.
+        if (outcome.Report is { } report) WriteSecurityReport(output, report, isOutputRedirected);
+        else if (outcome.TimedOut) error.WriteLine($"{outcome.Tool}: timed out; requested sandbox stop without collecting a partial report");
+        else if (outcome.ReportError is { } reason) error.WriteLine($"{outcome.Tool}: {reason}");
+        else error.WriteLine($"{outcome.Tool}: wrote no report at {reportPath}");
         return outcome.ExitCode;
+    }
+
+    internal static void ValidateSecurityTimeout(int timeoutSeconds)
+    {
+        if (timeoutSeconds <= 0 || (long)timeoutSeconds * 1000 > int.MaxValue)
+            throw new ConfigException("--timeout must be positive and at most 2147483 seconds");
     }
 
     internal static void WriteSecurityReport(TextWriter output, string report, bool isOutputRedirected)
@@ -53,30 +62,45 @@ internal sealed partial class CliContext
             return;
         }
 
+        var rendered = new StringBuilder(report.Length);
         foreach (var character in report)
         {
             if ((char.IsControl(character) && character is not ('\n' or '\t')) ||
                 char.GetUnicodeCategory(character) == UnicodeCategory.Format)
-                output.Write($"\\u{(int)character:x4}");
-            else output.Write(character);
+                rendered.Append($"\\u{(int)character:x4}");
+            else rendered.Append(character);
         }
+        output.Write(rendered.ToString());
     }
 
-    // Keep pipe draining after the cap so the child can exit; never return a truncated
-    // report that a caller could mistake for a complete artifact.
     internal static (int Code, string Output) CaptureProbe(Func<TextWriter, TextWriter, int> run, bool captureStderr = false)
     {
-        using var captured = new BoundedCaptureWriter();
+        var result = CaptureProbeWithOutcome((output, error) => (run(output, error), false), captureStderr);
+        return (result.Code, result.Output);
+    }
+
+    // Only reports have a cap. Ordinary metadata and health probes retain their existing
+    // full output. Keep draining after overflow, preserving the exit code and timeout flag.
+    internal static SandboxCommandResult CaptureProbeWithOutcome(
+        Func<TextWriter, TextWriter, (int Code, bool TimedOut)> run,
+        bool captureStderr = false,
+        bool boundedReport = false)
+    {
+        using TextWriter captured = boundedReport ? new BoundedCaptureWriter() : new StringWriter();
         var output = TextWriter.Synchronized(captured);
         var error = captureStderr ? output : TextWriter.Null;
-        var code = run(output, error);
-        if (captured.Exceeded) throw new WipException("Captured output exceeded the 1 Mi-character limit; no partial report was returned");
-        return (code, captured.ToString());
+        var result = run(output, error);
+        var exceeded = captured is BoundedCaptureWriter { Exceeded: true };
+        return new(result.Code, exceeded ? "" : captured.ToString()!)
+        {
+            TimedOut = result.TimedOut,
+            OutputLimitExceeded = exceeded
+        };
     }
 
     private sealed class BoundedCaptureWriter : TextWriter
     {
-        private const int Limit = 1024 * 1024;
+        private const int Limit = ScanEngine.MaxReportCharacters;
         private readonly StringBuilder buffer = new();
         internal bool Exceeded { get; private set; }
         public override Encoding Encoding => Encoding.UTF8;

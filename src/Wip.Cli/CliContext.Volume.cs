@@ -70,11 +70,9 @@ internal sealed partial class CliContext
         var executable = Resolver.Resolve(Config.WslcCommand);
         return (arguments, timeout, console) =>
         {
-            if (console == SandboxConsoleMode.Capture)
-            {
-                var result = Probe([executable, .. arguments], timeout);
-                return new(result.Code, result.Output);
-            }
+            if (console is SandboxConsoleMode.Capture or SandboxConsoleMode.CaptureReport)
+                return ProbeWithOutcome([executable, .. arguments], timeout,
+                    boundedReport: console == SandboxConsoleMode.CaptureReport);
             var runner = new CommandRunner(Interpreter, output: streamOutput, error: streamError, debug: Debug, quiet: Quiet);
             if (console == SandboxConsoleMode.Interactive)
             {
@@ -83,7 +81,8 @@ internal sealed partial class CliContext
                 // Its exit status is still the one wip returns.
                 return new(runner.Run([executable, .. arguments], interactive: true), "");
             }
-            return new(runner.Run([executable, .. arguments], timeout: timeout), "");
+            var streamed = runner.RunWithOutcome([executable, .. arguments], timeout: timeout);
+            return new(streamed.Code, "") { TimedOut = streamed.TimedOut };
         };
     }
 }

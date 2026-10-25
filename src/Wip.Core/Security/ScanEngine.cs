@@ -10,7 +10,8 @@ namespace Wip.Security;
 /// <param name="Network">The backend name of the boundary the run was verified behind.</param>
 /// <param name="ExitCode">The tool status, or the reserved timeout status when TimedOut is true.</param>
 /// <param name="TimedOut">Whether the execution deadline expired; exit 124 alone is ambiguous.</param>
-/// <param name="Report">The report as the tool wrote it, or null when it wrote none.</param>
+/// <param name="Report">The complete report, or null when collection did not produce one.</param>
+/// <param name="ReportError">The collection failure reason, independent of the scanner status.</param>
 /// <remarks>
 /// A tool's non-zero status is not an error here: scanners use exit codes to report findings.
 /// Distinguishing "ran and found things" from "did not run" belongs to the result format that
@@ -24,7 +25,8 @@ internal sealed record ScanOutcome(
     string Network,
     int ExitCode,
     string? Report,
-    bool TimedOut = false);
+    bool TimedOut = false,
+    string? ReportError = null);
 
 /// <summary>
 /// Drives exactly one registered scanner inside one declared sandbox, behind the boundary
@@ -32,11 +34,10 @@ internal sealed record ScanOutcome(
 /// </summary>
 /// <remarks>
 /// <para>
-/// Preparation and execution are separated here, and the separation is what makes
-/// a fail-closed network workable at all: a pinned image and a pinned rule set have to be
-/// fetched where there is egress, so <see cref="Prepare"/> runs outside the isolated sandbox
-/// and <see cref="Run"/> only consumes what it left behind. Run refuses to start if Prepare
-/// did not complete.
+/// Preparation validates the plan and requests its image from the host-side backend.
+/// Execution independently validates that an already-running sandbox uses that image and
+/// the declared boundary. There is no preparation token: Run revalidates its inputs rather
+/// than requiring proof that Prepare was called. The CLI calls both in order.
 /// </para>
 /// <para>
 /// The engine builds every backend invocation. An adapter supplies a <see cref="ScanPlan"/>
@@ -51,9 +52,8 @@ internal sealed class ScanEngine(
     SandboxBackend backend)
 {
     /// <summary>
-    /// Generous because it is one image download, and the whole reason preparation is a phase
-    /// of its own: this is the step that is allowed to reach the network, so it is the step
-    /// that waits on one.
+    /// Allows a host-side registry request to finish. An existing runnable sandbox already
+    /// has this immutable image locally; a pull need not download new layers.
     /// </summary>
     private static readonly TimeSpan PullTimeout = TimeSpan.FromMinutes(20);
 
@@ -66,6 +66,9 @@ internal sealed class ScanEngine(
 
     /// <summary>Collection is a bounded read, not another scan-length operation.</summary>
     private static readonly TimeSpan CollectionTimeout = TimeSpan.FromSeconds(10);
+
+    /// <summary>The complete report must fit this retained-text budget.</summary>
+    internal const int MaxReportCharacters = 1024 * 1024;
 
     private SandboxDefinition Definition(string sandbox) =>
         settings.Sandboxes.SingleOrDefault(s => s.Name == sandbox)
@@ -84,12 +87,11 @@ internal sealed class ScanEngine(
     internal static ISecurityScanner Select(string tool) => ScannerRegistry.Resolve(tool);
 
     /// <summary>
-    /// Everything that needs egress, done before the boundary matters: the plan is validated
-    /// and its pinned image is pulled into the local image store. Nothing here runs inside the
-    /// isolated sandbox, which is what makes the pull possible at all -- a scan sandbox cannot
-    /// reach a registry, by design.
+    /// Validates a plan and requests its image through the host-side backend, outside the
+    /// isolated sandbox. This does not create or start a sandbox. A successful Run requires
+    /// one already running from this image, so the image may already be present locally.
     /// </summary>
-    /// <returns>The validated plan, which <see cref="Run"/> requires.</returns>
+    /// <returns>The validated plan for the caller to pass to Run.</returns>
     internal ScanPlan Prepare(ISecurityScanner scanner, string sandbox, ScanTarget target)
     {
         target.Validate();
@@ -102,9 +104,8 @@ internal sealed class ScanEngine(
         // Before the pull, so a sandbox that would run a different image is refused rather
         // than having an image fetched for it that nothing will use.
         RequirePinnedImage(definition, sandbox, plan);
-        // The pull is the preparation. A pinned reference is what makes it meaningful: pulling
-        // a floating tag here and running it later would be two different images, which is why
-        // Validate refuses one above.
+        // This registry request cannot replace the digest-pinned image with different
+        // content. It does not prove the sandbox is running or that rules were installed.
         var pulled = backend(["pull", plan.Image.Reference], PullTimeout, SandboxConsoleMode.Stream);
         if (pulled.Code != 0)
             throw new WipException(
@@ -114,13 +115,12 @@ internal sealed class ScanEngine(
     }
 
     /// <summary>
-    /// Runs the prepared plan inside the sandbox, behind its declared boundary, and collects
+    /// Runs a validated plan inside the sandbox, behind its declared boundary, and collects
     /// the report. Stops and cleans up whatever happens.
     /// </summary>
     /// <param name="plan">
-    /// The plan <see cref="Prepare"/> returned. Required rather than re-derived, so a caller
-    /// cannot reach Run without having gone through preparation -- and re-validated here,
-    /// because being handed a plan is not evidence that it is a valid one.
+    /// A plan, normally returned by Prepare. It is independently validated here; the type
+    /// carries no preparation history and callers can supply a plan without calling Prepare.
     /// </param>
     internal ScanOutcome Run(ISecurityScanner scanner, string sandbox, ScanPlan plan, TimeSpan? timeout = null)
     {
@@ -165,19 +165,20 @@ internal sealed class ScanEngine(
         var stopped = false;
         try
         {
-            var code = sandboxes.Exec(sandbox, plan.Argv, deadline);
-            if (code == CommandRunner.TimeoutExitCode)
+            var execution = sandboxes.ExecWithResult(sandbox, plan.Argv, deadline);
+            var code = execution.Code;
+            if (execution.TimedOut)
             {
                 // Killing the host exec client does not stop processes inside the container.
                 // Stop before any collection; exec cannot read a stopped container, and a
                 // partial report must not be presented as a completed scanner result.
-                Stop(sandbox);
                 stopped = true;
+                Stop(sandbox);
                 return new(scanner.Name, sandbox, plan.Image.Reference, plan.RulesVersion, network, code, null, TimedOut: true);
             }
             var collectionDeadline = deadline < CollectionTimeout ? deadline : CollectionTimeout;
-            var report = ReadReport(sandbox, plan.ReportPath, collectionDeadline);
-            return new(scanner.Name, sandbox, plan.Image.Reference, plan.RulesVersion, network, code, report);
+            var (report, reportError) = ReadReport(sandbox, plan.ReportPath, collectionDeadline);
+            return new(scanner.Name, sandbox, plan.Image.Reference, plan.RulesVersion, network, code, report, ReportError: reportError);
         }
         finally
         {
@@ -195,7 +196,7 @@ internal sealed class ScanEngine(
     /// sandbox, so the tool that actually executes is whatever that sandbox's image provides;
     /// pulling the plan's image would leave it unused, and the outcome would name an image
     /// that had not run. Binding the two is what makes "which tool ran" answerable, so the
-    /// scanner's image belongs in the sandbox declaration and the pull keeps it current.
+    /// scanner's immutable image belongs in the sandbox declaration.
     /// </remarks>
     private static void RequirePinnedImage(SandboxDefinition definition, string sandbox, ScanPlan plan)
     {
@@ -220,12 +221,26 @@ internal sealed class ScanEngine(
     /// sandbox rather than trusted as text: the content is a tool's output, which is treated
     /// as untrusted input downstream, and nothing here interprets it.
     /// </summary>
-    private string? ReadReport(string sandbox, string reportPath, TimeSpan timeout)
+    private (string? Report, string? Error) ReadReport(string sandbox, string reportPath, TimeSpan timeout)
     {
         // `cat` with the path as its own argument, never a shell line: a report path is data,
         // and composing it into `sh -c` would make it executable.
-        var captured = sandboxes.Capture(sandbox, ["cat", reportPath], timeout);
-        return captured.Code == 0 ? captured.Output : null;
+        try
+        {
+            var captured = sandboxes.CaptureReport(sandbox, ["cat", reportPath], timeout);
+            if (captured.TimedOut)
+                return (null, $"report collection timed out after {timeout.TotalSeconds:g} seconds");
+            if (captured.OutputLimitExceeded || captured.Output.Length > MaxReportCharacters)
+                return (null, "report exceeded the 1 Mi-character retention limit; no partial report was returned");
+            if (captured.Code != 0)
+                return (null, $"report collection failed (exit {captured.Code})");
+            return (captured.Output, null);
+        }
+        catch (WipException error)
+        {
+            // Collection failure must not erase the scanner's status and provenance.
+            return (null, $"report collection failed: {error.Message}");
+        }
     }
 
     private void Stop(string sandbox)

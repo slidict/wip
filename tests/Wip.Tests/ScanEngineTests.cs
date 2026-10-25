@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Wip.Cli;
 using Wip.Configuration;
 using Wip.Execution;
 using Wip.Security;
@@ -69,10 +70,16 @@ public class ScanEngineTests
         public bool NetworkVerifiable = true;
         public int PullCode;
         public int ExecCode;
+        public bool ExecTimedOut;
         public bool ExecThrows;
         public readonly List<TimeSpan> ReportTimeouts = [];
         public string Report = "{\"alerts\":[]}";
         public bool ReportMissing;
+        public int ReportCode;
+        public bool ReportTimedOut;
+        public bool ReportLimitExceeded;
+        public bool ReportThrows;
+        public bool StopThrows;
 
         /// <summary>
         /// What the running container was created from. Defaults to the declared image; a test
@@ -123,14 +130,24 @@ public class ScanEngineTests
             if (argv is ["exec", _, "cat", ..])
             {
                 ReportTimeouts.Add(timeout);
-                return new(ReportMissing ? 1 : 0, ReportMissing ? "" : Report);
+                if (ReportThrows) throw new WipException("report capture exceeded its limit");
+                return new(ReportMissing ? 1 : ReportCode, ReportMissing ? "" : Report)
+                {
+                    TimedOut = ReportTimedOut,
+                    OutputLimitExceeded = ReportLimitExceeded,
+                };
             }
             if (argv[0] == "exec")
             {
                 if (ExecThrows) throw new WipException("scanner failed to start");
-                return new(ExecCode, "");
+                return new(ExecCode, "") { TimedOut = ExecTimedOut };
             }
-            if (argv[0] == "stop") { ContainerState = "exited"; return new(0, ""); }
+            if (argv[0] == "stop")
+            {
+                if (StopThrows) throw new InvalidOperationException("stop failed unexpectedly");
+                ContainerState = "exited";
+                return new(0, "");
+            }
             return new(0, "");
         }
     }
@@ -515,7 +532,7 @@ public class ScanEngineTests
     [Fact]
     public void ATimedOutScannerIsStoppedWithoutReadingAnUnfinishedReport()
     {
-        var fake = new Fake { ExecCode = CommandRunner.TimeoutExitCode, Report = "unfinished" };
+        var fake = new Fake { ExecCode = CommandRunner.TimeoutExitCode, ExecTimedOut = true, Report = "unfinished" };
 
         var outcome = Engine(fake).Run(new StubScanner(), "scanner", ValidPlan());
 
@@ -534,6 +551,100 @@ public class ScanEngineTests
 
         Assert.Single(fake.ReportTimeouts);
         Assert.InRange(fake.ReportTimeouts[0], TimeSpan.FromMilliseconds(1), TimeSpan.FromSeconds(10));
+    }
+
+    [Fact]
+    public void AnOversizedReportPreservesTheScannerStatus()
+    {
+        var fake = new Fake { ExecCode = 2, Report = new string('x', 1024 * 1024 + 1) };
+
+        var outcome = Engine(fake).Run(new StubScanner(), "scanner", ValidPlan());
+
+        Assert.Equal(2, outcome.ExitCode);
+        Assert.Null(outcome.Report);
+        Assert.Contains("limit", outcome.ReportError);
+        Assert.True(Ran(fake, "stop"));
+
+        using var output = new StringWriter();
+        using var error = new StringWriter();
+        var code = CliContext.WriteScanOutcome(outcome, "/out/report.json", output, error, isOutputRedirected: true);
+
+        Assert.Equal(2, code);
+        Assert.Equal("", output.ToString());
+        Assert.Contains($"stub\tscanner\t{ScanNet}\t{Pinned}\trules=2.15.0\texit=2\tstatus=exited", error.ToString());
+        Assert.Contains("retention limit", error.ToString());
+    }
+
+    [Fact]
+    public void AReportReadExceptionPreservesTheScannerStatus()
+    {
+        var fake = new Fake { ExecCode = 2, ReportThrows = true };
+
+        var outcome = Engine(fake).Run(new StubScanner(), "scanner", ValidPlan());
+
+        Assert.Equal(2, outcome.ExitCode);
+        Assert.Null(outcome.Report);
+        Assert.Contains("report capture exceeded", outcome.ReportError);
+        Assert.True(Ran(fake, "stop"));
+    }
+
+    [Fact]
+    public void AReportReadFailureIsNotReportedAsAnAbsentFile()
+    {
+        var fake = new Fake { ExecCode = 2, ReportCode = 7 };
+
+        var outcome = Engine(fake).Run(new StubScanner(), "scanner", ValidPlan());
+
+        Assert.Equal(2, outcome.ExitCode);
+        Assert.Null(outcome.Report);
+        Assert.Contains("exit 7", outcome.ReportError);
+    }
+
+    [Fact]
+    public void AReportCollectionTimeoutHasItsOwnReason()
+    {
+        var fake = new Fake { ExecCode = 2, ReportCode = 124, ReportTimedOut = true };
+
+        var outcome = Engine(fake).Run(new StubScanner(), "scanner", ValidPlan());
+
+        Assert.Equal(2, outcome.ExitCode);
+        Assert.False(outcome.TimedOut);
+        Assert.Null(outcome.Report);
+        Assert.Contains("timed out", outcome.ReportError);
+    }
+
+    [Fact]
+    public void ABackendReportLimitPreservesTheScannerStatus()
+    {
+        var fake = new Fake { ExecCode = 2, ReportLimitExceeded = true };
+
+        var outcome = Engine(fake).Run(new StubScanner(), "scanner", ValidPlan());
+
+        Assert.Equal(2, outcome.ExitCode);
+        Assert.Null(outcome.Report);
+        Assert.Contains("limit", outcome.ReportError);
+    }
+
+    [Fact]
+    public void AScannerThatExitsWith124KeepsItsReport()
+    {
+        var fake = new Fake { ExecCode = 124 };
+
+        var outcome = Engine(fake).Run(new StubScanner(), "scanner", ValidPlan());
+
+        Assert.Equal(124, outcome.ExitCode);
+        Assert.False(outcome.TimedOut);
+        Assert.Equal(fake.Report, outcome.Report);
+    }
+
+    [Fact]
+    public void AnUnexpectedStopExceptionDoesNotAttemptASecondStop()
+    {
+        var fake = new Fake { ExecCode = CommandRunner.TimeoutExitCode, ExecTimedOut = true, StopThrows = true };
+
+        Assert.Throws<InvalidOperationException>(() => Engine(fake).Run(new StubScanner(), "scanner", ValidPlan()));
+
+        Assert.Single(fake.Calls, c => c[0] == "stop");
     }
 
     // ----------------------------------------------------------------- cleanup

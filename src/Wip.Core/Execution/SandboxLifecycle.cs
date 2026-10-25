@@ -5,7 +5,11 @@ using Wip.Configuration;
 
 namespace Wip.Execution;
 
-public sealed record SandboxCommandResult(int Code, string Output);
+public sealed record SandboxCommandResult(int Code, string Output)
+{
+    public bool TimedOut { get; init; }
+    public bool OutputLimitExceeded { get; init; }
+}
 public sealed record SandboxMount(string Type, string Name, string Destination);
 public sealed record SandboxStatus(
     string Name,
@@ -45,6 +49,9 @@ public enum SandboxConsoleMode
 
     /// <summary>Hand wip's own stdin/stdout/stderr to the child so a user can drive it.</summary>
     Interactive,
+
+    /// <summary>Capture a scan report with an explicit storage limit.</summary>
+    CaptureReport,
 }
 
 /// <summary>Backend argv are passed directly, never through a shell. Capture is only needed for probes.</summary>
@@ -356,13 +363,17 @@ public sealed class SandboxLifecycle(
     /// Variables exported to the child with <c>-e</c>; null or empty leaves the backend argv
     /// exactly as it was before the report relay existed.
     /// </param>
-    public int Exec(string name, IReadOnlyList<string> argv, TimeSpan timeout, IReadOnlyList<KeyValuePair<string, string>>? environment = null)
+    public int Exec(string name, IReadOnlyList<string> argv, TimeSpan timeout, IReadOnlyList<KeyValuePair<string, string>>? environment = null) =>
+        ExecWithResult(name, argv, timeout, environment).Code;
+
+    /// <summary>Execute while retaining timeout information separately from the exit code.</summary>
+    internal SandboxCommandResult ExecWithResult(string name, IReadOnlyList<string> argv, TimeSpan timeout, IReadOnlyList<KeyValuePair<string, string>>? environment = null)
     {
         ValidateArgv(argv);
         if (timeout <= TimeSpan.Zero || timeout.TotalMilliseconds > int.MaxValue)
             throw new ConfigException("sandbox exec timeout must be positive and at most 2147483 seconds");
         var options = EnvironmentOptions(environment);
-        return backend(["exec", .. options, RunningId(name), .. argv], timeout, SandboxConsoleMode.Stream).Code;
+        return backend(["exec", .. options, RunningId(name), .. argv], timeout, SandboxConsoleMode.Stream);
     }
 
     /// <summary>
@@ -381,6 +392,15 @@ public sealed class SandboxLifecycle(
         if (timeout <= TimeSpan.Zero || timeout.TotalMilliseconds > int.MaxValue)
             throw new ConfigException("sandbox capture timeout must be positive and at most 2147483 seconds");
         return backend(["exec", RunningId(name), .. argv], timeout, SandboxConsoleMode.Capture);
+    }
+
+    /// <summary>Collect a scan report without limiting ordinary probe output.</summary>
+    internal SandboxCommandResult CaptureReport(string name, IReadOnlyList<string> argv, TimeSpan timeout)
+    {
+        ValidateArgv(argv);
+        if (timeout <= TimeSpan.Zero || timeout.TotalMilliseconds > int.MaxValue)
+            throw new ConfigException("sandbox capture timeout must be positive and at most 2147483 seconds");
+        return backend(["exec", RunningId(name), .. argv], timeout, SandboxConsoleMode.CaptureReport);
     }
 
     /// <summary>

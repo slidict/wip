@@ -18,10 +18,11 @@ cannot replace the configured boundary.
 
 The adapter and sandbox declaration must use the same immutable image reference:
 `repository@sha256:<64 hexadecimal characters>`. Tags, including version tags, can be
-reassigned and are refused. `Prepare` pulls the digest outside the isolated sandbox; `Run`
-compares the declaration and the running container's `Config.Image` with the plan. The
-inspect record's top-level `Image` is a config image ID, not a repository digest reference,
-so it cannot replace a missing `Config.Image`. Unknown or mismatched references are refused.
+reassigned and are refused. `Prepare` validates the plan and requests a pull outside the
+isolated sandbox; `Run` compares the declaration and the running container's `Config.Image`
+with the plan. The inspect record's top-level `Image` is a config image ID, not a repository
+digest reference, so it cannot replace a missing `Config.Image`. Unknown or mismatched
+references are refused.
 
 ### Keeping the scanner container running
 
@@ -73,32 +74,42 @@ engine and sandbox declaration control isolation. One scanner per invocation fol
 
 | Phase | Behavior |
 | --- | --- |
-| Prepare | Validate the plan and pull its immutable image outside the isolated sandbox |
+| Prepare | Validate the plan and request an immutable-image pull outside the isolated sandbox |
 | Run | Revalidate the plan, running image and boundary, then execute the tool |
 | Collect | Read the report under a separate short deadline and bounded capture limit |
 | Cleanup | Stop the owned container, including on execution failure |
 
-`Run` accepts the plan returned by `Prepare` but still validates it. A supplied plan is not
-proof of preparation or valid isolation. Cleanup retains the container for inspection;
-removal remains an explicit `sandbox destroy` operation.
+The CLI calls `Prepare` before `Run`, but `Run` has no preparation token or history check:
+it accepts a valid plan and independently verifies the running sandbox. Callers must create
+and start that sandbox before scanning. Consequently its pinned image is already available
+locally when a scan can run; the preparation pull may check registry metadata but is not a
+guaranteed first image fetch. It does not create, start or reorder sandbox creation. Preparing
+before sandbox creation would require a separate lifecycle workflow and is outside this
+command's current design.
+
+Cleanup retains the container for inspection; removal remains an explicit `sandbox destroy`
+operation.
 
 A tool's own exit code is retained because a nonzero code can represent findings. A timeout
-is identified separately in the outcome and provenance. On timeout the engine stops the
-sandbox immediately and returns no report: a stopped container cannot serve a report through
+is identified separately in the outcome and provenance. On timeout the engine immediately requests a
+sandbox stop and returns no report: a stopped container cannot serve a report through
 exec, and reading before stopping could collect a file still being written by the scanner.
-The runner reserves exit code 124 for timeouts, so a scanner returning that code is also
-classified as timed out. Stopping the backend client alone does not establish that container
-processes have stopped.
+Timeout metadata is carried separately from the exit code. A scanner that exits normally
+with code 124 retains that exit code and its report; it is not classified as timed out.
+Stopping the backend client alone does not establish that container processes have stopped.
 
-Normal report collection uses the shorter of the scan timeout and ten seconds. A failed
-report read yields no report; collection does not restart the scanner or extend the scan's
+Normal report collection uses the shorter of the scan timeout and ten seconds. A collection
+timeout, nonzero read exit or capture-limit overflow yields no report and a specific stderr
+diagnostic. These failures preserve the scanner's exit code and provenance; they do not mean
+that the scanner wrote no file. Collection does not restart the scanner or extend its
 execution timeout.
 
 Reports contain untrusted target-controlled text. Captured report text uses UTF-8 decoding
-and a 1,048,576-character capture limit; exceeding the limit fails collection rather than silently
-truncating a report. Interactive terminal output sanitizes control characters; redirected
-output preserves the captured report text. Progress and provenance go to stderr, leaving
-stdout for report output.
+and a 1,048,576-character limit applied only to report collection. Existing probe callers,
+including dependency health checks, retain their previous capture behavior. Oversized reports
+are discarded with a diagnostic rather than returned as complete artifacts. Interactive
+terminal output sanitizes control characters in buffered writes; redirected output preserves
+the captured report text. Progress and provenance go to stderr, leaving stdout for reports.
 
 ## Fail closed
 

@@ -786,18 +786,28 @@ internal sealed partial class CliContext
     /// no such expectation and wants exactly the opposite: stderr is usually where the useful
     /// diagnostic is, so <see cref="WaitForHealthy"/> opts in.
     /// </summary>
-    private (int Code, string Output) Probe(
+    internal (int Code, string Output) Probe(
         IReadOnlyList<string> command,
         TimeSpan? timeout = null,
         bool captureStderr = false)
     {
-        return CaptureProbe((output, error) =>
+        var result = ProbeWithOutcome(command, timeout, captureStderr);
+        return (result.Code, result.Output);
+    }
+
+    private SandboxCommandResult ProbeWithOutcome(
+        IReadOnlyList<string> command,
+        TimeSpan? timeout = null,
+        bool captureStderr = false,
+        bool boundedReport = false)
+    {
+        return CaptureProbeWithOutcome((output, error) =>
         {
             var runner = new CommandRunner(Interpreter, output, error, Debug);
             return Reporter.Step(
                 $"checking: {CommandDisplay.ForDebug(command)}",
-                () => runner.Run(command, timeout: timeout));
-        }, captureStderr);
+                () => runner.RunWithOutcome(command, timeout: timeout));
+        }, captureStderr, boundedReport);
     }
 
     /// <summary>
