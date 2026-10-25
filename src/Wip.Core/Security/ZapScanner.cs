@@ -26,6 +26,15 @@ internal sealed class ZapScanner : ISecurityScanner
         if (!Uri.TryCreate(target.Address, UriKind.Absolute, out var uri) ||
             uri.Scheme is not ("http" or "https") || uri.UserInfo.Length != 0)
             throw new ConfigException("ZAP requires an unauthenticated HTTP or HTTPS target URL");
+        // A fragment is never sent to a server, and keeping one would make the scan silently
+        // examine nothing: `AbsoluteUri` retains it while the scope below is built from
+        // `GetLeftPart(UriPartial.Path)`, which drops it. Measured on .NET 10 --
+        // `http://app:8080/app#main` does not match its own `^scope$` include and does match
+        // the complement exclude, so the seed is excluded from its own context, the spider
+        // gets no seed, and ZAP still exits 0 with an empty report. Refused rather than
+        // trimmed: a target that is not the thing scanned should not be guessed at.
+        if (uri.Fragment.Length != 0)
+            throw new ConfigException("ZAP target must not carry a URL fragment; a fragment is never sent to the server");
 
         var url = uri.AbsoluteUri;
         var prefix = uri.GetLeftPart(UriPartial.Path);

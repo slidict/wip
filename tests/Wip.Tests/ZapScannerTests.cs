@@ -112,4 +112,42 @@ public class ZapScannerTests
         var error = Assert.Throws<ConfigException>(() => Plan(target));
         Assert.Contains("unauthenticated HTTP", error.Message);
     }
+
+    /// <summary>
+    /// A fragment used to produce a scan that examined nothing and said so nowhere. The seed
+    /// keeps the fragment (`AbsoluteUri`) while the scope is built without it
+    /// (`GetLeftPart(UriPartial.Path)`), so the seed failed its own `^scope$` include, matched
+    /// the complement exclude, and left the spider with no seed at all -- while ZAP still
+    /// exited 0 with an empty report.
+    /// </summary>
+    [Theory]
+    [InlineData("http://app.test:8080/app#main")]
+    [InlineData("http://app.test:8080/#top")]
+    [InlineData("https://app.test/a/b#")]
+    public void TargetsMustNotCarryAFragment(string target)
+    {
+        var error = Assert.Throws<ConfigException>(() => Plan(target));
+        Assert.Contains("fragment", error.Message);
+    }
+
+    /// <summary>
+    /// The shape the rejection above protects: had the fragment reached the plan, the seed
+    /// would have been excluded from its own context. Asserted against the regexes the plan
+    /// actually emits, so it fails if either side stops dropping or keeping the fragment.
+    /// </summary>
+    [Fact]
+    public void TheSeedUrlIsAlwaysInsideItsOwnIncludeScope()
+    {
+        foreach (var target in new[] { "http://app.test:8080/app", "http://app.test:8080/", "http://app.test:8080/a?q=1" })
+        {
+            var plan = Plan(target);
+            var automation = Mapping(YamlLoader.LoadText(JsonDocument.Parse(plan.Argv[3]).RootElement.GetString()!, allowAliases: false));
+            var context = Mapping(Sequence(Mapping(automation["env"])["contexts"])[0]);
+            var seed = Assert.IsType<string>(Sequence(context["urls"])[0]);
+            var include = Assert.IsType<string>(Sequence(context["includePaths"])[0]);
+            var exclude = Assert.IsType<string>(Sequence(context["excludePaths"])[0]);
+            Assert.Matches(include, seed);
+            Assert.DoesNotMatch(exclude, seed);
+        }
+    }
 }
