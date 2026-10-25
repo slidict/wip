@@ -57,18 +57,20 @@ internal static class ScanResultWriter
         writer.WriteStartObject();
         writer.WriteNumber("version", Version);
         writer.WriteStartObject("run");
+        // Caller-supplied run metadata identifies the requested scan, not crawled URLs.
+        // Preserve its path segments while still redacting credentials and query secrets.
         var run = result.Run;
-        WriteString(writer, "runId", run.RunId);
+        WriteMetadataString(writer, "runId", run.RunId);
         writer.WriteString("startedAt", run.StartedAt.UtcDateTime.ToString("O", CultureInfo.InvariantCulture));
         writer.WriteString("endedAt", run.EndedAt.UtcDateTime.ToString("O", CultureInfo.InvariantCulture));
-        WriteString(writer, "tool", run.Tool);
-        WriteString(writer, "image", run.Image);
-        WriteString(writer, "rulesVersion", run.RulesVersion);
-        WriteString(writer, "sandbox", run.Sandbox);
-        WriteString(writer, "network", run.Network);
+        WriteMetadataString(writer, "tool", run.Tool);
+        WriteMetadataString(writer, "image", run.Image);
+        WriteMetadataString(writer, "rulesVersion", run.RulesVersion);
+        WriteMetadataString(writer, "sandbox", run.Sandbox);
+        WriteMetadataString(writer, "network", run.Network);
         writer.WriteBoolean("networkVerifiedInternal", run.NetworkVerifiedInternal);
-        WriteString(writer, "target", run.Target);
-        WriteString(writer, "commit", run.Commit);
+        WriteMetadataString(writer, "target", run.Target);
+        WriteMetadataString(writer, "commit", run.Commit);
         writer.WriteEndObject();
         writer.WriteString("status", result.Status);
         writer.WriteNumber("scannerExitCode", result.ScannerExitCode);
@@ -102,6 +104,11 @@ internal static class ScanResultWriter
         writer.WriteEndObject();
         writer.WriteEndObject();
         writer.Flush();
+    }
+
+    private static void WriteMetadataString(Utf8JsonWriter writer, string name, string? value)
+    {
+        if (value is not null) writer.WriteString(name, ScanResultRedactor.RedactMetadata(value));
     }
 
     private static void WriteString(Utf8JsonWriter writer, string name, string? value)

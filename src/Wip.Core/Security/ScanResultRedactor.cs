@@ -18,7 +18,7 @@ internal static class ScanResultRedactor
         """(\b(?:""" + SecretNames + """)["']?\s*=\s*["']?)[^&\s"'<>;,}\]]+""", Options, Deadline);
     // Colon syntax is explicit only for a quoted object key or a key at a line boundary.
     private static readonly Regex ColonSecrets = new(
-        """((?:(?:^|[\r\n])\s*(?:""" + SecretNames + """)\s*:\s*["']?|["'](?:""" + SecretNames + """)["']\s*:\s*["']?))[^&\s"'<>;,}\]]+""", Options, Deadline);
+        """((?:(?<line>(?:^|[\r\n])\s*(?:""" + SecretNames + """)\s*:\s*["']?)|["'](?:""" + SecretNames + """)["']\s*:\s*["']?))(?<value>[^&\s"'<>;,}\]]+)""", Options, Deadline);
     private static readonly Regex QueryValues = new(
         """((?:^|[?&\s])[^=&\s]+\s*=)([^&\s"'<>]+)""", Options, Deadline);
     private static readonly Regex UserInfo = new(
@@ -30,19 +30,28 @@ internal static class ScanResultRedactor
     private static readonly Regex SecretParameter = new(
         """(?:^|[^a-z0-9])(?:authorization|proxy-authorization|cookie|set-cookie|access[_-]?token|refresh[_-]?token|id[_-]?token|token|api[_-]?key|client[_-]?secret|secret|password|passwd|session(?:[_-]?(?:id|token))?|auth|csrf(?:[_-]?token)?|xsrf(?:[_-]?token)?)(?:$|[^a-z0-9])""", Options, Deadline);
 
-    internal static string Redact(string text)
+    internal static string Redact(string text) => RedactCore(text, redactPaths: true);
+
+    // Caller-supplied run metadata identifies the request. Preserve its exact path while
+    // still removing explicit credentials and secret query values; crawled output uses Redact.
+    internal static string RedactMetadata(string text) => RedactCore(text, redactPaths: false);
+
+    private static string RedactCore(string text, bool redactPaths)
     {
         try
         {
             var redacted = Headers.Replace(text, match => match.Groups[1].Value + Marker);
             redacted = Credentials.Replace(redacted, match => match.Groups[1].Value + Marker);
             redacted = NamedSecrets.Replace(redacted, match => match.Groups[1].Value + Marker);
-            redacted = ColonSecrets.Replace(redacted, match => match.Groups[1].Value + Marker);
+            redacted = ColonSecrets.Replace(redacted, match =>
+                match.Groups["line"].Success && match.Groups["value"].Value.All(char.IsAsciiDigit)
+                    ? match.Value : match.Groups[1].Value + Marker);
             redacted = QueryValues.Replace(redacted, match =>
                 match.Groups[1].Value + (LooksLikeToken(match.Groups[2].Value) ? Marker : match.Groups[2].Value));
-            redacted = Locations.Replace(redacted, match =>
-                match.Groups["authority"].Value + match.Groups["prefix"].Value +
-                string.Join('/', match.Groups["path"].Value.Split('/').Select(segment => LooksLikeToken(segment) ? Marker : segment)));
+            if (redactPaths)
+                redacted = Locations.Replace(redacted, match =>
+                    match.Groups["authority"].Value + match.Groups["prefix"].Value +
+                    string.Join('/', match.Groups["path"].Value.Split('/').Select(segment => PathLooksLikeToken(segment) ? Marker : segment)));
             return UserInfo.Replace(redacted, match => match.Groups[1].Value + Marker + "@");
         }
         catch (RegexMatchTimeoutException)
@@ -64,6 +73,28 @@ internal static class ScanResultRedactor
             return Redact(evidence);
         }
         catch (RegexMatchTimeoutException) { return Marker; }
+    }
+
+    private static bool PathLooksLikeToken(string value)
+    {
+        var decoded = Uri.UnescapeDataString(value);
+        if (decoded.Length >= 16 && decoded.All(Uri.IsHexDigit)) return true;
+        if (decoded.Length >= 24 && decoded.Any(char.IsAsciiLetter) && decoded.Any(char.IsAsciiDigit) &&
+            decoded.All(c => char.IsAsciiLetterOrDigit(c) || c is '_' or '~' or '+' or '/' or '='))
+            return true;
+
+        var parts = decoded.Split('.');
+        if (parts.Length != 3 || parts.Any(part => part.Length == 0 ||
+            !part.All(c => char.IsAsciiLetterOrDigit(c) || c is '_' or '-')))
+            return false;
+        try
+        {
+            var header = parts[0].Replace('-', '+').Replace('_', '/');
+            header += new string('=', (4 - header.Length % 4) % 4);
+            var bytes = Convert.FromBase64String(header);
+            return bytes.Length > 0 && bytes[0] == (byte)'{';
+        }
+        catch (FormatException) { return false; }
     }
 
     private static bool LooksLikeToken(string value)

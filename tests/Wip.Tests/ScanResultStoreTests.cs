@@ -43,6 +43,32 @@ public sealed class ScanResultStoreTests : IDisposable
     }
 
     [Theory]
+    [InlineData("/blog/2026-10-26-how-we-fixed-the-thing")]
+    [InlineData("/products/widget-2000-blue-large")]
+    [InlineData("/very-long-descriptive-section-name/x")]
+    [InlineData("/static/js/main.9b7c2d1e.chunk.js")]
+    [InlineData("/assets/index-a3f9b2c1d4e5.js")]
+    [InlineData("/2026-10-26-release-notes")]
+    [InlineData("/reset/0123456789abcdef0123456789abcdef")]
+    public void RunMetadataPreservesRequestedPathsButStillRedactsQueryTokens(string path)
+    {
+        var target = "http://app:8080" + path + "?token=target-secret";
+        var result = Completed([new("rule", "name", "low", "high", new(path, "GET", null), null)]);
+        result = result with { Run = result.Run with { Target = target, Commit = path } };
+        using var stream = new MemoryStream();
+
+        ScanResultWriter.Write(stream, result);
+
+        using var document = JsonDocument.Parse(stream.ToArray());
+        var run = document.RootElement.GetProperty("run");
+        Assert.Equal("http://app:8080" + path + "?token=[REDACTED]", run.GetProperty("target").GetString());
+        Assert.Equal(path, run.GetProperty("commit").GetString());
+        var findingPath = document.RootElement.GetProperty("findings")[0].GetProperty("location").GetProperty("path").GetString();
+        Assert.Equal(path.StartsWith("/reset/", StringComparison.Ordinal) ? "/reset/[REDACTED]" : path, findingPath);
+        Assert.DoesNotContain("target-secret", Encoding.UTF8.GetString(stream.ToArray()));
+    }
+
+    [Theory]
     [InlineData("timeout")]
     [InlineData("report-collection-failed")]
     [InlineData("report-empty")]

@@ -82,6 +82,48 @@ public sealed class ScanResultRedactorTests
         Assert.Equal(input, ScanResultRedactor.Redact(input));
     }
 
+    [Theory]
+    [InlineData("/blog/2026-10-26-how-we-fixed-the-thing")]
+    [InlineData("/products/widget-2000-blue-large")]
+    [InlineData("/very-long-descriptive-section-name/x")]
+    [InlineData("/static/js/main.9b7c2d1e.chunk.js")]
+    [InlineData("/assets/index-a3f9b2c1d4e5.js")]
+    [InlineData("http://app:8080/2026-10-26-release-notes")]
+    [InlineData("auth:8080")]
+    [InlineData("auth: 8080")]
+    [InlineData("/docs/averylongdescriptivewordwithoutdigits")]
+    [InlineData("/t/bWFpbg.cGF5bG9hZA.c2lnbmF0dXJl")]
+    public void DescriptivePathsAndNumericAliasesRemainComparable(string input)
+    {
+        Assert.Equal(input, ScanResultRedactor.Redact(input));
+    }
+
+    [Theory]
+    [InlineData("/reset/0123456789abcdef0123456789abcdef", "/reset/[REDACTED]")]
+    [InlineData("/v/s3cr3tvalue0123456789abcdefgh", "/v/[REDACTED]")]
+    [InlineData("/t/eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abc", "/t/[REDACTED]")]
+    public void PathsWithOpaqueTokenEvidenceStayRedacted(string input, string expected)
+    {
+        Assert.Equal(expected, ScanResultRedactor.Redact(input));
+    }
+
+    [Theory]
+    [InlineData("?code=2026-10-26-release-notes", "?code=[REDACTED]")]
+    [InlineData("?q=very-long-descriptive-section-name", "?q=[REDACTED]")]
+    public void QueryValuesRetainTheirExistingBroaderTokenHeuristic(string input, string expected)
+    {
+        Assert.Equal(expected, ScanResultRedactor.Redact(input));
+        Assert.Equal(expected, ScanResultRedactor.RedactMetadata(input));
+    }
+
+    [Fact]
+    public void MetadataKeepsTheCallerPathButStillRedactsItsSecretQuery()
+    {
+        const string target = "http://app:8080/reset/0123456789abcdef0123456789abcdef?token=query-secret&plain=ok";
+        Assert.Equal("http://app:8080/reset/0123456789abcdef0123456789abcdef?token=[REDACTED]&plain=ok",
+            ScanResultRedactor.RedactMetadata(target));
+    }
+
     [Fact]
     public void OrdinaryEvidenceIsPreserved()
     {
