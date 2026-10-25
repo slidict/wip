@@ -48,8 +48,9 @@ internal sealed partial class CliContext
         // An empty sidecar is reported, not printed as a bare header. A header with nothing
         // under it reads as "nothing was skipped", which is the one reading this collection
         // exists to prevent: the scanner asked for the file, so an empty one means the record
-        // was lost rather than that every check ran.
-        if (!string.IsNullOrEmpty(outcome.UnperformedChecks))
+        // was lost rather than that every check ran. Whitespace counts as empty, because a
+        // header followed by a blank line reads the same way.
+        if (!string.IsNullOrWhiteSpace(outcome.UnperformedChecks))
         {
             error.WriteLine("Unperformed checks (raw):");
             WriteSecurityReport(error, outcome.UnperformedChecks, isErrorRedirected);

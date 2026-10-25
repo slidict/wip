@@ -175,13 +175,17 @@ public sealed class SecurityOutputTests
     /// <summary>
     /// An empty sidecar used to print its header with nothing under it, which reads as "no
     /// checks were skipped" -- the one reading this collection exists to prevent. The scanner
-    /// asked for the file, so an empty one means the record was lost.
+    /// asked for the file, so an empty one means the record was lost. Whitespace is the same
+    /// case: a header followed by a blank line reads as "none" just as a bare header does.
     /// </summary>
-    [Fact]
-    public void AnEmptyUnperformedCheckRecordIsReportedRatherThanShownAsNone()
+    [Theory]
+    [InlineData("")]
+    [InlineData("\n")]
+    [InlineData("  \r\n\t ")]
+    public void AnEmptyUnperformedCheckRecordIsReportedRatherThanShownAsNone(string sidecar)
     {
         var outcome = new ScanOutcome("zap", "scanner", "image", "rules", "isolated", 0, "{\"alerts\":[]}",
-            UnperformedChecks: "");
+            UnperformedChecks: sidecar);
         using var output = new StringWriter();
         using var error = new StringWriter();
 
