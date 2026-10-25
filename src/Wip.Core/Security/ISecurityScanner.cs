@@ -39,12 +39,17 @@ internal sealed record PinnedImage(string Reference);
 /// Required absolute path to the raw coverage record. Without it, omitted checks cannot
 /// be distinguished from checks that ran without findings.
 /// </param>
+/// <param name="Rules">
+/// Optional external rules, pinned by commit. Preparation stages the verified tree on the
+/// host; the engine copies it to the expected container path without adapter backend options.
+/// </param>
 internal sealed record ScanPlan(
     PinnedImage Image,
     IReadOnlyList<string> Argv,
     string ReportPath,
     string RulesVersion,
-    string UnperformedChecksPath)
+    string UnperformedChecksPath,
+    PinnedRules? Rules = null)
 {
     /// <summary>
     /// Rejects a plan that could not produce a repeatable, isolated scan. Called by the
@@ -76,6 +81,7 @@ internal sealed record ScanPlan(
         if (!UnperformedChecksPath.StartsWith('/') || UnperformedChecksPath.Any(char.IsControl) ||
             UnperformedChecksPath.Split('/').Any(part => part is "." or ".."))
             throw new ConfigException($"Scanner {tool}: unperformed-checks path must be a canonical absolute Linux path");
+        Rules?.Validate(tool);
         if (string.IsNullOrWhiteSpace(RulesVersion) || RulesVersion.Any(char.IsControl))
             throw new ConfigException(
                 $"Scanner {tool}: a rules version is required; an unpinned rule set is fetched at scan time, which an isolated network forbids");

@@ -29,7 +29,12 @@ internal sealed partial class CliContext
         var backend = ResourceBackend(streamOutput: Console.Error, streamError: Console.Error);
         var networks = new NetworkLifecycle(Config.SandboxResources, backend);
         var lifecycle = new SandboxLifecycle(Config.SandboxResources, backend, null, networks);
-        var engine = new ScanEngine(Config.SandboxResources, lifecycle, networks, backend);
+        // Constructing the fetcher is lazy: adapters with image-bundled rules neither touch
+        // this cache nor require git. Container cp consumes a native absolute local path.
+        var rulesFetcher = new RulesFetcher(Path.Combine(ConfigDirectory, ".wip", "scanner-rules"));
+        var engine = new ScanEngine(Config.SandboxResources, lifecycle, networks, backend,
+            rulesFetcher: rulesFetcher,
+            mapRulesSource: Path.GetFullPath);
 
         var scanner = ScanEngine.Select(tool);
         var scanTarget = new ScanTarget(target);

@@ -72,7 +72,9 @@ internal sealed class ScanEngine(
     SandboxSettings settings,
     SandboxLifecycle sandboxes,
     INetworkLifecycle networks,
-    SandboxBackend backend)
+    SandboxBackend backend,
+    RulesFetcher? rulesFetcher = null,
+    Func<string, string>? mapRulesSource = null)
 {
     /// <summary>
     /// Allows a host-side registry request to finish. An existing runnable sandbox already
@@ -106,6 +108,9 @@ internal sealed class ScanEngine(
     // would be the hole this result format exists to close -- asking for --output and getting
     // neither a file nor a nonzero status is "nothing happened" presented as success.
     internal const int PersistenceFailedExitCode = 74;
+
+    private readonly RulesFetcher? stagedRules = rulesFetcher;
+    private readonly Func<string, string>? mapStagedSource = mapRulesSource;
 
     private SandboxDefinition Definition(string sandbox) =>
         settings.Sandboxes.SingleOrDefault(s => s.Name == sandbox)
@@ -148,6 +153,11 @@ internal sealed class ScanEngine(
             throw new WipException(
                 $"Scanner {scanner.Name}: pulling {plan.Image.Reference} failed (exit {pulled.Code}); " +
                 "no scan was started, because an isolated sandbox cannot fetch it later");
+        if (plan.Rules is { } rules)
+        {
+            RequireRulesFetcher().Fetch(rules);
+            plan = plan with { RulesVersion = VersionWithPin(plan) };
+        }
         return plan;
     }
 
@@ -209,6 +219,8 @@ internal sealed class ScanEngine(
 
         try
         {
+            if (plan.Rules is { } rules) CopyRules(status.Id, rules);
+            plan = plan with { RulesVersion = VersionWithPin(plan) };
             var execution = sandboxes.ExecWithResult(sandbox, plan.Argv, deadline);
             var code = execution.Code;
             if (execution.TimedOut)
@@ -231,6 +243,42 @@ internal sealed class ScanEngine(
             // The container stop includes the tool's children. Removal remains sandbox
             // destroy's responsibility, so failed runs leave the container inspectable.
             Stop(sandbox);
+        }
+    }
+
+    private RulesFetcher RequireRulesFetcher() => stagedRules
+        ?? throw new WipException("Pinned rules require a host staging cache; no scan was started");
+
+    private static string VersionWithPin(ScanPlan plan)
+    {
+        if (plan.Rules is not { } rules) return plan.RulesVersion;
+        var suffix = ";rules-commit:" + rules.Commit;
+        return plan.RulesVersion.EndsWith(suffix, StringComparison.Ordinal)
+            ? plan.RulesVersion : plan.RulesVersion + suffix;
+    }
+
+    private void CopyRules(string container, PinnedRules rules)
+    {
+        var staged = RequireRulesFetcher().RequireStaged(rules);
+        var source = mapStagedSource is null ? Path.GetFullPath(staged) : mapStagedSource(staged);
+        var limit = TimeSpan.FromMinutes(1);
+        // Copy into an absent destination so old files and cp's directory nesting cannot
+        // change the pinned tree. Validation refuses the container root before this point.
+        var parent = rules.ContainerPath[..rules.ContainerPath.LastIndexOf('/')];
+        if (parent.Length == 0) parent = "/";
+        RequireCopyStep(["exec", container, "rm", "-rf", "--", rules.ContainerPath]);
+        RequireCopyStep(["exec", container, "mkdir", "-p", "--", parent]);
+        RequireCopyStep(["container", "cp", source, container + ":" + rules.ContainerPath]);
+        var contents = backend(["exec", container, "find", rules.ContainerPath, "-type", "f", "-print", "-quit"],
+            limit, SandboxConsoleMode.Capture);
+        if (contents.Code != 0 || contents.TimedOut || string.IsNullOrWhiteSpace(contents.Output))
+            throw new WipException("Pinned rules are empty or unreadable in the sandbox; no scan was started");
+
+        void RequireCopyStep(IReadOnlyList<string> arguments)
+        {
+            var result = backend(arguments, limit, SandboxConsoleMode.Stream);
+            if (result.Code != 0 || result.TimedOut)
+                throw new WipException($"Pinned rules copy failed (exit {result.Code}); no scan was started");
         }
     }
 

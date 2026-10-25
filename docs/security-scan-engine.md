@@ -188,6 +188,7 @@ An adapter supplies a `ScanPlan`:
 | `ReportPath` | Canonical absolute path of the report inside the container |
 | `RulesVersion` | Version or digest of the applied rule, template or add-on set |
 | `UnperformedChecksPath` | Required canonical absolute path for raw omitted-check information; missing paths are rejected before execution |
+| `Rules` | Optional `PinnedRules(RepositoryUrl, Commit, ContainerPath)` declaration |
 
 Every adapter must declare a coverage record so an empty finding list cannot imply that
 unreported checks ran. Plan validation rejects missing coverage paths before backend calls;
@@ -199,17 +200,50 @@ appears after the container ID and can only become the scanner command's argumen
 engine and sandbox declaration control isolation. One scanner per invocation follows from
 `Prepare` and `Run` each accepting one adapter.
 
+## Pinned rules staging
+
+An adapter whose rules are not bundled in its image declares `ScanPlan.Rules` with a source
+`RepositoryUrl`, immutable `Commit` and destination `ContainerPath`. This data cannot select a
+mount, volume, network, helper image or backend option. Validation requires an absolute HTTPS
+URL without userinfo or control characters, exactly 40 lowercase hexadecimal commit characters,
+and a canonical absolute nonroot Linux destination. Branches, tags and short hashes are refused.
+
+After pulling the image, `Prepare` uses host-side git to fetch the pinned commit into a staging
+tree, verifies that `FETCH_HEAD` exactly equals the pin, and checks out that commit. Missing or
+unrunnable git, a failed fetch/checkout, a mismatched commit or an unusable rule tree stops
+preparation; there is no scan without the declared rules. Failed temporary staging is cleaned
+up without replacing the original error if cleanup also fails.
+
+Verified trees are cached under `<config directory>/.wip/scanner-rules/<commit>/tree`.
+The commit names immutable content; published verification metadata and a tree fingerprint
+protect reuse against an incomplete or changed local entry. A second preparation of the same
+valid pin reuses the tree without fetching. Verification metadata stays outside the copied
+tree, and symlinks are refused. `Run` requires a valid staged entry and performs no git fetch.
+Native absolute host source paths are passed directly to `container cp`. The rules-specific
+copy path is covered by fake-backend tests; real WSLC execution is not verified locally.
+
+After image and network verification, the engine replaces the declared destination and copies
+the staged tree with backend argv `container cp <source> <container>:<path>`, without a shell.
+A copy failure, missing path or empty rules directory refuses execution. The copy uses the
+already verified scanner image, with no separate mirror image or volume declaration.
+
+Provenance appends `;rules-commit:<commit>` to the adapter's `RulesVersion` once, so both stderr
+and the result document identify the pin. The colon preserves the commit through normalized
+metadata redaction. Adapters without `Rules`, including ZAP, retain their existing calls:
+no rules cache access, git invocation, copy or extra pre-run check is added.
+
 ## Phases and output
 
 | Phase | Behavior |
 | --- | --- |
-| Prepare | Validate the plan and request an immutable-image pull outside the isolated sandbox |
-| Run | Revalidate the plan, running image and boundary, then execute the tool |
+| Prepare | Validate the plan, pull the immutable image and fetch/verify any declared rules host-side |
+| Run | Verify the image and boundary, copy/check any staged rules, then execute the tool |
 | Collect | Read the report under a separate short deadline and bounded capture limit |
 | Cleanup | Stop the owned container, including on execution failure |
 
-The CLI calls `Prepare` before `Run`, but `Run` has no preparation token or history check:
-it accepts a valid plan and independently verifies the running sandbox. Callers must create
+The CLI calls `Prepare` before `Run`, but `Run` has no per-invocation preparation token:
+it independently verifies the running sandbox and, for rule plans, requires a valid staged
+cache entry that can be reused across runs. Callers must create
 and start that sandbox before scanning. Consequently its pinned image is already available
 locally when a scan can run; the preparation pull may check registry metadata but is not a
 guaranteed first image fetch. It does not create, start or reorder sandbox creation. Preparing
