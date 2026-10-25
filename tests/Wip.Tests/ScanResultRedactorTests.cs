@@ -93,6 +93,11 @@ public sealed class ScanResultRedactorTests
     [InlineData("auth: 8080")]
     [InlineData("/docs/averylongdescriptivewordwithoutdigits")]
     [InlineData("/t/bWFpbg.cGF5bG9hZA.c2lnbmF0dXJl")]
+    // A base64 part starting "ey" decodes to a leading '{', which is why these
+    // three-part asset names were once mistaken for a JWS and lost their comparison key.
+    [InlineData("/static/js/eyes.min.js")]
+    [InlineData("/img/eye.v2.png")]
+    [InlineData("/t/ey.a.b")]
     public void DescriptivePathsAndNumericAliasesRemainComparable(string input)
     {
         Assert.Equal(input, ScanResultRedactor.Redact(input));

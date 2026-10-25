@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.RegularExpressions;
 
 namespace Wip.Security;
@@ -102,18 +103,26 @@ internal static class ScanResultRedactor
             decoded.All(c => char.IsAsciiLetterOrDigit(c) || c is '_' or '~' or '+' or '/' or '='))
             return true;
 
+        // A first byte of '{' is far too little evidence on its own: '{' is 0x7B, so any
+        // base64 part starting "ey" decodes to it, and "eyes.min.js" or "eye.v2.png" is three
+        // dot-separated parts of exactly that shape. Require the header to decode to a
+        // complete JSON object naming one of the two fields JWS always carries, and require
+        // the first two parts to be long enough to hold one.
         var parts = decoded.Split('.');
-        if (parts.Length != 3 || parts.Any(part => part.Length == 0 ||
-            !part.All(c => char.IsAsciiLetterOrDigit(c) || c is '_' or '-')))
+        if (parts.Length != 3 || parts[0].Length < 8 || parts[1].Length < 8 ||
+            parts.Any(part => part.Length == 0 ||
+                !part.All(c => char.IsAsciiLetterOrDigit(c) || c is '_' or '-')))
             return false;
         try
         {
             var header = parts[0].Replace('-', '+').Replace('_', '/');
             header += new string('=', (4 - header.Length % 4) % 4);
-            var bytes = Convert.FromBase64String(header);
-            return bytes.Length > 0 && bytes[0] == (byte)'{';
+            var text = Encoding.UTF8.GetString(Convert.FromBase64String(header)).Trim();
+            return text.StartsWith('{') && text.EndsWith('}') &&
+                   (text.Contains("\"alg\"", StringComparison.Ordinal) || text.Contains("\"typ\"", StringComparison.Ordinal));
         }
         catch (FormatException) { return false; }
+        catch (DecoderFallbackException) { return false; }
     }
 
     private static bool LooksLikeToken(string value)
