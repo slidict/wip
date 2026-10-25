@@ -467,7 +467,6 @@ public sealed class SandboxLifecycle(
         return options;
     }
 
-    /// <summary>The verified ID of the owned container, which must already be running.</summary>
     /// <summary>
     /// The verified, running container's ID -- verified including its declared boundary.
     /// </summary>
@@ -564,14 +563,9 @@ public sealed class SandboxLifecycle(
     }
 
     /// <summary>
-    /// Attachments as <c>inspect</c> reports them: <c>NetworkSettings.Networks</c> keyed by
-    /// network name. An absent or malformed block yields an empty list, which fails the
-    /// declared-network check rather than passing it.
-    /// </summary>
-    /// <summary>
-    /// The image the container was created from: <c>Config.Image</c> as <c>inspect</c> reports
-    /// it, falling back to the top-level <c>Image</c>, which carries the resolved digest. Null
-    /// when neither is readable, which callers must treat as unknown rather than matching.
+    /// The source reference in <c>Config.Image</c>, or null when unavailable. The top-level
+    /// <c>Image</c> is a config image ID, not a repository reference, and cannot substitute
+    /// for it when verifying the image declared by a scan plan.
     /// </summary>
     private static string? ExtractImage(JsonElement record)
     {
@@ -580,9 +574,14 @@ public sealed class SandboxLifecycle(
         {
             return declared;
         }
-        return Text(record, "Image") is { Length: > 0 } resolved ? resolved : null;
+        return null;
     }
 
+    /// <summary>
+    /// Attachments as <c>inspect</c> reports them: <c>NetworkSettings.Networks</c> keyed by
+    /// network name. An absent or malformed block yields an empty list, which fails the
+    /// declared-network check rather than passing it.
+    /// </summary>
     private static IReadOnlyList<string> ExtractNetworks(JsonElement record)
     {
         if (!record.TryGetProperty("NetworkSettings", out var settings) || settings.ValueKind != JsonValueKind.Object ||

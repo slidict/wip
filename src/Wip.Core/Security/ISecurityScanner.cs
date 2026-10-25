@@ -5,11 +5,11 @@ namespace Wip.Security;
 /// floating tag makes the tool under test change without the configuration changing.
 /// </summary>
 /// <param name="Reference">
-/// The image as the backend will receive it, either <c>name@sha256:...</c> or
-/// <c>name:tag</c> where the tag is an exact version. Validated by
+/// The immutable image reference as the backend will receive it: <c>name@sha256:...</c>.
+/// Tags, including version tags, can be reassigned. Validated by
 /// <see cref="ScanPlan.Validate"/>, not here, so a malformed plan fails in one place.
 /// </param>
-public sealed record PinnedImage(string Reference);
+internal sealed record PinnedImage(string Reference);
 
 /// <summary>
 /// What an adapter asks for. Deliberately not a backend invocation: there is no field here
@@ -35,7 +35,7 @@ public sealed record PinnedImage(string Reference);
 /// because "which rules ran" is part of what makes a result meaningful, and because an
 /// unpinned set is fetched at scan time -- which an isolated network forbids.
 /// </param>
-public sealed record ScanPlan(
+internal sealed record ScanPlan(
     PinnedImage Image,
     IReadOnlyList<string> Argv,
     string ReportPath,
@@ -56,8 +56,8 @@ public sealed record ScanPlan(
             throw new ConfigException($"Scanner {tool}: image reference must not start with '-'");
         if (!IsPinned(Image.Reference))
             throw new ConfigException(
-                $"Scanner {tool}: image '{Image.Reference}' is not pinned; use name@sha256:<digest> or an exact version tag, " +
-                "because a floating tag changes the tool under test without the configuration changing");
+                $"Scanner {tool}: image '{Image.Reference}' is not pinned; use name@sha256:<64 hexadecimal digits>, " +
+                "because tags can change the tool under test without the configuration changing");
         if (Argv.Count == 0)
             throw new ConfigException($"Scanner {tool}: argv must not be empty");
         if (Argv.Any(a => a is null || a.Length == 0 || a.Any(char.IsControl)))
@@ -70,26 +70,19 @@ public sealed record ScanPlan(
                 $"Scanner {tool}: a rules version is required; an unpinned rule set is fetched at scan time, which an isolated network forbids");
     }
 
-    /// <summary>
-    /// A digest, or a tag that names an exact version. <c>latest</c> and a bare name are
-    /// refused; so is a tag that only says how new it is.
-    /// </summary>
+    /// <summary>Only a complete SHA-256 content digest pins an immutable image.</summary>
     private static bool IsPinned(string reference)
     {
-        if (reference.Contains("@sha256:", StringComparison.Ordinal)) return true;
-        // A tag has to come after the last '/', or a registry port would read as one.
-        var lastSlash = reference.LastIndexOf('/');
-        var colon = reference.LastIndexOf(':');
-        if (colon < 0 || colon < lastSlash) return false;
-        var tag = reference[(colon + 1)..];
-        if (tag.Length == 0) return false;
-        return tag is not ("latest" or "stable" or "edge" or "main" or "master" or "nightly");
+        var parts = reference.Split("@sha256:", StringSplitOptions.None);
+        return parts.Length == 2 && parts[0].Length > 0 && !parts[0].Contains('@') &&
+               !parts[0].Any(char.IsWhiteSpace) && parts[1].Length == 64 && parts[1].All(Uri.IsHexDigit);
     }
+
 }
 
 /// <summary>
-/// A diagnostic tool wip can drive, as wip sees it. Deliberately <c>internal</c>: #692 rules
-/// out an external plugin API or SDK, so this is a shape for the adapters compiled into wip
+/// A diagnostic tool wip can drive, as wip sees it. Deliberately <c>internal</c>: there is
+/// no external plugin API or SDK, so this is a shape for the adapters compiled into wip
 /// and not a surface anyone outside it can implement or discover.
 /// </summary>
 /// <remarks>
@@ -114,7 +107,7 @@ internal interface ISecurityScanner
 /// an address of another sandbox on the same network. Never a host or public name -- those
 /// do not resolve there, which is the boundary working.
 /// </param>
-public sealed record ScanTarget(string Address)
+internal sealed record ScanTarget(string Address)
 {
     public void Validate()
     {

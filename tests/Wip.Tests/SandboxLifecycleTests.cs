@@ -15,6 +15,45 @@ public class SandboxLifecycleTests
             image: fixture:latest
         """ + suffix, allowAliases: false)).SandboxResources;
 
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    public void ImageIdIsNotReportedAsTheSourceImageReference(string? sourceReference)
+    {
+        var fake = new Fake { Exists = true };
+        fake.InspectOutput = JsonSerializer.Serialize(new[]
+        {
+            new
+            {
+                fake.Id, fake.Name, fake.State,
+                Labels = new Dictionary<string, string> { [SandboxLifecycle.OwnerLabel] = fake.Owner },
+                Config = new { Image = sourceReference },
+                Image = "sha256:" + new string('a', 64)
+            }
+        });
+
+        Assert.Null(new SandboxLifecycle(Settings(), fake.Run).Status("first").Image);
+    }
+
+    [Fact]
+    public void ConfigImageReferenceIsReportedInsteadOfTheImageId()
+    {
+        var fake = new Fake { Exists = true };
+        var sourceReference = "scanner@sha256:" + new string('b', 64);
+        fake.InspectOutput = JsonSerializer.Serialize(new[]
+        {
+            new
+            {
+                fake.Id, fake.Name, fake.State,
+                Labels = new Dictionary<string, string> { [SandboxLifecycle.OwnerLabel] = fake.Owner },
+                Config = new { Image = sourceReference },
+                Image = "sha256:" + new string('a', 64)
+            }
+        });
+
+        Assert.Equal(sourceReference, new SandboxLifecycle(Settings(), fake.Run).Status("first").Image);
+    }
+
     private sealed class Fake
     {
         public readonly List<string[]> Calls = [];

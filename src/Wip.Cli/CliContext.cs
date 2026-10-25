@@ -791,15 +791,13 @@ internal sealed partial class CliContext
         TimeSpan? timeout = null,
         bool captureStderr = false)
     {
-        var captured = new StringWriter();
-        var output = captureStderr ? TextWriter.Synchronized(captured) : captured;
-        var error = captureStderr ? output : new StringWriter();
-        var runner = new CommandRunner(Interpreter, output, error, Debug);
-        var code = Reporter.Step(
-            $"checking: {CommandDisplay.ForDebug(command)}",
-            () => runner.Run(command, timeout: timeout));
-
-        return (code, captured.ToString());
+        return CaptureProbe((output, error) =>
+        {
+            var runner = new CommandRunner(Interpreter, output, error, Debug);
+            return Reporter.Step(
+                $"checking: {CommandDisplay.ForDebug(command)}",
+                () => runner.Run(command, timeout: timeout));
+        }, captureStderr);
     }
 
     /// <summary>

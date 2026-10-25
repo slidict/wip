@@ -5,7 +5,7 @@ namespace Wip.Security;
 /// </summary>
 /// <remarks>
 /// <para>
-/// A table and not discovery. #692 rules out dynamic loading and extension by arbitrary
+/// A static table rules out dynamic loading and extension by arbitrary
 /// command or image, so there is deliberately no reflection, no assembly scanning and no
 /// configuration key that can add an entry: a tool arrives by a reviewed pull request to wip
 /// that adds a line here, which is what makes its code, dependencies, image, permissions,
@@ -25,8 +25,8 @@ internal static class ScannerRegistry
 
     /// <summary>
     /// The one scanner <paramref name="tool"/> selects. Throws when it names none, which is
-    /// how "未対応ツールは安全側に失敗する" is enforced: there is no fallback entry and no
-    /// nearest match, because guessing which tool to run is not a safe recovery.
+    /// unsupported tools fail closed: there is no fallback entry or nearest match,
+    /// because guessing which tool to run is not a safe recovery.
     /// </summary>
     internal static ISecurityScanner Resolve(string tool)
     {

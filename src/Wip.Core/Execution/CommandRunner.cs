@@ -95,11 +95,18 @@ public sealed class CommandRunner
         return interactive ? RunInherited(startInfo) : RunCaptured(startInfo, timeout);
     }
 
-    private int RunCaptured(ProcessStartInfo startInfo, TimeSpan? timeout)
+    internal static void ConfigureCapturedStreams(ProcessStartInfo startInfo)
     {
         startInfo.RedirectStandardOutput = true;
         startInfo.RedirectStandardError = true;
         startInfo.RedirectStandardInput = true;
+        startInfo.StandardOutputEncoding = new UTF8Encoding(false);
+        startInfo.StandardErrorEncoding = new UTF8Encoding(false);
+    }
+
+    private int RunCaptured(ProcessStartInfo startInfo, TimeSpan? timeout)
+    {
+        ConfigureCapturedStreams(startInfo);
 
         var captured = new StringBuilder();
 

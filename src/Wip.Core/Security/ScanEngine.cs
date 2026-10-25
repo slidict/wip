@@ -8,7 +8,8 @@ namespace Wip.Security;
 /// <param name="Image">The pinned image the plan named.</param>
 /// <param name="RulesVersion">The rule set the plan pinned.</param>
 /// <param name="Network">The backend name of the boundary the run was verified behind.</param>
-/// <param name="ExitCode">The tool's own status, forwarded rather than interpreted.</param>
+/// <param name="ExitCode">The tool status, or the reserved timeout status when TimedOut is true.</param>
+/// <param name="TimedOut">Whether the execution deadline expired; exit 124 alone is ambiguous.</param>
 /// <param name="Report">The report as the tool wrote it, or null when it wrote none.</param>
 /// <remarks>
 /// A tool's non-zero status is not an error here: scanners use exit codes to report findings.
@@ -22,7 +23,8 @@ internal sealed record ScanOutcome(
     string RulesVersion,
     string Network,
     int ExitCode,
-    string? Report);
+    string? Report,
+    bool TimedOut = false);
 
 /// <summary>
 /// Drives exactly one registered scanner inside one declared sandbox, behind the boundary
@@ -30,7 +32,7 @@ internal sealed record ScanOutcome(
 /// </summary>
 /// <remarks>
 /// <para>
-/// The phases #692 asks to be separated are separated here, and the separation is what makes
+/// Preparation and execution are separated here, and the separation is what makes
 /// a fail-closed network workable at all: a pinned image and a pinned rule set have to be
 /// fetched where there is egress, so <see cref="Prepare"/> runs outside the isolated sandbox
 /// and <see cref="Run"/> only consumes what it left behind. Run refuses to start if Prepare
@@ -39,7 +41,7 @@ internal sealed record ScanOutcome(
 /// <para>
 /// The engine builds every backend invocation. An adapter supplies a <see cref="ScanPlan"/>
 /// and nothing else, so there is no path by which it can widen the boundary -- the property
-/// #692 requires and the reason the plan type carries no backend arguments.
+/// required for isolation and the reason the plan type carries no backend arguments.
 /// </para>
 /// </remarks>
 internal sealed class ScanEngine(
@@ -62,6 +64,9 @@ internal sealed class ScanEngine(
     /// </summary>
     internal static readonly TimeSpan DefaultScanTimeout = TimeSpan.FromMinutes(30);
 
+    /// <summary>Collection is a bounded read, not another scan-length operation.</summary>
+    private static readonly TimeSpan CollectionTimeout = TimeSpan.FromSeconds(10);
+
     private SandboxDefinition Definition(string sandbox) =>
         settings.Sandboxes.SingleOrDefault(s => s.Name == sandbox)
             ?? throw new ConfigException($"Unknown sandbox: {sandbox}");
@@ -74,7 +79,7 @@ internal sealed class ScanEngine(
     /// the registry stays the only way to obtain a scanner, while the phases below take the
     /// scanner itself -- which is what makes "one tool per run" a property of the signature
     /// rather than a rule to remember, and what lets the engine be tested without adding a
-    /// test-only entry to the registry (#692 rules out extension by arbitrary tool).
+    /// test-only entry to the registry (arbitrary external tools cannot extend it).
     /// </summary>
     internal static ISecurityScanner Select(string tool) => ScannerRegistry.Resolve(tool);
 
@@ -157,25 +162,31 @@ internal sealed class ScanEngine(
                 $"Sandbox {sandbox}: is running image '{running}', but the tool pins '{plan.Image.Reference}'. " +
                 "The declaration changed after the container was created, so run sandbox destroy, confirm absence, then sandbox create.");
 
+        var stopped = false;
         try
         {
             var code = sandboxes.Exec(sandbox, plan.Argv, deadline);
-            var report = ReadReport(sandbox, plan.ReportPath);
+            if (code == CommandRunner.TimeoutExitCode)
+            {
+                // Killing the host exec client does not stop processes inside the container.
+                // Stop before any collection; exec cannot read a stopped container, and a
+                // partial report must not be presented as a completed scanner result.
+                Stop(sandbox);
+                stopped = true;
+                return new(scanner.Name, sandbox, plan.Image.Reference, plan.RulesVersion, network, code, null, TimedOut: true);
+            }
+            var collectionDeadline = deadline < CollectionTimeout ? deadline : CollectionTimeout;
+            var report = ReadReport(sandbox, plan.ReportPath, collectionDeadline);
             return new(scanner.Name, sandbox, plan.Image.Reference, plan.RulesVersion, network, code, report);
         }
         finally
         {
-            // Always, and only the stop: the container's own stop takes the tool and whatever
-            // it spawned with it, which is what "子プロセスを含む停止" needs. Removal is
-            // `sandbox destroy`'s, so a failed scan leaves the sandbox inspectable.
-            Stop(sandbox);
+            // The container stop includes the tool's children. Removal remains sandbox
+            // destroy's responsibility, so failed runs leave the container inspectable.
+            if (!stopped) Stop(sandbox);
         }
     }
 
-    /// <summary>
-    /// The declared network's name, or a refusal. A sandbox with no boundary declared is not
-    /// a sandbox a scan may run in: there is no unrestricted mode to fall back to.
-    /// </summary>
     /// <summary>
     /// Refuses a sandbox whose declared image is not the one the plan pinned.
     /// </summary>
@@ -195,6 +206,9 @@ internal sealed class ScanEngine(
             "the pinned image -- otherwise the tool that runs is not the one that was pinned.");
     }
 
+    /// <summary>
+    /// The declared network's name, or a refusal: there is no unrestricted scan mode.
+    /// </summary>
     private static string RequireDeclaredNetwork(SandboxDefinition definition, string sandbox) =>
         definition.Network
         ?? throw new ConfigException(
@@ -206,11 +220,11 @@ internal sealed class ScanEngine(
     /// sandbox rather than trusted as text: the content is a tool's output, which is treated
     /// as untrusted input downstream, and nothing here interprets it.
     /// </summary>
-    private string? ReadReport(string sandbox, string reportPath)
+    private string? ReadReport(string sandbox, string reportPath, TimeSpan timeout)
     {
         // `cat` with the path as its own argument, never a shell line: a report path is data,
         // and composing it into `sh -c` would make it executable.
-        var captured = sandboxes.Capture(sandbox, ["cat", reportPath], DefaultScanTimeout);
+        var captured = sandboxes.Capture(sandbox, ["cat", reportPath], timeout);
         return captured.Code == 0 ? captured.Output : null;
     }
 

@@ -69,6 +69,8 @@ public class ScanEngineTests
         public bool NetworkVerifiable = true;
         public int PullCode;
         public int ExecCode;
+        public bool ExecThrows;
+        public readonly List<TimeSpan> ReportTimeouts = [];
         public string Report = "{\"alerts\":[]}";
         public bool ReportMissing;
 
@@ -118,8 +120,16 @@ public class ScanEngineTests
                     },
                 }));
             }
-            if (argv is ["exec", _, "cat", ..]) return new(ReportMissing ? 1 : 0, ReportMissing ? "" : Report);
-            if (argv[0] == "exec") return new(ExecCode, "");
+            if (argv is ["exec", _, "cat", ..])
+            {
+                ReportTimeouts.Add(timeout);
+                return new(ReportMissing ? 1 : 0, ReportMissing ? "" : Report);
+            }
+            if (argv[0] == "exec")
+            {
+                if (ExecThrows) throw new WipException("scanner failed to start");
+                return new(ExecCode, "");
+            }
             if (argv[0] == "stop") { ContainerState = "exited"; return new(0, ""); }
             return new(0, "");
         }
@@ -156,6 +166,14 @@ public class ScanEngineTests
     {
         var error = Assert.Throws<ConfigException>(() => ScanEngine.Select(tool));
         Assert.Contains("no scanners are registered", error.Message);
+    }
+
+    [Fact]
+    public void ScannerContractsStayInternalToWip()
+    {
+        Assert.False(typeof(PinnedImage).IsPublic);
+        Assert.False(typeof(ScanPlan).IsPublic);
+        Assert.False(typeof(ScanTarget).IsPublic);
     }
 
     // ----------------------------------------------------------------- preparation
@@ -225,14 +243,25 @@ public class ScanEngineTests
 
     [Theory]
     [InlineData("example.test/zap@sha256:" + "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc")]
-    [InlineData("example.test/zap:2.15.0")]
-    [InlineData("registry.test:5000/zap:2.15.0")]
+    [InlineData("registry.test:5000/zap@sha256:" + "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc")]
     public void APinnedImageIsAccepted(string reference)
     {
         // Asserted on the plan rather than through Prepare: pinning is the plan's property,
         // while Prepare additionally requires the sandbox to declare the same image, which
         // would refuse these for an unrelated reason.
         (ValidPlan() with { Image = new PinnedImage(reference) }).Validate("stub");
+    }
+
+    [Theory]
+    [InlineData("example.test/zap:2.15.0")]
+    [InlineData("example.test/zap:release")]
+    [InlineData("example.test/zap@sha256:")]
+    [InlineData("example.test/zap@sha256:short")]
+    [InlineData("example.test/zap@sha256:" + "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg")]
+    public void OnlyAnImmutableFullSha256DigestIsPinned(string reference)
+    {
+        Assert.Throws<ConfigException>(() =>
+            (ValidPlan() with { Image = new PinnedImage(reference) }).Validate("stub"));
     }
 
     [Fact]
@@ -433,8 +462,8 @@ public class ScanEngineTests
     [Fact]
     public void NoAdapterSuppliedValueReachesTheBackendsOwnOptions()
     {
-        // The structural half of "アダプターから隔離ポリシーを緩和できない": whatever an
-        // adapter puts in its argv lands after the container id, never among the flags the
+        // Adapters cannot relax isolation: whatever an adapter puts in its argv lands
+        // after the container id, never among the flags the
         // backend reads, so it cannot attach a network or mount a path.
         var fake = new Fake();
         var plan = ValidPlan() with { Argv = ["sh", "--network", "bridge", "-v", "/:/host"] };
@@ -483,6 +512,30 @@ public class ScanEngineTests
         Assert.DoesNotContain("sh", read);
     }
 
+    [Fact]
+    public void ATimedOutScannerIsStoppedWithoutReadingAnUnfinishedReport()
+    {
+        var fake = new Fake { ExecCode = CommandRunner.TimeoutExitCode, Report = "unfinished" };
+
+        var outcome = Engine(fake).Run(new StubScanner(), "scanner", ValidPlan());
+
+        Assert.Null(outcome.Report);
+        Assert.True(outcome.TimedOut);
+        Assert.True(Ran(fake, "stop"));
+        Assert.DoesNotContain(fake.Calls, c => c.Contains("cat"));
+    }
+
+    [Fact]
+    public void CollectionUsesAShortDeadlineInsteadOfTheScanTimeout()
+    {
+        var fake = new Fake();
+
+        Engine(fake).Run(new StubScanner(), "scanner", ValidPlan(), TimeSpan.FromSeconds(60));
+
+        Assert.Single(fake.ReportTimeouts);
+        Assert.InRange(fake.ReportTimeouts[0], TimeSpan.FromMilliseconds(1), TimeSpan.FromSeconds(10));
+    }
+
     // ----------------------------------------------------------------- cleanup
 
     [Fact]
@@ -499,15 +552,13 @@ public class ScanEngineTests
     [Fact]
     public void TheSandboxIsStoppedWhenTheScanItselfThrows()
     {
-        var fake = new Fake();
-        // A deadline the exec path rejects, raised from inside the try rather than before it.
-        var engine = Engine(fake);
+        var fake = new Fake { ExecThrows = true };
 
-        Assert.Throws<ConfigException>(() =>
-            engine.Run(new StubScanner(), "scanner", ValidPlan(), TimeSpan.FromDays(40)));
+        var error = Assert.Throws<WipException>(() =>
+            Engine(fake).Run(new StubScanner(), "scanner", ValidPlan()));
 
-        // Refused before the try, so nothing to stop -- asserted so the boundary between the
-        // two is explicit rather than incidental.
-        Assert.False(Ran(fake, "exec"));
+        Assert.Contains("scanner failed to start", error.Message);
+        Assert.True(Ran(fake, "exec"));
+        Assert.True(Ran(fake, "stop"));
     }
 }

@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Text;
 using Wip.Configuration;
 using Wip.Execution;
 using Wip.Security;
@@ -30,18 +32,67 @@ internal sealed partial class CliContext
         var plan = engine.Prepare(scanner, sandbox, scanTarget);
         var outcome = engine.Run(scanner, sandbox, plan, TimeSpan.FromSeconds(timeoutSeconds));
 
-        // One line of provenance, then the report as the tool wrote it. The report is not
-        // parsed or reformatted here: it is a tool's output, which the result format in
-        // slidict/workspace#690 treats as untrusted input, and this command's job is to hand
-        // it on unchanged.
+        // Reports are untrusted tool output. Preserve redirected artifacts, but render
+        // terminal controls visibly when displaying a report to a person.
         Console.Error.WriteLine(
-            $"{outcome.Tool}\t{outcome.Sandbox}\t{outcome.Network}\t{outcome.Image}\trules={outcome.RulesVersion}\texit={outcome.ExitCode}");
-        if (outcome.Report is { } report) Console.Out.Write(report);
+            $"{outcome.Tool}\t{outcome.Sandbox}\t{outcome.Network}\t{outcome.Image}\trules={outcome.RulesVersion}\texit={outcome.ExitCode}\tstatus={(outcome.TimedOut ? "timeout" : "exited")}");
+        if (outcome.Report is { } report) WriteSecurityReport(Console.Out, report, Console.IsOutputRedirected);
+        else if (outcome.TimedOut) Console.Error.WriteLine($"{outcome.Tool}: timed out; requested sandbox stop without collecting a partial report");
         else Console.Error.WriteLine($"{outcome.Tool}: wrote no report at {plan.ReportPath}");
 
         // The tool's own status, forwarded: a scanner uses it to report findings, so
         // flattening it to 0 would hide what the scan found.
         return outcome.ExitCode;
+    }
+
+    internal static void WriteSecurityReport(TextWriter output, string report, bool isOutputRedirected)
+    {
+        if (isOutputRedirected)
+        {
+            output.Write(report);
+            return;
+        }
+
+        foreach (var character in report)
+        {
+            if ((char.IsControl(character) && character is not ('\n' or '\t')) ||
+                char.GetUnicodeCategory(character) == UnicodeCategory.Format)
+                output.Write($"\\u{(int)character:x4}");
+            else output.Write(character);
+        }
+    }
+
+    // Keep pipe draining after the cap so the child can exit; never return a truncated
+    // report that a caller could mistake for a complete artifact.
+    internal static (int Code, string Output) CaptureProbe(Func<TextWriter, TextWriter, int> run, bool captureStderr = false)
+    {
+        using var captured = new BoundedCaptureWriter();
+        var output = TextWriter.Synchronized(captured);
+        var error = captureStderr ? output : TextWriter.Null;
+        var code = run(output, error);
+        if (captured.Exceeded) throw new WipException("Captured output exceeded the 1 Mi-character limit; no partial report was returned");
+        return (code, captured.ToString());
+    }
+
+    private sealed class BoundedCaptureWriter : TextWriter
+    {
+        private const int Limit = 1024 * 1024;
+        private readonly StringBuilder buffer = new();
+        internal bool Exceeded { get; private set; }
+        public override Encoding Encoding => Encoding.UTF8;
+        public override void Write(char value)
+        {
+            if (buffer.Length < Limit) buffer.Append(value);
+            else Exceeded = true;
+        }
+        public override void Write(string? value)
+        {
+            if (value is null) return;
+            var retained = Math.Min(value.Length, Limit - buffer.Length);
+            buffer.Append(value.AsSpan(0, retained));
+            Exceeded |= retained < value.Length;
+        }
+        public override string ToString() => buffer.ToString();
     }
 
     /// <summary>The registered tool names, one per line, for a caller choosing one.</summary>
