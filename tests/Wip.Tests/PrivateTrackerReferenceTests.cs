@@ -62,7 +62,8 @@ public class PrivateTrackerReferenceTests
 
     /// <summary>
     /// SHA-256 of <see cref="PrivateTracker"/>, as a commitment to the pattern -- enough to
-    /// catch a typo, which is all it is for.
+    /// catch a typo in one of the two, which is all it is for. Editing both together passes,
+    /// so what stops that is a reader of the diff: a change to this line has to be justified.
     /// </summary>
     /// <remarks>
     /// <b>It is not secrecy.</b> The name is short and guessable from this repository's own URL,
@@ -127,9 +128,9 @@ public class PrivateTrackerReferenceTests
 
         var paths = Split(Git(root, ["ls-files", "-z"]));
         Assert.NotEmpty(paths);
-        // Not left to SearchReachesThisRepository: run alone, with wip's sources sitting inside
-        // some other repository's working tree, a one-file list would satisfy NotEmpty and the
-        // searches would cover that one file, so this would pass having read nothing of wip.
+        // Not left to SearchReachesThisRepository, which is a separate fact and so does not run
+        // when this one runs alone. It is a lower bound of one known file, not a claim about how
+        // wide the search was: a list holding only this file would still satisfy it.
         RequireThisFile(paths, "ls-files");
 
         var offenders = new SortedSet<string>(StringComparer.Ordinal);
