@@ -4,7 +4,7 @@ namespace Wip.Tests;
 
 /// <summary>
 /// The private management repository's name must not appear in anything this repository
-/// tracks.
+/// publishes.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -12,21 +12,31 @@ namespace Wip.Tests;
 /// that is what the wiki links to as raw URLs. That is where the check was, and the references
 /// were everywhere else: the volume contract, the lifecycle docs, two XML doc comments, a
 /// benchmark script's synopsis. None of them is under <c>docs/tapes</c>, so nothing ever
-/// failed. A guard whose scope excludes where the problem lives is not a guard.
+/// failed. A guard whose scope excludes where the problem lives is not a guard, and every
+/// revision of this file has been about closing another way for it to pass without looking.
 /// </para>
 /// <para>
-/// Both the content and the path are matched, and both come from git rather than from the
-/// working tree. What gets published is what gets committed, which is the index: a file staged
-/// with the name and then corrected without staging the correction still commits the name,
-/// while a working-tree read of it passes. Reading the index also removes the question of what
-/// to do about a tracked file that is missing or unreadable in the working tree -- a sparse
-/// checkout, a file deleted but not yet committed -- because an indexed blob is always there
-/// to read. Every one of those was a way to pass while covering less than this claims to.
+/// Content is searched with <c>git grep</c> over both the index and the working tree, and
+/// paths over <c>git ls-files</c>. The index because a commit publishes what is staged; the
+/// working tree because <c>git commit -a</c> and <c>git commit &lt;path&gt;</c> stage it on the
+/// way; and the paths because a directory named after the tracker leaks it whatever its files
+/// hold, which a content search never sees.
 /// </para>
 /// <para>
-/// Walking the directory instead would check the wrong set the other way: a working tree also
-/// holds scratch notes, ignored build output and published binaries, and failing
-/// <c>dotnet test</c> over a local note that never ships would be a false alarm.
+/// A content search that finds nothing is indistinguishable from one that is not working, so
+/// <see cref="SearchFindsThisFile"/> runs the same search for a string this file certainly
+/// contains and requires it back. That also settles which repository git opened: a redirected
+/// run -- <c>GIT_DIR</c> and friends override <c>WorkingDirectory</c> -- reads a tree that does
+/// not contain this file, and the canary fails instead of the whole test passing over someone
+/// else's files. Comparing paths was the previous approach and it was worse: it failed on a
+/// checkout reached through a symlink, where git reports the physical path and .NET does not.
+/// </para>
+/// <para>
+/// Nothing allowlists a file, because no file spells the name: <see cref="PrivateTracker"/>
+/// assembles it at run time and <see cref="WikiTapeTests"/> uses that. An allowlist would have
+/// excluded two real files from the search -- one of them 300 lines of ordinary test code --
+/// and a reference added anywhere in them would have stayed green. **Do not inline it back into
+/// a literal.**
 /// </para>
 /// <para>
 /// Only the literal name is matched. A bare <c>#NNN</c> cannot be checked here, because this
@@ -36,44 +46,42 @@ namespace Wip.Tests;
 /// </remarks>
 public class PrivateTrackerReferenceTests
 {
-    private const string PrivateTracker = "slidict/workspace";
+    /// <summary>
+    /// The private tracker's name, assembled rather than written, so that no file in this
+    /// repository contains the string this test searches for. Spelling it out would put it in
+    /// a tracked file and force an allowlist, and an allowlisted file is an unsearched file.
+    /// </summary>
+    internal static readonly string PrivateTracker = string.Join('/', "slidict", "workspace");
 
     /// <summary>
-    /// The files whose job is to name it. Both state the rule rather than depending on it, so
-    /// excluding them is not a hole: anything else naming it is the thing being prevented.
+    /// This file, as git reports it. The canary searches for its own class name and requires
+    /// this path back.
     /// </summary>
-    private static readonly string[] Allowed =
-    [
-        "tests/Wip.Tests/WikiTapeTests.cs",
-        "tests/Wip.Tests/PrivateTrackerReferenceTests.cs",
-    ];
+    private const string ThisFile = "tests/Wip.Tests/PrivateTrackerReferenceTests.cs";
 
     [Fact]
     public void NoTrackedFileNamesThePrivateTracker()
     {
         var root = RepositoryRoot();
-        if (!GitOpensRepository(root)) return;
 
-        var tracked = TrackedFiles(root);
+        var tracked = Git(root, ["ls-files", "-z"]);
         if (tracked is null) return;
-        Assert.NotEmpty(tracked);
+        var paths = Split(tracked.Output);
+        Assert.NotEmpty(paths);
 
         var offenders = new SortedSet<string>(StringComparer.Ordinal);
 
-        // The path is published as well as the content, so a directory named after the tracker
-        // leaks it whatever the file holds. Not covered by the content search below, which
-        // reads blobs and never looks at where they live.
-        foreach (var relative in tracked)
+        // A content search reads blobs and never looks at where they live.
+        foreach (var relative in paths)
         {
             if (relative.Contains(PrivateTracker, StringComparison.OrdinalIgnoreCase)) offenders.Add(relative);
         }
 
-        var naming = IndexedFilesNamingTheTracker(root);
-        if (naming is null) return;
-        foreach (var relative in naming)
-        {
-            if (!Allowed.Contains(relative, StringComparer.Ordinal)) offenders.Add(relative);
-        }
+        var staged = Grep(root, PrivateTracker, index: true);
+        var working = Grep(root, PrivateTracker, index: false);
+        if (staged is null || working is null) return;
+        offenders.UnionWith(staged);
+        offenders.UnionWith(working);
 
         Assert.True(offenders.Count == 0, string.Join("\n", [
             $"これらのファイルが非公開の管理リポジトリ名（{PrivateTracker}）を含む。",
@@ -83,70 +91,69 @@ public class PrivateTrackerReferenceTests
     }
 
     /// <summary>
-    /// Whether git, run the way this test runs it, opened the repository under test. Returns
-    /// <c>false</c> when git is unavailable and the test skipped.
+    /// The canary. An empty result from the search above is the passing case, which means a
+    /// search that silently matches nothing -- a typo in the pattern, a flag git stopped
+    /// accepting, a redirected repository -- would pass too. This searches for a string that is
+    /// certainly in this repository and requires the file holding it back.
     /// </summary>
-    /// <remarks>
-    /// Clearing the variables in <see cref="RepositoryLocationVariables"/> is not something a
-    /// test can observe directly, and anything else that redirects git would be just as
-    /// invisible. This asks git which repository it opened and compares the answer, so a
-    /// redirected run fails instead of scanning a different tree and passing.
-    /// </remarks>
-    private static bool GitOpensRepository(string root)
+    [Fact]
+    public void SearchFindsThisFile()
     {
-        var toplevel = Git(root, ["rev-parse", "--show-toplevel"]);
-        if (toplevel is null) return false;
+        var root = RepositoryRoot();
+        var needle = nameof(PrivateTrackerReferenceTests);
 
-        var reported = new DirectoryInfo(toplevel.Trim()).FullName;
-        Assert.True(
-            string.Equals(reported, new DirectoryInfo(root).FullName, StringComparison.OrdinalIgnoreCase),
-            $"gitが開いたリポジトリ（{reported}）が検査対象（{root}）と違う。");
-        return true;
+        var staged = Grep(root, needle, index: true);
+        if (staged is null) return;
+        Assert.Contains(ThisFile, staged);
+
+        var working = Grep(root, needle, index: false);
+        if (working is null) return;
+        Assert.Contains(ThisFile, working);
     }
 
     /// <summary>
-    /// Tracked paths, repository-relative with forward slashes, as git reports them.
-    /// <c>null</c> when git is unavailable and the test skipped.
+    /// Tracked files whose content contains <paramref name="pattern"/>, from the index when
+    /// <paramref name="index"/> is set and from the working tree otherwise. <c>null</c> when
+    /// the test skipped.
     /// </summary>
     /// <remarks>
-    /// <c>-z</c> so a path with a newline or a non-ASCII character arrives verbatim instead of
-    /// quoted.
-    /// </remarks>
-    private static IReadOnlyList<string>? TrackedFiles(string root)
-    {
-        var output = Git(root, ["ls-files", "-z"]);
-        return output?.Split('\0', StringSplitOptions.RemoveEmptyEntries);
-    }
-
-    /// <summary>
-    /// Indexed files whose staged content contains the tracker's name, searched by git so the
-    /// bytes examined are the ones a commit would publish. <c>null</c> when git is unavailable.
-    /// </summary>
-    /// <remarks>
-    /// <c>git grep</c> exits 1 for "no match", which is the passing case here, so only a code
+    /// <c>git grep</c> exits 1 for "no match", which is a passing case here, so only a code
     /// above 1 is a failure. Binary blobs are searched too rather than excluded: a name in one
-    /// is still published.
+    /// is published just the same.
     /// </remarks>
-    private static IReadOnlyList<string>? IndexedFilesNamingTheTracker(string root)
+    private static IReadOnlyList<string>? Grep(string root, string pattern, bool index)
     {
-        var output = Git(root, ["grep", "--cached", "-l", "-i", "-z", "-F", "-e", PrivateTracker], allowNoMatch: true);
-        return output?.Split('\0', StringSplitOptions.RemoveEmptyEntries);
+        string[] arguments = index
+            ? ["grep", "--cached", "-l", "-i", "-z", "-F", "-e", pattern]
+            : ["grep", "-l", "-i", "-z", "-F", "-e", pattern];
+        var result = Git(root, arguments, allowNoMatch: true);
+        return result is null ? null : Split(result.Output);
     }
 
+    private static string[] Split(string output) => output.Split('\0', StringSplitOptions.RemoveEmptyEntries);
+
+    private sealed record GitResult(string Output, string Error);
+
     /// <summary>
-    /// Runs git in <paramref name="root"/> and returns stdout, or <c>null</c> when git is not
-    /// available (the test skips).
+    /// Runs git in <paramref name="root"/>, or returns <c>null</c> after skipping the test when
+    /// git cannot be used here at all.
     /// </summary>
     /// <remarks>
-    /// <c>WorkingDirectory</c> alone does not decide which repository git reads.
-    /// <c>GIT_DIR</c>, <c>GIT_WORK_TREE</c> and <c>GIT_INDEX_FILE</c> override it, and an
-    /// inherited one would read another repository -- a non-empty file list that contains
-    /// nothing of this repository, so nothing here matches and the test passes having scanned
-    /// nothing. They are removed, and the repository git actually opened is then compared
-    /// against the one under test rather than assumed, since removing them is not by itself
-    /// checkable.
+    /// <para>
+    /// Both streams are drained concurrently. Reading stdout to the end while nobody reads
+    /// stderr deadlocks as soon as git writes more to stderr than the pipe buffer holds -- an
+    /// advice block or a pack warning is enough -- and there is no timeout to break it.
+    /// stderr is also what says why a failure happened, so the assertions carry it.
+    /// </para>
+    /// <para>
+    /// Two cases skip rather than fail: git is not installed, and this is not a git repository.
+    /// The second is a source tree without history -- a downloaded archive, a Docker stage that
+    /// copies sources in -- where the tracked set is not knowable, which is different from a
+    /// tracked set that cannot be read. A redirected repository does not reach this path: it
+    /// answers normally, and <see cref="SearchFindsThisFile"/> is what catches it.
+    /// </para>
     /// </remarks>
-    private static string? Git(string root, string[] arguments, bool allowNoMatch = false)
+    private static GitResult? Git(string root, string[] arguments, bool allowNoMatch = false)
     {
         var start = new ProcessStartInfo("git")
         {
@@ -158,21 +165,49 @@ public class PrivateTrackerReferenceTests
         foreach (var argument in arguments) start.ArgumentList.Add(argument);
         foreach (var name in RepositoryLocationVariables) start.Environment.Remove(name);
 
+        string output;
+        string error;
+        int exitCode;
         try
         {
             using var process = Process.Start(start);
             Assert.NotNull(process);
-            var output = process.StandardOutput.ReadToEnd();
+            var readOutput = process.StandardOutput.ReadToEndAsync();
+            var readError = process.StandardError.ReadToEndAsync();
+            output = readOutput.GetAwaiter().GetResult();
+            error = readError.GetAwaiter().GetResult();
             process.WaitForExit();
-            var tolerated = process.ExitCode == 0 || (allowNoMatch && process.ExitCode == 1);
-            Assert.True(tolerated, $"git {string.Join(' ', arguments)} exited {process.ExitCode}");
-            return output;
+            exitCode = process.ExitCode;
         }
-        catch (Exception error) when (error is System.ComponentModel.Win32Exception or FileNotFoundException)
+        catch (Exception failure) when (failure is System.ComponentModel.Win32Exception or FileNotFoundException)
         {
-            Assert.Skip($"gitを実行できないため追跡ファイルの照合を省略する（{error.GetType().Name}）。");
+            Assert.Skip($"gitを実行できないため追跡ファイルの照合を省略する（{failure.GetType().Name}）。");
             return null;
         }
+
+        if (exitCode != 0 && NotARepository(error))
+        {
+            Assert.Skip($"gitリポジトリではないため追跡ファイルの照合を省略する（{Trim(error)}）。");
+            return null;
+        }
+
+        var tolerated = exitCode == 0 || (allowNoMatch && exitCode == 1);
+        Assert.True(tolerated, $"git {string.Join(' ', arguments)} exited {exitCode}: {Trim(error)}");
+        return new GitResult(output, error);
+    }
+
+    /// <summary>
+    /// git reports this on stderr when it cannot find a repository, in several wordings across
+    /// versions. Matched on stderr rather than on the exit code, which is 128 for every fatal.
+    /// </summary>
+    private static bool NotARepository(string error) =>
+        error.Contains("not a git repository", StringComparison.OrdinalIgnoreCase)
+        || error.Contains("this operation must be run in a work tree", StringComparison.OrdinalIgnoreCase);
+
+    private static string Trim(string error)
+    {
+        var text = error.Replace('\r', ' ').Replace('\n', ' ').Trim();
+        return text.Length == 0 ? "(stderrは空)" : text;
     }
 
     /// <summary>
