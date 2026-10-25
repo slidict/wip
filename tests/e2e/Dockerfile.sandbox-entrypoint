@@ -1,0 +1,10 @@
+FROM wip-e2e:latest
+
+# The configuration the documents endorse and nothing covered: a fixed ENTRYPOINT, with the
+# declared command supplying its arguments. Measured on wslc 3.0.3.0 with this exact shape --
+# `inspect` reports `Config.Cmd: ["600"]` and `Config.Entrypoint: ["/bin/sleep"]`, so the
+# command half is recorded on its own and wip's comparison sees what it declared. Had the
+# backend folded the entrypoint into Cmd, every image with an entrypoint would have failed
+# verification, which is the thing this fixture exists to catch if it ever changes.
+ENTRYPOINT ["/bin/sleep"]
+CMD ["0"]

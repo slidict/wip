@@ -622,13 +622,27 @@ public sealed class SandboxLifecycle(
         string name, SandboxDefinition definition, SandboxStatus status, bool freshlyCreated = false)
     {
         if (definition.Command is not { } expected) return;
-        var recovery = freshlyCreated
-            ? "the backend did not record the command wip passed, so recreating the sandbox will not change it"
-            : "run sandbox destroy, confirm absence, then sandbox create";
+
+        // Unreadable is not drift, wherever it is found. The backend is not reporting argv the
+        // way wip reads it, and no container this backend creates will, so destroy-and-create
+        // cannot help -- which is what the advice used to say here, and on the exec path it
+        // said it even after Create had already explained that recreating changes nothing.
         if (status.Command is null)
-            throw Failure(name, $"the declared command cannot be verified because Config.Cmd is unreadable; {recovery}");
+            throw Failure(
+                name,
+                "the declared command cannot be verified because the backend does not report Config.Cmd as an argv list; "
+                    + "recreating the sandbox will not change that. Remove command: to run the image's own CMD, "
+                    + "or use an image whose own CMD stays running.");
+
         if (!expected.SequenceEqual(status.Command, StringComparer.Ordinal))
-            throw Failure(name, $"the declared command differs from Config.Cmd; {recovery}");
+        {
+            // Drift is fixable by recreating; a disagreement with argv wip itself just passed
+            // is not, and the container is already running, so say what does end it.
+            throw Failure(name, freshlyCreated
+                ? "the backend recorded a different command from the argv wip passed, so recreating the sandbox will not change it. "
+                    + "Remove command: to run the image's own CMD, or use an image whose own CMD stays running."
+                : "the declared command differs from Config.Cmd; run sandbox destroy, confirm absence, then sandbox create");
+        }
     }
 
     private static IReadOnlyList<string>? ExtractCommand(JsonElement record)

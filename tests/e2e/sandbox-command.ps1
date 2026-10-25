@@ -3,14 +3,20 @@
 function Invoke-SandboxCommandE2E([string] $Namespace, [string] $Image) {
     $sandboxes = New-Object 'Collections.Generic.List[string]'
     $commandImage = "wip-e2e-command-${Namespace}:latest"
-    $imageBuildAttempted = $false
+    $entrypointImage = "wip-e2e-entrypoint-${Namespace}:latest"
+    $builtImages = New-Object 'Collections.Generic.List[string]'
     $configPath = Join-Path $script:Workspace 'sandbox-command.yml'
     $buildDirectory = Join-Path $script:Workspace 'sandbox-command-build'
+    $entrypointDirectory = Join-Path $script:Workspace 'sandbox-entrypoint-build'
     $wslcConfig = $script:WslcPath.Replace("'", "''")
     New-Item -ItemType Directory -Path $buildDirectory -Force | Out-Null
+    New-Item -ItemType Directory -Path $entrypointDirectory -Force | Out-Null
     $dockerfile = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'Dockerfile.sandbox-command'))
     $dockerfile = $dockerfile.Replace('FROM wip-e2e:latest', "FROM $Image")
     [IO.File]::WriteAllText((Join-Path $buildDirectory 'Dockerfile'), $dockerfile)
+    $entrypointDockerfile = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'Dockerfile.sandbox-entrypoint'))
+    $entrypointDockerfile = $entrypointDockerfile.Replace('FROM wip-e2e:latest', "FROM $Image")
+    [IO.File]::WriteAllText((Join-Path $entrypointDirectory 'Dockerfile'), $entrypointDockerfile)
 
     # A separate config leaves the other lifecycle fixtures unchanged. Both sandboxes use
     # the same one-shot image; only the first declares a replacement CMD.
@@ -23,6 +29,9 @@ sandboxes:
     command: [sleep, '600']
   - name: command-default
     image: $commandImage
+  - name: command-entrypoint
+    image: $entrypointImage
+    command: ['600']
 mode: container
 wslc:
   command: '$wslcConfig'
@@ -74,17 +83,17 @@ dependencies:
     # in Japanese, so parsing it reads a translation and the verb is the only stable part of it.
     # A failure is reported rather than thrown: this runs in cleanup, after the assertions, and
     # a leftover image must not be what a reader sees instead of the real failure.
-    function Remove-CommandImage {
-        $removed = Invoke-CommandFixture -Exe $script:WslcPath -Arguments @('rmi', $commandImage) -TimeoutSeconds 120
+    function Remove-CommandImage([string] $Tag) {
+        $removed = Invoke-CommandFixture -Exe $script:WslcPath -Arguments @('rmi', $Tag) -TimeoutSeconds 120
         if ($removed.Code -ne 0) {
             $script:Failed = $true
-            Write-Warning "command fixture image cleanup failed (${commandImage}): $($removed.Output.Trim())"
+            Write-Warning "command fixture image cleanup failed (${Tag}): $($removed.Output.Trim())"
         }
     }
 
     try {
         Write-Step 'sandbox command replaces a one-shot image CMD'
-        $imageBuildAttempted = $true
+        $builtImages.Add($commandImage)
         Assert-Exit (Invoke-CommandFixture -Exe $script:WslcPath -Arguments @('build', '-t', $commandImage, $buildDirectory) -TimeoutSeconds 300) 0 'build the one-shot CMD fixture'
 
         $sandboxes.Add('command-override')
@@ -110,6 +119,21 @@ dependencies:
         $defaultStatus = Invoke-CommandWip @('sandbox', 'status', 'command-default')
         Assert-Exit $defaultStatus 0 'status of the default one-shot sandbox'
         Assert-Match $defaultStatus '(?m)^command-default\s+exited\s+wip-s-[a-f0-9]{40}\s+\S+\s*$' 'without command the image default exits'
+
+        # The configuration the documents endorse: a fixed ENTRYPOINT taking the declared list
+        # as its arguments. Verification compares Config.Cmd, so this fails outright if the
+        # backend ever folds the entrypoint into it.
+        Write-Step 'a declared command supplies arguments to a fixed ENTRYPOINT'
+        $builtImages.Add($entrypointImage)
+        Assert-Exit (Invoke-CommandFixture -Exe $script:WslcPath -Arguments @('build', '-t', $entrypointImage, $entrypointDirectory) -TimeoutSeconds 300) 0 'build the fixed ENTRYPOINT fixture'
+        $sandboxes.Add('command-entrypoint')
+        Assert-Exit (Invoke-CommandWip @('sandbox', 'create', 'command-entrypoint')) 0 'create against a fixed ENTRYPOINT image'
+        $entrypointMain = Invoke-CommandWip @('sandbox', 'exec', 'command-entrypoint', '--', 'cat', '/proc/1/comm')
+        Assert-Exit $entrypointMain 0 'read the entrypoint main process'
+        Assert-Match $entrypointMain '(?m)^sleep\s*$' 'the entrypoint ran with the declared argument'
+        # Proves verification accepted it rather than skipping: exec passes through RunningId,
+        # which refuses a container whose Config.Cmd is not the declared list.
+        Assert-Exit (Invoke-CommandWip @('sandbox', 'exec', 'command-entrypoint', '--', 'true')) 0 'the entrypoint sandbox passes command verification'
     }
     finally {
         foreach ($sandbox in $sandboxes) {
@@ -125,11 +149,12 @@ dependencies:
                 Write-Warning "command fixture cleanup failed (${sandbox}): $_"
             }
         }
-        if ($imageBuildAttempted) {
-            try { Remove-CommandImage }
+        # Only tags this run added, in case a build failed before producing one.
+        foreach ($tag in $builtImages) {
+            try { Remove-CommandImage $tag }
             catch {
                 $script:Failed = $true
-                Write-Warning "command fixture image cleanup failed (${commandImage}): $_"
+                Write-Warning "command fixture image cleanup failed (${tag}): $_"
             }
         }
     }
