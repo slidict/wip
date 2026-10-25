@@ -1,3 +1,4 @@
+using System.CommandLine;
 using System.Text;
 using System.Diagnostics;
 using Wip.Cli;
@@ -13,6 +14,78 @@ public sealed class ConsoleEncodingCollection;
 [Collection("Console encoding")]
 public sealed class SecurityOutputTests
 {
+    [Fact]
+    public void SecurityScanParsesOutputDirectoryAndCommitWithoutChangingTarget()
+    {
+        var parsed = Program.Parse(Program.BuildRoot(),
+            ["security", "scan", "scanner", "--tool", "zap", "--target", "http://app:8080/",
+             "--output", "artifacts/security results", "--commit", "deadbeef"]);
+        Assert.Empty(parsed.Errors);
+        var command = parsed.CommandResult.Command;
+        var output = Assert.IsType<Option<string?>>(command.Options.Single(option => option.Name == "--output"));
+        var commit = Assert.IsType<Option<string?>>(command.Options.Single(option => option.Name == "--commit"));
+        var target = Assert.IsType<Option<string>>(command.Options.Single(option => option.Name == "--target"));
+        Assert.Equal("artifacts/security results", parsed.GetValue(output));
+        Assert.Equal("deadbeef", parsed.GetValue(commit));
+        Assert.Equal("http://app:8080/", parsed.GetValue(target));
+    }
+
+    [Fact]
+    public void SecurityScanOutputMetadataRemainsOptional()
+    {
+        var parsed = Program.Parse(Program.BuildRoot(),
+            ["security", "scan", "scanner", "--tool", "zap", "--target", "http://app/"]);
+        Assert.Empty(parsed.Errors);
+        var options = parsed.CommandResult.Command.Options;
+        Assert.Null(parsed.GetValue(Assert.IsType<Option<string?>>(options.Single(option => option.Name == "--output"))));
+        Assert.Null(parsed.GetValue(Assert.IsType<Option<string?>>(options.Single(option => option.Name == "--commit"))));
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(2)]
+    public void IncompleteResultsUseReservedExitStatusAndPreserveRawOutput(int scannerExitCode)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var run = new ScanRunMetadata("run", now, now, "zap", "image", "rules", "scanner", "isolated", true, "http://app/");
+        var result = new ScanResult(run, "incomplete", IncompleteReason: "unperformed-checks-lost", ScannerExitCode: scannerExitCode);
+        const string report = "{\"site\":[]}";
+        var outcome = new ScanOutcome("zap", "scanner", "image", "rules", "isolated", scannerExitCode, report)
+        {
+            Result = result
+        };
+        using var output = new StringWriter();
+        using var error = new StringWriter();
+
+        Assert.Equal(70, CliContext.WriteScanOutcome(outcome, "/report.json", output, error, true));
+
+        Assert.Equal(report, output.ToString());
+        Assert.Contains($"exit={scannerExitCode}", error.ToString());
+        Assert.Contains("scan result incomplete: unperformed-checks-lost", error.ToString());
+    }
+
+    [Theory]
+    [InlineData(2, 2)]
+    [InlineData(70, 1)]
+    public void CompletedResultsPreserveScannerMetadataAndReserveTheIncompleteCode(int scannerExitCode, int processExitCode)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var run = new ScanRunMetadata("run", now, now, "zap", "image", "rules", "scanner", "isolated", true, "http://app/");
+        var result = new ScanResult(run, "completed", Findings: [], UnperformedChecks: "active scan omitted", ScannerExitCode: scannerExitCode);
+        var outcome = new ScanOutcome("zap", "scanner", "image", "rules", "isolated", scannerExitCode, "{\"site\":[]}")
+        {
+            Result = result
+        };
+        using var output = new StringWriter();
+        using var error = new StringWriter();
+
+        Assert.Equal(processExitCode, CliContext.WriteScanOutcome(outcome, "/report.json", output, error, true));
+        Assert.Equal(scannerExitCode, outcome.Result!.ScannerExitCode);
+        Assert.Contains($"exit={scannerExitCode}", error.ToString());
+        Assert.Equal(outcome.Report, output.ToString());
+        Assert.DoesNotContain("scan result incomplete", error.ToString());
+    }
+
     [Fact]
     public void CapturedStreamsExplicitlyUseUtf8()
     {

@@ -150,4 +150,85 @@ public class ZapScannerTests
             Assert.DoesNotMatch(exclude, seed);
         }
     }
+    [Fact]
+    public void TraditionalJsonAlertsAndInstancesBecomeFindings()
+    {
+        const string report = """
+            {"site":[{"alerts":[{"pluginid":"10020","alertRef":"10020-1","name":"Missing Header","riskcode":"2","confidence":"3",
+            "instances":[{"uri":"http://app.test:8080/app?token=first","method":"get","param":"session","evidence":"header evidence"},
+                         {"uri":"https://other.test:443/app?token=second","method":"GET","param":"session","evidence":"other evidence"}]}]}]}
+            """;
+
+        var findings = ScanEngine.Select("zap").ConvertReport(report);
+
+        Assert.Equal(2, findings.Count);
+        Assert.Equal("10020", findings[0].RuleId);
+        Assert.Equal("Missing Header", findings[0].Name);
+        Assert.Equal("medium", findings[0].Severity);
+        Assert.Equal("high", findings[0].Confidence);
+        Assert.Equal(new ScanLocation("/app", "GET", "session"), findings[0].Location);
+        Assert.Equal(findings[0].Location, findings[1].Location);
+        Assert.Equal("header evidence", findings[0].Evidence);
+        Assert.Equal("other evidence", findings[1].Evidence);
+    }
+
+    [Fact]
+    public void MissingOptionalFieldsStayAbsentWithoutLosingTheAlert()
+    {
+        var findings = ScanEngine.Select("zap").ConvertReport("""
+            {"site":[{"alerts":[{"alertRef":"10020-1","alert":"Header issue","instances":[{}]}]}]}
+            """);
+
+        var finding = Assert.Single(findings);
+        Assert.Equal("10020-1", finding.RuleId);
+        Assert.Equal("Header issue", finding.Name);
+        Assert.Null(finding.Severity);
+        Assert.Null(finding.Confidence);
+        Assert.Equal(new ScanLocation(null, null, null), finding.Location);
+        Assert.Null(finding.Evidence);
+    }
+
+    [Fact]
+    public void AnAlertWithoutInstancesIsNotConvertedToZeroFindings()
+    {
+        var finding = Assert.Single(ScanEngine.Select("zap").ConvertReport("""
+            {"site":[{"alerts":[{"pluginid":"10020"}]}]}
+            """));
+
+        Assert.Equal("10020", finding.RuleId);
+        Assert.Null(finding.Location.Path);
+    }
+
+    [Fact]
+    public void AValidEmptyAlertsArrayConvertsToNoFindings()
+    {
+        Assert.Empty(ScanEngine.Select("zap").ConvertReport("""{"site":[{"alerts":[]}]}"""));
+    }
+
+    [Theory]
+    [InlineData("{}")]
+    [InlineData("{\"site\":{}}")]
+    [InlineData("{\"site\":[{}]}")]
+    [InlineData("{\"site\":[{\"alerts\":[null]}]}")]
+    [InlineData("{\"site\":[{\"alerts\":[{\"instances\":{}}]}]}")]
+    public void MalformedTraditionalReportShapesAreRejected(string report)
+    {
+        Assert.Throws<FormatException>(() => ScanEngine.Select("zap").ConvertReport(report));
+    }
+
+    [Theory]
+    [InlineData("0", "0", "informational", "false-positive")]
+    [InlineData("1", "1", "low", "low")]
+    [InlineData("2", "2", "medium", "medium")]
+    [InlineData("3", "3", "high", "high")]
+    [InlineData("3", "4", "high", "confirmed")]
+    public void ZapCodesUseTheirDocumentedSeverityAndConfidence(string risk, string confidence, string severity, string expectedConfidence)
+    {
+        var report = "{\"site\":[{\"alerts\":[{\"riskcode\":\"" + risk + "\",\"confidence\":\"" + confidence + "\"}]}]}";
+        var finding = Assert.Single(ScanEngine.Select("zap").ConvertReport(report));
+
+        Assert.Equal(severity, finding.Severity);
+        Assert.Equal(expectedConfidence, finding.Confidence);
+    }
+
 }

@@ -208,15 +208,26 @@ internal static class Program
             DefaultValueFactory = _ => (int)ScanEngine.DefaultScanTimeout.TotalSeconds,
             Description = $"Scan deadline in seconds (default: {(int)ScanEngine.DefaultScanTimeout.TotalSeconds})",
         };
+        var output = new Option<string?>("--output")
+        {
+            Description = "Persist the result, raw report and coverage below this directory",
+        };
+        var commit = new Option<string?>("--commit")
+        {
+            Description = "Application revision metadata for the result (not inferred from the sandbox)",
+        };
         var scan = new Command("scan", "Prepare and run one tool against one target inside the sandbox")
         {
             sandboxName,
             tool,
             target,
             timeout,
+            output,
+            commit,
         };
         scan.SetAction(parsed => context(parsed).SecurityScan(
-            parsed.GetValue(sandboxName)!, parsed.GetValue(tool)!, parsed.GetValue(target)!, parsed.GetValue(timeout)));
+            parsed.GetValue(sandboxName)!, parsed.GetValue(tool)!, parsed.GetValue(target)!, parsed.GetValue(timeout),
+            parsed.GetValue(output), parsed.GetValue(commit)));
         security.Subcommands.Add(scan);
         return security;
     }

@@ -38,9 +38,21 @@ try
     var transported = script.Replace("\\", "\\\\").Replace("\n", "\\n").Replace("\t", "\\t");
     var scanner = new FixtureScanner(args[1], transported);
     var plan = engine.Prepare(scanner, "engine-scan-scanner", new ScanTarget(args[2]));
-    var outcome = engine.Run(scanner, "engine-scan-scanner", plan, TimeSpan.FromSeconds(90));
-    File.WriteAllText(args[4], JsonSerializer.Serialize(outcome), new UTF8Encoding(false));
-    return outcome.ExitCode;
+    var outcome = engine.Run(scanner, "engine-scan-scanner", plan, new ScanTarget(args[2]), TimeSpan.FromSeconds(90));
+    using (var stream = File.Create(args[4]))
+    using (var writer = new Utf8JsonWriter(stream))
+    {
+        writer.WriteStartObject();
+        writer.WriteNumber("ExitCode", outcome.ExitCode);
+        writer.WriteBoolean("TimedOut", outcome.TimedOut);
+        writer.WriteString("Report", outcome.Report);
+        writer.WriteString("ReportError", outcome.ReportError);
+        writer.WriteString("UnperformedChecks", outcome.UnperformedChecks);
+        writer.WriteString("UnperformedChecksError", outcome.UnperformedChecksError);
+        writer.WriteEndObject();
+        writer.Flush();
+    }
+    return outcome.ProcessExitCode;
 }
 catch (Exception error)
 {
@@ -51,6 +63,14 @@ catch (Exception error)
 sealed class FixtureScanner(string image, string script) : ISecurityScanner
 {
     public string Name => "e2e-fixture";
+    public IReadOnlyList<ScanFinding> ConvertReport(string report)
+    {
+        using var document = JsonDocument.Parse(report);
+        if (!document.RootElement.TryGetProperty("target_http_completed", out var completed) ||
+            completed.ValueKind != JsonValueKind.True)
+            throw new FormatException("The HTTP fixture did not complete");
+        return [];
+    }
     public ScanPlan Plan(ScanTarget target) => new(new PinnedImage(image),
         ["sh", "-c", "printf '%b' \"$1\" > /tmp/wip-scan-fixture.sh; shift; exec sh /tmp/wip-scan-fixture.sh \"$@\"",
          "wip-scan-fixture", script, target.Address, "/tmp/wip-scan-report.json", "/tmp/wip-scan-unperformed.txt"],

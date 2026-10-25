@@ -46,8 +46,8 @@ internal sealed class ZapScanner : ISecurityScanner
         // prefix to a sibling, port, scheme, or host. No browser or active-scan job runs.
         // Spider.start disables automatic redirects and filters seeds before dispatch;
         // DefaultFetchFilter rejects URLs outside the context (including redirect targets):
-        // https://github.com/zaproxy/zap-extensions/blob/main/addOns/spider/src/main/java/org/zaproxy/addon/spider/Spider.java
-        // https://github.com/zaproxy/zap-extensions/blob/main/addOns/spider/src/main/java/org/zaproxy/addon/spider/filters/DefaultFetchFilter.java
+        // The traditional spider's context restriction is documented here:
+        // https://www.zaproxy.org/docs/api/#spider
         var environment = Map(
             ("contexts", List(Map(("name", "wip"), ("urls", List(url)),
                 ("includePaths", List("^" + scope + "$")), ("excludePaths", List("^(?!" + scope + "$).*"))))),
@@ -78,6 +78,80 @@ internal sealed class ZapScanner : ISecurityScanner
         return new(new PinnedImage(ImageReference),
             ["python3", "-c", Wrapper, Quote(yaml), PlanPath, ReportPath, UnperformedPath],
             ReportPath, ImageReference + "/wip-passive-v1", UnperformedPath);
+    }
+
+    /// <summary>Reads the native traditional-json report without touching execution resources.</summary>
+    public IReadOnlyList<ScanFinding> ConvertReport(string report)
+    {
+        // The traditional-json template emits pluginid/alertRef, name/alert, riskcode,
+        // confidence and instances containing uri/method/param/evidence. Numeric codes
+        // follow ZAP's alert risk and confidence levels; omitted values remain null.
+        // https://www.zaproxy.org/docs/desktop/addons/report-generation/
+        using var document = JsonDocument.Parse(report);
+        var findings = new List<ScanFinding>();
+        foreach (var site in ReportArray(document.RootElement, "site").EnumerateArray())
+        {
+            foreach (var alert in ReportArray(site, "alerts").EnumerateArray())
+            {
+                if (alert.ValueKind != JsonValueKind.Object)
+                    throw new FormatException("ZAP alerts must be objects");
+                var risk = ReportText(alert, "riskcode");
+                var confidence = ReportText(alert, "confidence");
+                var finding = new ScanFinding(
+                    ReportText(alert, "pluginid") ?? ReportText(alert, "alertRef"),
+                    ReportText(alert, "name") ?? ReportText(alert, "alert"),
+                    risk switch { "0" => "informational", "1" => "low", "2" => "medium", "3" => "high", _ => risk },
+                    confidence switch { "0" => "false-positive", "1" => "low", "2" => "medium", "3" => "high", "4" => "confirmed", _ => confidence },
+                    new ScanLocation(null, null, null), null);
+                if (!alert.TryGetProperty("instances", out var instances) || instances.ValueKind == JsonValueKind.Null)
+                {
+                    findings.Add(finding);
+                    continue;
+                }
+                if (instances.ValueKind != JsonValueKind.Array)
+                    throw new FormatException("ZAP instances must be an array");
+                if (instances.GetArrayLength() == 0) findings.Add(finding);
+                foreach (var instance in instances.EnumerateArray())
+                {
+                    if (instance.ValueKind != JsonValueKind.Object)
+                        throw new FormatException("ZAP instances must be objects");
+                    findings.Add(finding with
+                    {
+                        Location = new ScanLocation(ReportPathOnly(ReportText(instance, "uri")),
+                            ReportText(instance, "method")?.ToUpperInvariant(), ReportText(instance, "param")),
+                        Evidence = ReportText(instance, "evidence")
+                    });
+                }
+            }
+        }
+        return findings.AsReadOnly();
+    }
+
+    private static JsonElement ReportArray(JsonElement parent, string name)
+    {
+        if (parent.ValueKind != JsonValueKind.Object || !parent.TryGetProperty(name, out var value) || value.ValueKind != JsonValueKind.Array)
+            throw new FormatException($"ZAP report requires a {name} array");
+        return value;
+    }
+
+    private static string? ReportText(JsonElement parent, string name)
+    {
+        if (!parent.TryGetProperty(name, out var value) || value.ValueKind == JsonValueKind.Null) return null;
+        return value.ValueKind switch
+        {
+            JsonValueKind.String => value.GetString(),
+            JsonValueKind.Number => value.GetRawText(),
+            _ => throw new FormatException($"ZAP {name} must be text or a number")
+        };
+    }
+
+    private static string? ReportPathOnly(string? address)
+    {
+        if (address is null) return null;
+        if (!Uri.TryCreate(address, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https"))
+            throw new FormatException("ZAP instance URI must be an absolute HTTP or HTTPS URL");
+        // Query strings may carry credentials and are not part of a stable endpoint key.
+        return uri.AbsolutePath;
     }
 
     private static string Quote(string text)

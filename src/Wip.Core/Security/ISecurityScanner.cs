@@ -104,6 +104,12 @@ internal interface ISecurityScanner
     /// reachable only inside the declared network.
     /// </summary>
     ScanPlan Plan(ScanTarget target);
+
+    /// <summary>
+    /// Converts this scanner's raw report without accessing execution or output resources.
+    /// Invalid report syntax or structure raises JsonException or FormatException.
+    /// </summary>
+    IReadOnlyList<ScanFinding> ConvertReport(string report);
 }
 
 /// <param name="Address">

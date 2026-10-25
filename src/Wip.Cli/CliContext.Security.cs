@@ -17,7 +17,8 @@ internal sealed partial class CliContext
     /// network: preparation pulls the pinned image, and the run happens where it cannot. A
     /// failure in preparation therefore stops before anything is executed in the sandbox.
     /// </remarks>
-    internal int SecurityScan(string sandbox, string tool, string target, int timeoutSeconds)
+    internal int SecurityScan(string sandbox, string tool, string target, int timeoutSeconds,
+        string? outputDirectory = null, string? commit = null)
     {
         ValidateSecurityTimeout(timeoutSeconds);
         // Both sinks to stderr: this command writes the report to stdout, and a scanner's
@@ -30,7 +31,8 @@ internal sealed partial class CliContext
         var scanner = ScanEngine.Select(tool);
         var scanTarget = new ScanTarget(target);
         var plan = engine.Prepare(scanner, sandbox, scanTarget);
-        var outcome = engine.Run(scanner, sandbox, plan, TimeSpan.FromSeconds(timeoutSeconds));
+        var outcome = engine.Run(scanner, sandbox, plan, scanTarget, TimeSpan.FromSeconds(timeoutSeconds),
+            outputDirectory, commit);
 
         return WriteScanOutcome(outcome, plan.ReportPath, Console.Out, Console.Error, Console.IsOutputRedirected, Console.IsErrorRedirected);
     }
@@ -60,7 +62,9 @@ internal sealed partial class CliContext
             error.WriteLine($"{outcome.Tool}: unperformed-check diagnostics unavailable: {diagnosticsError}");
         else if (outcome.UnperformedChecks is not null)
             error.WriteLine($"{outcome.Tool}: the unperformed-check record came back empty; which checks were skipped is unknown");
-        return outcome.ExitCode;
+        if (outcome.Result is { Status: "incomplete" } result)
+            error.WriteLine($"{outcome.Tool}: scan result incomplete: {result.IncompleteReason}");
+        return outcome.ProcessExitCode;
     }
 
     internal static void ValidateSecurityTimeout(int timeoutSeconds)

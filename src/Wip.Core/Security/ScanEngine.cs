@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Wip.Configuration;
 using Wip.Execution;
 
@@ -30,7 +31,16 @@ internal sealed record ScanOutcome(
     bool TimedOut = false,
     string? ReportError = null,
     string? UnperformedChecks = null,
-    string? UnperformedChecksError = null);
+    string? UnperformedChecksError = null,
+    ScanResult? Result = null)
+{
+    internal int ProcessExitCode => Result?.Status switch
+    {
+        "incomplete" => ScanEngine.IncompleteExitCode,
+        "completed" when ExitCode == ScanEngine.IncompleteExitCode => 1,
+        _ => ExitCode
+    };
+}
 
 /// <summary>
 /// Drives exactly one registered scanner inside one declared sandbox, behind the boundary
@@ -73,6 +83,12 @@ internal sealed class ScanEngine(
 
     /// <summary>The complete report must fit this retained-text budget.</summary>
     internal const int MaxReportCharacters = 1024 * 1024;
+
+    // Reserve EX_SOFTWARE (70), in the application's conventional sysexits 64..78 range.
+    // Unlike 256 it stays nonzero through POSIX/WSL shells; 125..127 overlap timeout or
+    // shell invocation failures. Completed scanners that return 70 map to 1 so only an
+    // incomplete run returns 70; provenance and result.json retain the original tool code.
+    internal const int IncompleteExitCode = 70;
 
     private SandboxDefinition Definition(string sandbox) =>
         settings.Sandboxes.SingleOrDefault(s => s.Name == sandbox)
@@ -126,8 +142,12 @@ internal sealed class ScanEngine(
     /// A plan, normally returned by Prepare. It is independently validated here; the type
     /// carries no preparation history and callers can supply a plan without calling Prepare.
     /// </param>
-    internal ScanOutcome Run(ISecurityScanner scanner, string sandbox, ScanPlan plan, TimeSpan? timeout = null)
+    internal ScanOutcome Run(ISecurityScanner scanner, string sandbox, ScanPlan plan, ScanTarget target, TimeSpan? timeout = null,
+        string? outputDirectory = null, string? commit = null)
     {
+        var startedAt = DateTimeOffset.UtcNow;
+        var runId = Guid.NewGuid().ToString("N");
+        target.Validate();
         var definition = Definition(sandbox);
         var declared = RequireDeclaredNetwork(definition, sandbox);
         plan.Validate(scanner.Name);
@@ -166,35 +186,64 @@ internal sealed class ScanEngine(
                 $"Sandbox {sandbox}: is running image '{running}', but the tool pins '{plan.Image.Reference}'. " +
                 "The declaration changed after the container was created, so run sandbox destroy, confirm absence, then sandbox create.");
 
-        var stopped = false;
         try
         {
             var execution = sandboxes.ExecWithResult(sandbox, plan.Argv, deadline);
             var code = execution.Code;
             if (execution.TimedOut)
             {
-                // Killing the host exec client does not stop processes inside the container.
-                // Stop before any collection; exec cannot read a stopped container, and a
-                // partial report must not be presented as a completed scanner result.
-                stopped = true;
-                Stop(sandbox);
-                return new(scanner.Name, sandbox, plan.Image.Reference, plan.RulesVersion, network, code, null, TimedOut: true,
-                    UnperformedChecksError: plan.UnperformedChecksPath is null ? null : "scan timed out before diagnostics could be collected");
+                // Do not collect a report that may still be changing. Persist only the
+                // incomplete metadata before the finally block stops the container.
+                var timedOut = new ScanOutcome(scanner.Name, sandbox, plan.Image.Reference, plan.RulesVersion, network, code, null, TimedOut: true,
+                    UnperformedChecksError: "scan timed out before diagnostics could be collected");
+                return FinishResult(scanner, target, timedOut, runId, startedAt, outputDirectory, commit);
             }
             var collectionDeadline = deadline < CollectionTimeout ? deadline : CollectionTimeout;
             var (report, reportError) = ReadReport(sandbox, plan.ReportPath, collectionDeadline);
             var (unperformed, diagnosticsError) = plan.UnperformedChecksPath is { } diagnosticsPath
                 ? ReadReport(sandbox, diagnosticsPath, collectionDeadline)
                 : (null, null);
-            return new(scanner.Name, sandbox, plan.Image.Reference, plan.RulesVersion, network, code, report,
+            var outcome = new ScanOutcome(scanner.Name, sandbox, plan.Image.Reference, plan.RulesVersion, network, code, report,
                 ReportError: reportError, UnperformedChecks: unperformed, UnperformedChecksError: diagnosticsError);
+            return FinishResult(scanner, target, outcome, runId, startedAt, outputDirectory, commit);
         }
         finally
         {
             // The container stop includes the tool's children. Removal remains sandbox
             // destroy's responsibility, so failed runs leave the container inspectable.
-            if (!stopped) Stop(sandbox);
+            Stop(sandbox);
         }
+    }
+
+    private static ScanOutcome FinishResult(ISecurityScanner scanner, ScanTarget target, ScanOutcome outcome,
+        string runId, DateTimeOffset startedAt, string? outputDirectory, string? commit)
+    {
+        string? reason = outcome.TimedOut ? "timeout"
+            : outcome.ReportError is not null || outcome.Report is null ? "report-collection-failed"
+            : string.IsNullOrWhiteSpace(outcome.Report) ? "report-empty" : null;
+        IReadOnlyList<ScanFinding>? findings = null;
+        if (reason is null)
+        {
+            try { findings = scanner.ConvertReport(outcome.Report!); }
+            catch (JsonException) { reason = "report-unparseable"; }
+            catch (FormatException) { reason = "report-unparseable"; }
+        }
+        var missingCoverage = outcome.UnperformedChecksError;
+        if (missingCoverage is null && string.IsNullOrWhiteSpace(outcome.UnperformedChecks))
+            missingCoverage = "The unperformed-check record was not collected or was empty";
+        if (reason is null && missingCoverage is not null) reason = "unperformed-checks-lost";
+
+        var run = new ScanRunMetadata(runId, startedAt, DateTimeOffset.UtcNow, outcome.Tool, outcome.Image,
+            outcome.RulesVersion, outcome.Sandbox, outcome.Network, true, target.Address, commit);
+        var result = new ScanResult(run, reason is null ? "completed" : "incomplete",
+            Findings: reason is null ? findings : null, IncompleteReason: reason,
+            UnperformedChecks: missingCoverage is null ? outcome.UnperformedChecks : null,
+            CoverageMissingReason: missingCoverage, ScannerExitCode: outcome.ExitCode);
+        // The adapter only converts report text. The engine alone chooses the output path
+        // and publishes all artifacts while the sandbox is still available, before teardown.
+        if (outputDirectory is not null)
+            new ScanResultStore(outputDirectory).Write(result, outcome.Report, outcome.UnperformedChecks);
+        return outcome with { Result = result };
     }
 
     /// <summary>
