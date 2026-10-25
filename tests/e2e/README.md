@@ -26,6 +26,7 @@ someone's terminal.
 | `wip run` | exit 0, the marker is echoed, and the long-lived container is untouched |
 | `wip down` | exit 0; the container is gone from `wslc list --all` |
 | sandbox command override | a one-shot CMD image remains running with a declared command; without it, create reports failure and the container exits |
+| lightweight security scan | the engine scans an internal HTTP target, collects its report and omitted-check data, and records zero successful external probes |
 
 ## Running it locally
 
@@ -74,6 +75,43 @@ finalizer deletes only that tag, with `wslc rmi`. A failed deletion fails the ru
 cleanup failures do, without replacing whatever the assertions reported first.
 Real WSLC execution runs in the Windows e2e workflow; the unit suite does not execute this
 scenario.
+
+## Security scans
+
+`security-scan.ps1`, called by `run-e2e.ps1` on every pull request, exercises the engine with a
+small reviewed scanner script and the internal-only `ScanHarness` executable. It does not
+register a test scanner in the production tool table. A namespace-scoped target image is
+built from the existing Alpine fixture; the scanner runs the fixed script using a resolved
+immutable Alpine reference. The script sends HTTP to the declared internal target and writes
+raw report JSON plus omitted-check information. During execution it probes forbidden egress
+paths, rejects unsupported probes, and records zero successful external attempts. Every
+external invocation and cleanup has a deadline, and built fixture tags are removed after
+their consumers.
+
+The workflow publishes the harness alongside the CLI:
+
+```powershell
+dotnet publish tests/e2e/ScanHarness/ScanHarness.csproj -c Release -o artifacts/scan
+pwsh tests/e2e/run-e2e.ps1 -Wip artifacts/win-x64/wip.exe -ScanHarness artifacts/scan/scan-fixture.exe
+```
+
+`zap-scan.ps1` is separate and uses the production CLI with `--tool zap`. The workflow invokes
+it only for `schedule` and `workflow_dispatch`, never `pull_request`. It downloads the pinned
+ZAP image, creates a nonroot scanner sandbox and a single unauthenticated internal HTTP page,
+then checks the native JSON report, provenance, omitted-check information and stopped scanner.
+Warnings are allowed only when a report is returned; scan errors or timeouts fail the test.
+The download has a ten-minute bound and the short scan a separate outer deadline. Cleanup
+uses the dedicated namespace and destroys the scanner and target through ownership checks.
+It reuses the previously built target fixture image and does not build a new ZAP image.
+
+```powershell
+pwsh tests/e2e/zap-scan.ps1 -Wip artifacts/win-x64/wip.exe -Wslc C:\path\to\wslc.exe
+```
+
+ZAP's compressed image is about 1.12 GiB. Keeping it out of pull-request runs avoids spending
+the 45-minute job budget on a large download and avoids making unrelated changes depend on
+registry availability. Both scenarios need real Windows WSLC; they cannot run in the Linux
+sandbox used for the managed unit suite.
 
 ## The terminal half
 

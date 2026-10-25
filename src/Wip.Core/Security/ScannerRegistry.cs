@@ -11,14 +11,10 @@ namespace Wip.Security;
 /// that adds a line here, which is what makes its code, dependencies, image, permissions,
 /// traffic and result handling reviewable at all.
 /// </para>
-/// <para>
-/// Empty until the first adapter lands. An empty registry is a
-/// state the engine reports plainly rather than a condition to work around.
-/// </para>
 /// </remarks>
 internal static class ScannerRegistry
 {
-    private static readonly ISecurityScanner[] Registered = [];
+    private static readonly ISecurityScanner[] Registered = [new ZapScanner()];
 
     /// <summary>Registered names in declaration order, for a message that lists the choices.</summary>
     internal static IReadOnlyList<string> Names => Registered.Select(s => s.Name).ToArray();

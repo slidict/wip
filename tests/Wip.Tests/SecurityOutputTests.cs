@@ -143,6 +143,35 @@ public sealed class SecurityOutputTests
         Assert.Empty(result.Output);
     }
 
+    [Fact]
+    public void EmptyAlertsDoNotHideRawUnperformedChecks()
+    {
+        const string diagnostics = "Checks not performed: authentication\nNative warning: spider limit reached\n";
+        var outcome = new ScanOutcome("zap", "scanner", "image", "rules", "isolated", 2, "{\"alerts\":[]}",
+            UnperformedChecks: diagnostics);
+        using var output = new StringWriter();
+        using var error = new StringWriter();
+
+        Assert.Equal(2, CliContext.WriteScanOutcome(outcome, "/report.json", output, error, true));
+
+        Assert.Equal(outcome.Report, output.ToString());
+        Assert.Contains("Unperformed checks (raw):", error.ToString());
+        Assert.Contains(diagnostics, error.ToString());
+    }
+
+    [Fact]
+    public void MissingUnperformedCheckDiagnosticsAreExplicit()
+    {
+        var outcome = new ScanOutcome("zap", "scanner", "image", "rules", "isolated", 0, "{\"alerts\":[]}",
+            UnperformedChecksError: "collection timed out");
+        using var output = new StringWriter();
+        using var error = new StringWriter();
+
+        Assert.Equal(0, CliContext.WriteScanOutcome(outcome, "/report.json", output, error, true));
+
+        Assert.Contains("unperformed-check diagnostics unavailable: collection timed out", error.ToString());
+    }
+
     private sealed class CountingWriter : StringWriter
     {
         internal int Writes { get; private set; }

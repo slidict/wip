@@ -32,10 +32,10 @@ internal sealed partial class CliContext
         var plan = engine.Prepare(scanner, sandbox, scanTarget);
         var outcome = engine.Run(scanner, sandbox, plan, TimeSpan.FromSeconds(timeoutSeconds));
 
-        return WriteScanOutcome(outcome, plan.ReportPath, Console.Out, Console.Error, Console.IsOutputRedirected);
+        return WriteScanOutcome(outcome, plan.ReportPath, Console.Out, Console.Error, Console.IsOutputRedirected, Console.IsErrorRedirected);
     }
 
-    internal static int WriteScanOutcome(ScanOutcome outcome, string reportPath, TextWriter output, TextWriter error, bool isOutputRedirected)
+    internal static int WriteScanOutcome(ScanOutcome outcome, string reportPath, TextWriter output, TextWriter error, bool isOutputRedirected, bool isErrorRedirected = false)
     {
         // Reports are untrusted tool output. Preserve redirected artifacts, but render
         // terminal controls visibly when displaying a report to a person.
@@ -45,6 +45,14 @@ internal sealed partial class CliContext
         else if (outcome.TimedOut) error.WriteLine($"{outcome.Tool}: timed out; requested sandbox stop without collecting a partial report");
         else if (outcome.ReportError is { } reason) error.WriteLine($"{outcome.Tool}: {reason}");
         else error.WriteLine($"{outcome.Tool}: wrote no report at {reportPath}");
+        if (outcome.UnperformedChecks is { } diagnostics)
+        {
+            error.WriteLine("Unperformed checks (raw):");
+            WriteSecurityReport(error, diagnostics, isErrorRedirected);
+            if (!diagnostics.EndsWith('\n')) error.WriteLine();
+        }
+        else if (outcome.UnperformedChecksError is { } diagnosticsError)
+            error.WriteLine($"{outcome.Tool}: unperformed-check diagnostics unavailable: {diagnosticsError}");
         return outcome.ExitCode;
     }
 

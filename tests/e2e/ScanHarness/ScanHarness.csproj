@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>scan-fixture</AssemblyName>
+    <RootNamespace>Wip.ScanHarness</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <IsAotCompatible>false</IsAotCompatible>
+  </PropertyGroup>
+  <!-- Test-only executable, kept out of the shipping solution like PtyHarness. -->
+  <ItemGroup>
+    <ProjectReference Include="../../../src/Wip.Core/Wip.Core.csproj" />
+  </ItemGroup>
+</Project>

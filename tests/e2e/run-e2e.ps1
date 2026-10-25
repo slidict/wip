@@ -40,6 +40,9 @@
 
         dotnet publish tests/e2e/PtyHarness/PtyHarness.csproj -c Release -o artifacts/pty
 
+.PARAMETER ScanHarness
+    Path to the lightweight internal scan-engine harness published from tests/e2e/ScanHarness.
+
 .PARAMETER KeepWorkspace
     Leave the scratch directory behind for inspection.
 #>
@@ -50,6 +53,7 @@ param(
     [string] $BaseImage = "alpine:3.20",
     [string] $WorkRoot = $(if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { $env:TEMP }),
     [string] $PtyHarness = "artifacts/pty/pty-harness.exe",
+    [string] $ScanHarness = "artifacts/scan/scan-fixture.exe",
     [switch] $KeepWorkspace
 )
 
@@ -463,6 +467,11 @@ try {
 
     . (Join-Path $PSScriptRoot 'network-isolation.ps1')
     Invoke-NetworkIsolationE2E -Namespace $sandboxNamespace
+
+    . (Join-Path $PSScriptRoot 'security-scan.ps1')
+    $resolvedScanHarness = Resolve-Path -LiteralPath $ScanHarness -ErrorAction SilentlyContinue
+    if (-not $resolvedScanHarness) { throw "scan harness not found at '$ScanHarness'; publish tests/e2e/ScanHarness/ScanHarness.csproj first" }
+    Invoke-SecurityScanE2E -Namespace $sandboxNamespace -Image 'wip-e2e:latest' -BaseImage $BaseImage -Harness $resolvedScanHarness.Path
 
     . (Join-Path $PSScriptRoot 'shim-persistence.ps1')
     Invoke-ShimPersistenceE2E

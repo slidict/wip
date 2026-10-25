@@ -1,0 +1,6 @@
+FROM wip-e2e:latest
+
+# The local target keeps the build marker. The scanner itself uses the upstream base
+# image's real repository digest and receives the reviewed script through the test harness.
+ENTRYPOINT []
+CMD ["httpd", "-f", "-p", "8080", "-h", "/srv"]

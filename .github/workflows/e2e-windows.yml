@@ -64,6 +64,13 @@ jobs:
           --configuration Release
           --output artifacts/pty
 
+      # Exercises the engine with a reviewed tiny scanner without registering a fake tool.
+      - name: Publish the scan engine harness
+        run: >
+          dotnet publish tests/e2e/ScanHarness/ScanHarness.csproj
+          --configuration Release
+          --output artifacts/scan
+
       # WSLC is generally available in WSL 3.0.1 and later. --shutdown makes the update take
       # effect without a reboot the runner cannot give us.
       - name: Update WSL
@@ -173,6 +180,17 @@ jobs:
           -Wslc $env:WSLC_EXE
           -BaseImage $env:BASE_IMAGE
           -PtyHarness artifacts/pty/pty-harness.exe
+          -ScanHarness artifacts/scan/scan-fixture.exe
+
+      # The pinned ZAP image is large; keep its download and scan off unrelated PRs.
+      - name: Run the real ZAP adapter
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        timeout-minutes: 20
+        shell: pwsh
+        run: >
+          pwsh tests/e2e/zap-scan.ps1
+          -Wip artifacts/win-x64/wip.exe
+          -Wslc $env:WSLC_EXE
 
       # The script prints its own diagnostics when an assertion fails; this covers the cases
       # it never reached -- a cancelled step, a crash, a hung container.

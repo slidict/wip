@@ -39,7 +39,8 @@ internal sealed record ScanPlan(
     PinnedImage Image,
     IReadOnlyList<string> Argv,
     string ReportPath,
-    string RulesVersion)
+    string RulesVersion,
+    string? UnperformedChecksPath = null)
 {
     /// <summary>
     /// Rejects a plan that could not produce a repeatable, isolated scan. Called by the
@@ -65,6 +66,10 @@ internal sealed record ScanPlan(
         if (!ReportPath.StartsWith('/') || ReportPath.Any(char.IsControl) ||
             ReportPath.Split('/').Any(part => part is "." or ".."))
             throw new ConfigException($"Scanner {tool}: report path must be a canonical absolute Linux path");
+        if (UnperformedChecksPath is { } diagnostics &&
+            (!diagnostics.StartsWith('/') || diagnostics.Any(char.IsControl) ||
+             diagnostics.Split('/').Any(part => part is "." or "..")))
+            throw new ConfigException($"Scanner {tool}: unperformed-checks path must be a canonical absolute Linux path");
         if (string.IsNullOrWhiteSpace(RulesVersion) || RulesVersion.Any(char.IsControl))
             throw new ConfigException(
                 $"Scanner {tool}: a rules version is required; an unpinned rule set is fetched at scan time, which an isolated network forbids");
