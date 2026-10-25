@@ -13,12 +13,20 @@ public sealed record SandboxStatus(
     string? Id,
     string State,
     IReadOnlyList<SandboxMount>? Mounts = null,
-    IReadOnlyList<string>? Networks = null)
+    IReadOnlyList<string>? Networks = null,
+    string? Image = null)
 {
     public IReadOnlyList<SandboxMount> Mounts { get; init; } = Mounts ?? [];
 
     /// <summary>Backend names of every network the container is attached to.</summary>
     public IReadOnlyList<string> Networks { get; init; } = Networks ?? [];
+
+    /// <summary>
+    /// The image reference the container was created from, as the backend recorded it, or null
+    /// when it cannot be read. A declaration can be edited after a container exists, so this
+    /// is the only way to know what is actually running.
+    /// </summary>
+    public string? Image { get; init; } = Image;
 }
 
 /// <summary>How a backend invocation uses wip's own console.</summary>
@@ -92,7 +100,7 @@ public sealed class SandboxLifecycle(
         var state = State(record);
         if (state == "deleted") return new(name, backendName, null, "not found");
         var mounts = ExtractMounts(record);
-        return new(name, backendName, inspectedId, state, mounts, ExtractNetworks(record));
+        return new(name, backendName, inspectedId, state, mounts, ExtractNetworks(record), ExtractImage(record));
     }
 
     public int Create(string name)
@@ -560,6 +568,21 @@ public sealed class SandboxLifecycle(
     /// network name. An absent or malformed block yields an empty list, which fails the
     /// declared-network check rather than passing it.
     /// </summary>
+    /// <summary>
+    /// The image the container was created from: <c>Config.Image</c> as <c>inspect</c> reports
+    /// it, falling back to the top-level <c>Image</c>, which carries the resolved digest. Null
+    /// when neither is readable, which callers must treat as unknown rather than matching.
+    /// </summary>
+    private static string? ExtractImage(JsonElement record)
+    {
+        if (record.TryGetProperty("Config", out var config) && config.ValueKind == JsonValueKind.Object &&
+            Text(config, "Image") is { Length: > 0 } declared)
+        {
+            return declared;
+        }
+        return Text(record, "Image") is { Length: > 0 } resolved ? resolved : null;
+    }
+
     private static IReadOnlyList<string> ExtractNetworks(JsonElement record)
     {
         if (!record.TryGetProperty("NetworkSettings", out var settings) || settings.ValueKind != JsonValueKind.Object ||

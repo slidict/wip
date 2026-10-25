@@ -145,6 +145,17 @@ internal sealed class ScanEngine(
             throw new WipException(
                 $"Sandbox {sandbox}: is not attached to exactly its declared network; no scan was started. " +
                 "Run sandbox destroy, confirm absence, then sandbox create.");
+        // The declaration is not enough. A container is created from whatever the declaration
+        // said at the time, so editing it to a different pinned image afterwards leaves the old
+        // image running while the plan -- and the outcome -- name the new one. Comparing what
+        // is actually running is what keeps "which tool ran" answerable.
+        if (status.Image is not { } running)
+            throw new WipException(
+                $"Sandbox {sandbox}: the running container's image could not be read, so the pinned tool is unverified; no scan was started");
+        if (!string.Equals(running, plan.Image.Reference, StringComparison.Ordinal))
+            throw new WipException(
+                $"Sandbox {sandbox}: is running image '{running}', but the tool pins '{plan.Image.Reference}'. " +
+                "The declaration changed after the container was created, so run sandbox destroy, confirm absence, then sandbox create.");
 
         try
         {

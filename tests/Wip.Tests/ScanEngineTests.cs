@@ -72,6 +72,12 @@ public class ScanEngineTests
         public string Report = "{\"alerts\":[]}";
         public bool ReportMissing;
 
+        /// <summary>
+        /// What the running container was created from. Defaults to the declared image; a test
+        /// sets it to something else to model a declaration edited after creation.
+        /// </summary>
+        public string? ContainerImage = Pinned;
+
         public SandboxCommandResult Run(IReadOnlyList<string> argv, TimeSpan timeout, SandboxConsoleMode console)
         {
             Calls.Add(argv.ToArray());
@@ -107,6 +113,7 @@ public class ScanEngineTests
                         State = ContainerState,
                         Labels = new Dictionary<string, string> { [SandboxLifecycle.OwnerLabel] = $"v1:{Namespace}:sandbox:scanner" },
                         Mounts = Array.Empty<object>(),
+                        Config = ContainerImage is null ? null : new { Image = ContainerImage },
                         NetworkSettings = new { Networks = Attachments.ToDictionary(n => n, _ => new { }) },
                     },
                 }));
@@ -244,6 +251,33 @@ public class ScanEngineTests
 
         Assert.Contains("must name the pinned image", error.Message);
         Assert.False(Ran(fake, "pull"), "nothing is fetched for a sandbox that would run something else");
+    }
+
+    [Fact]
+    public void RunRefusesWhenTheContainerRunsADifferentImageThanThePlan()
+    {
+        // The declaration is not enough on its own: a container is created from whatever the
+        // declaration said then, so editing it to another pinned image afterwards leaves the
+        // old one running while the plan and the outcome name the new one.
+        var fake = new Fake { ContainerImage = "example.test/old@sha256:" + new string('e', 64) };
+
+        var error = Assert.Throws<WipException>(() => Engine(fake).Run(new StubScanner(), "scanner", ValidPlan()));
+
+        Assert.Contains("is running image", error.Message);
+        Assert.False(Ran(fake, "exec"), "nothing runs in a container that is not the pinned tool");
+    }
+
+    [Fact]
+    public void RunRefusesWhenTheContainersImageCannotBeRead()
+    {
+        // Unknown is not a match. Treating an unreadable image as acceptable would make the
+        // check pass exactly when it cannot tell.
+        var fake = new Fake { ContainerImage = null };
+
+        var error = Assert.Throws<WipException>(() => Engine(fake).Run(new StubScanner(), "scanner", ValidPlan()));
+
+        Assert.Contains("could not be read", error.Message);
+        Assert.False(Ran(fake, "exec"));
     }
 
     [Fact]

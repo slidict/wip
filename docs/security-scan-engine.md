@@ -19,11 +19,16 @@ The sandbox and its internal network stay declared in `wip.yml`. The command cho
 and a target, not an environment: the boundary belongs to the configuration, which is what
 keeps it out of reach of whatever is being scanned.
 
-**The sandbox must declare the image the tool pins.** The scan is an exec inside that
-sandbox, so its image is the tool that actually runs; a plan pinning anything else would
-pin nothing, and the recorded provenance would name an image that never executed. Both
-`Prepare` and `Run` refuse the pair when they differ, so the scanner sandbox declares the
-scanner image and the pull keeps that image current.
+**The sandbox must declare the image the tool pins, and the container must be running it.**
+The scan is an exec inside that sandbox, so its image is the tool that actually runs; a plan
+pinning anything else would pin nothing, and the recorded provenance would name an image that
+never executed. `Prepare` and `Run` refuse the pair when the declaration and the plan differ.
+
+`Run` additionally compares the **running container's** image, because the declaration is not
+enough: a container is created from whatever the declaration said at the time, so editing it to
+another pinned image afterwards would leave the old one running while the plan named the new
+one. An image that cannot be read is refused rather than accepted, since unknown is not a
+match. Recreating the sandbox is the way through.
 
 `--target` is an address or alias reachable **only inside the declared network** — a
 `--network-alias` of another sandbox on it, or its address. A host or public name does not
@@ -101,6 +106,7 @@ otherwise produce is a scan that ran somewhere it could reach the internet.
 | `--tool` names nothing registered, or is absent | Refused, listing what is registered |
 | The sandbox declares no network | Refused; there is no unrestricted mode to fall back to |
 | The sandbox's declared image is not the one the plan pins | Refused before the pull, and again in `Run` |
+| The running container's image is not the plan's, or cannot be read | Refused in `Run` |
 | The image is not pinned (`latest`, `stable`, `edge`, `main`, `master`, `nightly`, or no tag) | Refused before the pull |
 | No rules version is given | Refused; an unpinned rule set is fetched at scan time, which the boundary forbids |
 | The report path is not a canonical absolute path | Refused |
