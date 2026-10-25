@@ -244,6 +244,23 @@ tar and backend stdin plumbing; this sequence needs neither. A failed copy, move
 a missing path or an empty rules directory refuses execution. The copy uses the already
 verified scanner image, with no separate mirror image or volume declaration.
 
+Before executing the scanner, the engine checks rules directories for missing `o+x`, then
+checks that a regular file exists, then checks files for missing `o+r`. Each check uses a
+separate backend invocation without a shell:
+
+```text
+find <path> -type d ! -perm -o+x -print -quit
+find <path> -type f -print -quit
+find <path> -type f ! -perm -o+r -print -quit
+```
+
+The copy is performed as root while the scanner may run as another user, so the permission
+checks intentionally inspect the other-user bits rather than effective access. BusyBox
+1.36.1 in Alpine 3.20 rejects `-readable`; these `-perm` predicates work there and with GNU
+findutils. An untraversable directory, an empty tree and an unreadable file have distinct
+refusal messages. A nonzero exit or timeout from either permission probe also refuses the
+scan rather than assuming the rules are usable.
+
 Provenance appends `;rules-commit:<commit>` to the adapter's `RulesVersion` once, so both stderr
 and the result document identify the pin. The colon preserves the commit through normalized
 metadata redaction. Adapters without `Rules`, including ZAP, retain their existing calls:

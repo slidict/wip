@@ -273,10 +273,27 @@ internal sealed class ScanEngine(
         RequireCopyStep(["container", "cp", source, container + ":" + staging]);
         RequireCopyStep(["exec", container, "mv", "--", staging + "/" + RulesFetcher.TreeDirectoryName, rules.ContainerPath]);
         RequireCopyStep(["exec", container, "rmdir", "--", staging]);
+        // Copies are owned by root, while the scanner may run as another user: require
+        // other-read on files and other-execute on directories, not the probe user's access.
+        // Alpine 3.20's BusyBox 1.36.1 rejects GNU find's -readable predicate; -perm is portable.
+        // Check traversal first so a presence probe cannot obscure an inaccessible directory.
+        RequirePermissions("d", "-o+x", "untraversable directory");
         var contents = backend(["exec", container, "find", rules.ContainerPath, "-type", "f", "-print", "-quit"],
             limit, SandboxConsoleMode.Capture);
-        if (contents.Code != 0 || contents.TimedOut || string.IsNullOrWhiteSpace(contents.Output))
-            throw new WipException("Pinned rules are empty or unreadable in the sandbox; no scan was started");
+        if (contents.Code != 0 || contents.TimedOut)
+            throw new WipException("Pinned rules presence could not be verified; no scan was started");
+        if (string.IsNullOrWhiteSpace(contents.Output))
+            throw new WipException("Pinned rules are empty in the sandbox; no scan was started");
+        RequirePermissions("f", "-o+r", "unreadable file");
+
+        void RequirePermissions(string type, string permission, string failure)
+        {
+            var kind = type == "d" ? "directory" : "file";
+            var result = backend(["exec", container, "find", rules.ContainerPath, "-type", type,
+                "!", "-perm", permission, "-print", "-quit"], limit, SandboxConsoleMode.Capture);
+            if (result.Code != 0 || result.TimedOut || !string.IsNullOrWhiteSpace(result.Output))
+                throw new WipException($"Pinned rules contain an {failure} or {kind} permissions could not be verified; no scan was started");
+        }
 
         void RequireCopyStep(IReadOnlyList<string> arguments)
         {

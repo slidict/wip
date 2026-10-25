@@ -83,6 +83,12 @@ public class ScanEngineTests
         public int RulesCopyCode;
         public bool RulesEmpty;
         public int RulesReadCode;
+        public bool RulesUnreadableFile;
+        public bool RulesUntraversableDirectory;
+        public int RulesDirectoryPermissionCode;
+        public bool RulesDirectoryPermissionTimedOut;
+        public int RulesFilePermissionCode;
+        public bool RulesFilePermissionTimedOut;
         public readonly HashSet<string> RulesDirectories = [];
         public readonly HashSet<string> RulesFiles = [];
         public readonly List<TimeSpan> ReportTimeouts = [];
@@ -185,8 +191,16 @@ public class ScanEngineTests
             if (argv is ["exec", _, "rmdir", "--", var emptyDirectory])
                 return new(RulesDirectories.Remove(emptyDirectory) &&
                     !RulesDirectories.Any(path => path.StartsWith(emptyDirectory + "/", StringComparison.Ordinal)) ? 0 : 1, "");
-            if (argv is ["exec", _, "find", var rulesPath, ..])
+            if (argv is ["exec", _, "find", var directoryPath, "-type", "d", "!", "-perm", "-o+x", "-print", "-quit"])
+                return new(RulesDirectoryPermissionCode, RulesUntraversableDirectory ? directoryPath + "/private" : "")
+                { TimedOut = RulesDirectoryPermissionTimedOut };
+            if (argv is ["exec", _, "find", var filePath, "-type", "f", "!", "-perm", "-o+r", "-print", "-quit"])
+                return new(RulesFilePermissionCode, RulesUnreadableFile ? filePath + "/private.yaml" : "")
+                { TimedOut = RulesFilePermissionTimedOut };
+            if (argv is ["exec", _, "find", var rulesPath, "-type", "f", "-print", "-quit"])
                 return new(RulesReadCode, string.Join('\n', RulesFiles.Where(file => file.StartsWith(rulesPath + "/", StringComparison.Ordinal))));
+            if (argv is ["exec", _, "find", ..])
+                throw new InvalidOperationException("Unexpected pinned-rules find arguments");
             if (argv is ["exec", _, "cat", ..])
             {
                 if (argv[^1] == "/out/unperformed.txt")
@@ -321,6 +335,12 @@ public class ScanEngineTests
         Assert.DoesNotContain(fake.Calls, command => command.Contains("sh"));
         Assert.Equal(gitCalls, cache.GitCalls.Count);
         Assert.Equal("completed", outcome.Result!.Status);
+        var probes = fake.Calls.Where(command => command is ["exec", _, "find", ..]).ToArray();
+        Assert.Equal(3, probes.Length);
+        Assert.Equal(new[] { "exec", "container-id", "find", "/opt/wip-rules", "-type", "d", "!", "-perm", "-o+x", "-print", "-quit" }, probes[0]);
+        Assert.Equal(new[] { "exec", "container-id", "find", "/opt/wip-rules", "-type", "f", "-print", "-quit" }, probes[1]);
+        Assert.Equal(new[] { "exec", "container-id", "find", "/opt/wip-rules", "-type", "f", "!", "-perm", "-o+r", "-print", "-quit" }, probes[2]);
+        Assert.DoesNotContain(fake.Calls, command => command.Contains("-readable"));
         Assert.EndsWith(";rules-commit:" + cache.Rules.Commit, outcome.RulesVersion);
         using var stream = new MemoryStream();
         ScanResultWriter.Write(stream, outcome.Result);
@@ -357,7 +377,53 @@ public class ScanEngineTests
         var error = Assert.Throws<WipException>(() => Engine(fake, rulesFetcher: cache.Fetcher)
             .Run(new StubScanner(plan), "scanner", plan, new ScanTarget("http://app.test")));
 
-        Assert.Contains("rules", error.Message);
+        Assert.Contains(empty ? "empty" : "presence", error.Message);
+        Assert.False(Ran(fake, "exec", "container-id", "zap-baseline"));
+        Assert.True(Ran(fake, "stop"));
+    }
+
+    [Theory]
+    [InlineData(false, "unreadable file")]
+    [InlineData(true, "untraversable directory")]
+    public void InaccessibleRulesRefuseExecutionWithTheSpecificCause(bool directory, string reason)
+    {
+        using var cache = new RulesCacheFixture();
+        cache.Fetcher.Fetch(cache.Rules);
+        var fake = new Fake { RulesUntraversableDirectory = directory, RulesUnreadableFile = !directory };
+        var plan = ValidPlan() with { Rules = cache.Rules };
+
+        var error = Assert.Throws<WipException>(() => Engine(fake, rulesFetcher: cache.Fetcher)
+            .Run(new StubScanner(plan), "scanner", plan, new ScanTarget("http://app.test")));
+
+        Assert.Contains(reason, error.Message);
+        Assert.False(Ran(fake, "exec", "container-id", "zap-baseline"));
+        Assert.True(Ran(fake, "stop"));
+        if (directory)
+            Assert.DoesNotContain(fake.Calls, command => command is ["exec", _, "find", _, "-type", "f", ..]);
+    }
+
+    [Theory]
+    [InlineData(true, 3, false, "directory permissions")]
+    [InlineData(true, 0, true, "directory permissions")]
+    [InlineData(false, 3, false, "file permissions")]
+    [InlineData(false, 0, true, "file permissions")]
+    public void FailedOrTimedOutRulesPermissionProbesFailClosed(bool directory, int code, bool timedOut, string reason)
+    {
+        using var cache = new RulesCacheFixture();
+        cache.Fetcher.Fetch(cache.Rules);
+        var fake = new Fake
+        {
+            RulesDirectoryPermissionCode = directory ? code : 0,
+            RulesDirectoryPermissionTimedOut = directory && timedOut,
+            RulesFilePermissionCode = directory ? 0 : code,
+            RulesFilePermissionTimedOut = !directory && timedOut
+        };
+        var plan = ValidPlan() with { Rules = cache.Rules };
+
+        var error = Assert.Throws<WipException>(() => Engine(fake, rulesFetcher: cache.Fetcher)
+            .Run(new StubScanner(plan), "scanner", plan, new ScanTarget("http://app.test")));
+
+        Assert.Contains(reason, error.Message);
         Assert.False(Ran(fake, "exec", "container-id", "zap-baseline"));
         Assert.True(Ran(fake, "stop"));
     }
