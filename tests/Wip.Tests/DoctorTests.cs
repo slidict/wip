@@ -159,7 +159,7 @@ public class DoctorTests
     /// <see cref="LocalAiProvider.IsAvailable"/> opens a real TCP connection and
     /// <see cref="LocalAiProvider.DiscoverModel"/> issues a real HTTP request, so testing
     /// through them meant binding a port and hoping nothing else claimed it — which is
-    /// exactly what failed on CI (slidict/workspace#276).
+    /// exactly what failed on CI.
     /// </summary>
     private static Doctor DoctorFor(
         TemporaryDirectory directory,

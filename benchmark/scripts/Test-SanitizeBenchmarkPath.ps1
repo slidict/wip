@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Unit and integration tests for benchmark path sanitization (Issue slidict/workspace#383).
+  Unit and integration tests for benchmark path sanitization.
 #>
 
 $ErrorActionPreference = 'Stop'
