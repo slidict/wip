@@ -189,7 +189,7 @@ public sealed class SandboxLifecycle(
         }
         var current = Status(name);
         if (current.State != "running") throw Failure(name, "creation/start did not produce a running sandbox; inspect status and image CMD, then retry or destroy");
-        VerifyExistingCommand(name, definition, current);
+        VerifyExistingCommand(name, definition, current, freshlyCreated: true);
         if (volumeDefs.Count != 0 && volumes is not null)
         {
             foreach (var vDef in volumeDefs)
@@ -594,13 +594,41 @@ public sealed class SandboxLifecycle(
         throw new WipException("Sandbox backend returned malformed JSON; existence is unknown");
     }
 
-    private static void VerifyExistingCommand(string name, SandboxDefinition definition, SandboxStatus status)
+    /// <summary>
+    /// Refuses a container whose command is not the declared one.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The same shape as the image check, for the same reason: a declaration can be edited
+    /// after the container was made, and the container keeps whatever argv it was created with.
+    /// Without this, editing <c>command:</c> left the old process as PID 1 while
+    /// <c>sandbox create</c> reported success.
+    /// </para>
+    /// <para>
+    /// <paramref name="freshlyCreated"/> separates two failures that need different advice. For
+    /// a container that already existed, a mismatch is drift and destroy-then-create fixes it.
+    /// For one wip just created, a mismatch means the backend did not record the argv wip
+    /// passed, and recreating reproduces it exactly -- so that advice would loop forever.
+    /// </para>
+    /// <para>
+    /// A declaration that was removed is not checked. "No command declared" would have to mean
+    /// "the image's own CMD", which needs the image inspected rather than the container, so
+    /// deleting <c>command:</c> from a live sandbox leaves the old process running and nothing
+    /// says so. Unlike <c>network:</c>, where undeclared genuinely asserts nothing, this one is
+    /// checkable and simply is not checked yet.
+    /// </para>
+    /// </remarks>
+    private static void VerifyExistingCommand(
+        string name, SandboxDefinition definition, SandboxStatus status, bool freshlyCreated = false)
     {
         if (definition.Command is not { } expected) return;
+        var recovery = freshlyCreated
+            ? "the backend did not record the command wip passed, so recreating the sandbox will not change it"
+            : "run sandbox destroy, confirm absence, then sandbox create";
         if (status.Command is null)
-            throw Failure(name, "the declared command cannot be verified because Config.Cmd is unreadable; run sandbox destroy, confirm absence, then sandbox create");
+            throw Failure(name, $"the declared command cannot be verified because Config.Cmd is unreadable; {recovery}");
         if (!expected.SequenceEqual(status.Command, StringComparer.Ordinal))
-            throw Failure(name, "the declared command differs from Config.Cmd; run sandbox destroy, confirm absence, then sandbox create");
+            throw Failure(name, $"the declared command differs from Config.Cmd; {recovery}");
     }
 
     private static IReadOnlyList<string>? ExtractCommand(JsonElement record)

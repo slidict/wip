@@ -205,10 +205,18 @@ public sealed partial class SandboxSettings
         var command = new List<string>();
         foreach (var argument in argv)
         {
+            // The message names quoting because `command: [sleep, 600]` is the natural
+            // spelling and 600 loads as a number, which lands here looking like an empty entry.
             if (argument is not string text || text.Length == 0 || text.Any(char.IsControl))
-                throw new ConfigException($"{path} entries must be nonempty strings without control characters");
+                throw new ConfigException(
+                    $"{path} entries must be nonempty strings without control characters; quote numbers and booleans, as in [sleep, '600']");
+            // Catches a shell line written as one element -- `[sleep 600]` is valid YAML and
+            // becomes argv[0] "sleep 600", which otherwise fails at run time with a message
+            // that never mentions the command. A later argument may hold spaces legitimately,
+            // as in [nginx, -g, 'daemon off;'].
             if (command.Count == 0 && text.Any(char.IsWhiteSpace))
-                throw new ConfigException($"{path} first argument must not contain whitespace; use separate argv entries");
+                throw new ConfigException(
+                    $"{path} first argument must not contain whitespace; split a command line into separate entries, and run a program whose own path contains a space through [sh, -c, '...']");
             // Each argument follows the image reference and is passed through ArgumentList,
             // so leading '-' values belong to the container command, not backend options.
             command.Add(text);

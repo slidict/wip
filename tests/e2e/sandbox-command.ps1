@@ -94,7 +94,9 @@ dependencies:
         Assert-Match $status '(?m)^command-override\s+running\s+wip-s-[a-f0-9]{40}\s+\S+\s*$' 'the overridden sandbox is running'
         $mainProcess = Invoke-CommandWip @('sandbox', 'exec', 'command-override', '--', 'cat', '/proc/1/comm')
         Assert-Exit $mainProcess 0 'read the overridden main process'
-        Assert-Match $mainProcess '^sleep\s*$' 'the declared command replaced the one-shot CMD'
+        # Multiline: Invoke-CommandFixture merges stderr into Output, and wip writes an update
+        # notice there whenever a newer version is cached, which a whole-string anchor rejects.
+        Assert-Match $mainProcess '(?m)^sleep\s*$' 'the declared command replaced the one-shot CMD'
         Assert-Exit (Invoke-CommandWip @('sandbox', 'exec', 'command-override', '--', 'sleep', '1')) 0 'the overridden sandbox stays available'
         $stillRunning = Invoke-CommandWip @('sandbox', 'status', 'command-override')
         Assert-Exit $stillRunning 0 'status after another command'

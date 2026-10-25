@@ -100,8 +100,12 @@ public class SandboxLifecycleTests
                 Cmd = new[] { "sleep", "600" }
             }
         });
-        Assert.Throws<WipException>(() =>
+        // The message is asserted, not just the type: this InspectOutput is hand-written and
+        // omits Mounts and other fields, so ownership or mount verification could throw first.
+        // Without this, reinstating a top-level-Cmd fallback would still look like a pass.
+        var error = Assert.Throws<WipException>(() =>
             new SandboxLifecycle(Settings("\n    command: [sleep, '600']"), fake.Run).Create("first"));
+        Assert.Contains("command", error.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -167,6 +171,14 @@ public class SandboxLifecycleTests
         public readonly Dictionary<string, (string Id, string Owner, string State, List<SandboxMount> Mounts)> Containers = [];
         public List<SandboxMount> Mounts = [];
         public string[]? Command;
+
+        /// <summary>
+        /// Per container, the way <c>Mounts</c> is. A single shared <c>Command</c> would report
+        /// the last-created container's argv for every container, so a test with two sandboxes
+        /// declaring different commands -- the shape the shared-mount tests already use --
+        /// could pass or fail for the wrong reason.
+        /// </summary>
+        public readonly Dictionary<string, string[]?> CommandsByContainer = [];
         public bool Exists;
         public string State = "running";
         public string Owner = "v1:test:sandbox:first";
@@ -211,7 +223,8 @@ public class SandboxLifecycleTests
                 {
                     var cName = Containers.First(kv => kv.Value == match).Key;
                     var mountsObj = match.Mounts.Select(m => new { Type = m.Type, Name = m.Name, Destination = m.Destination }).ToArray();
-                    return new(ProbeCode, JsonSerializer.Serialize(new[] { new { Id = inspectId, Name = cName, match.State, Labels = new Dictionary<string, string> { [SandboxLifecycle.OwnerLabel] = match.Owner }, Config = new { Cmd = Command }, Mounts = mountsObj } }));
+                    var cCommand = CommandsByContainer.TryGetValue(cName, out var recorded) ? recorded : Command;
+                    return new(ProbeCode, JsonSerializer.Serialize(new[] { new { Id = inspectId, Name = cName, match.State, Labels = new Dictionary<string, string> { [SandboxLifecycle.OwnerLabel] = match.Owner }, Config = new { Cmd = cCommand }, Mounts = mountsObj } }));
                 }
                 var defaultMounts = Mounts.Select(m => new { Type = m.Type, Name = m.Name, Destination = m.Destination }).ToArray();
                 return new(ProbeCode, JsonSerializer.Serialize(new[] { new { Id, Name, State, Labels = new Dictionary<string, string> { [SandboxLifecycle.OwnerLabel] = Owner }, Config = new { Cmd = Command }, Mounts = defaultMounts } }));
@@ -245,6 +258,7 @@ public class SandboxLifecycleTests
                 }
                 Mounts = mounts;
                 Containers[cName] = (cId, cOwner, "running", mounts);
+                CommandsByContainer[cName] = Command;
             }
             if (argv[0] == "start" && MutationCode == 0) State = "running";
             if (argv[0] == "stop" && MutationCode == 0 && !LeaveResidue) State = "exited";
