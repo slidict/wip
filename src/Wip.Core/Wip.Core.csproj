@@ -12,6 +12,8 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="Wip.Tests" />
+    <!-- The real-WSLC test harness is never shipped or registered as a product adapter. -->
+    <InternalsVisibleTo Include="scan-fixture" />
     <!-- The CLI drives scans through the internal contract without exposing a plugin API. -->
     <InternalsVisibleTo Include="wip" />
   </ItemGroup>

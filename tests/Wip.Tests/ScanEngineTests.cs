@@ -75,6 +75,9 @@ public class ScanEngineTests
         public readonly List<TimeSpan> ReportTimeouts = [];
         public string Report = "{\"alerts\":[]}";
         public bool ReportMissing;
+        public string Diagnostics = "Not performed: authentication and active scanning\nZAP warning: passive scan incomplete";
+        public bool DiagnosticsMissing;
+        public bool DiagnosticsTimedOut;
         public int ReportCode;
         public bool ReportTimedOut;
         public bool ReportLimitExceeded;
@@ -129,6 +132,8 @@ public class ScanEngineTests
             }
             if (argv is ["exec", _, "cat", ..])
             {
+                if (argv[^1] == "/out/unperformed.txt")
+                    return new(DiagnosticsMissing ? 1 : 0, Diagnostics) { TimedOut = DiagnosticsTimedOut };
                 ReportTimeouts.Add(timeout);
                 if (ReportThrows) throw new WipException("report capture exceeded its limit");
                 return new(ReportMissing ? 1 : ReportCode, ReportMissing ? "" : Report)
@@ -165,24 +170,22 @@ public class ScanEngineTests
     // ----------------------------------------------------------------- one tool, from the table
 
     [Fact]
-    public void NoScannerIsRegisteredUntilAnAdapterLands()
+    public void ZapIsRegisteredInTheReviewedBuiltInTable()
     {
-        // The registry is a reviewed table, so it is empty before the first adapter. Asserted
-        // rather than assumed: an entry appearing here without a pull request to this file is
-        // exactly what the platform's design rules out.
-        Assert.Empty(ScanEngine.Tools);
+        Assert.Equal(["zap"], ScanEngine.Tools);
+        Assert.IsType<ZapScanner>(ScanEngine.Select("zap"));
     }
 
     [Theory]
     [InlineData("")]
     [InlineData("  ")]
-    [InlineData("zap")]
+    [InlineData("Zap")]
     [InlineData("ZAP")]
     [InlineData("nuclei")]
     public void SelectingAnUnregisteredToolFails(string tool)
     {
         var error = Assert.Throws<ConfigException>(() => ScanEngine.Select(tool));
-        Assert.Contains("no scanners are registered", error.Message);
+        Assert.Contains("registered tools: zap", error.Message);
     }
 
     [Fact]
@@ -645,6 +648,68 @@ public class ScanEngineTests
         Assert.Throws<InvalidOperationException>(() => Engine(fake).Run(new StubScanner(), "scanner", ValidPlan()));
 
         Assert.Single(fake.Calls, c => c[0] == "stop");
+    }
+
+    [Fact]
+    public void RawUnperformedChecksRemainDistinctFromAnEmptyAlertsReport()
+    {
+        var fake = new Fake();
+        var plan = ValidPlan() with { UnperformedChecksPath = "/out/unperformed.txt" };
+
+        var outcome = Engine(fake).Run(new StubScanner(plan), "scanner", plan);
+
+        Assert.Equal("{\"alerts\":[]}", outcome.Report);
+        Assert.Equal(fake.Diagnostics, outcome.UnperformedChecks);
+        Assert.Null(outcome.UnperformedChecksError);
+    }
+
+    [Fact]
+    public void MissingUnperformedChecksAreNotReportedAsClean()
+    {
+        var fake = new Fake { DiagnosticsMissing = true };
+        var plan = ValidPlan() with { UnperformedChecksPath = "/out/unperformed.txt" };
+
+        var outcome = Engine(fake).Run(new StubScanner(plan), "scanner", plan);
+
+        Assert.Null(outcome.UnperformedChecks);
+        Assert.NotNull(outcome.UnperformedChecksError);
+    }
+
+    [Fact]
+    public void UnperformedChecksAreCollectedEvenWhenTheReportReadFails()
+    {
+        var fake = new Fake { ReportMissing = true };
+        var plan = ValidPlan() with { UnperformedChecksPath = "/out/unperformed.txt" };
+
+        var outcome = Engine(fake).Run(new StubScanner(plan), "scanner", plan);
+
+        Assert.Null(outcome.Report);
+        Assert.Equal(fake.Diagnostics, outcome.UnperformedChecks);
+    }
+
+    [Fact]
+    public void AScanTimeoutMarksUnperformedChecksAsUnavailable()
+    {
+        var fake = new Fake { ExecCode = 124, ExecTimedOut = true };
+        var plan = ValidPlan() with { UnperformedChecksPath = "/out/unperformed.txt" };
+
+        var outcome = Engine(fake).Run(new StubScanner(plan), "scanner", plan);
+
+        Assert.True(outcome.TimedOut);
+        Assert.Null(outcome.UnperformedChecks);
+        Assert.NotNull(outcome.UnperformedChecksError);
+    }
+
+    [Fact]
+    public void UnperformedChecksCollectionTimeoutHasASeparateReason()
+    {
+        var fake = new Fake { DiagnosticsTimedOut = true };
+        var plan = ValidPlan() with { UnperformedChecksPath = "/out/unperformed.txt" };
+
+        var outcome = Engine(fake).Run(new StubScanner(plan), "scanner", plan);
+
+        Assert.Null(outcome.UnperformedChecks);
+        Assert.Contains("timed out", outcome.UnperformedChecksError);
     }
 
     // ----------------------------------------------------------------- cleanup

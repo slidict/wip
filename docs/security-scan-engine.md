@@ -3,7 +3,7 @@
 The engine runs one diagnostic tool inside one declared sandbox, behind its declared
 [network boundary](sandbox-network-isolation.md). It owns preparation, execution, report
 collection and cleanup; each built-in adapter supplies only a command and report format.
-No adapter is registered yet. ZAP is the first planned adapter.
+OWASP ZAP is the first built-in adapter, selected as `--tool zap`.
 
 ## Command and image
 
@@ -60,6 +60,55 @@ an image with no ENTRYPOINT or an entrypoint that executes the supplied command;
 alone cannot replace a fixed one-shot ENTRYPOINT. It does not add an entrypoint override.
 The image must also provide the report-reading utilities used by the engine.
 
+## ZAP adapter
+
+The built-in `zap` adapter pins this immutable multi-platform image:
+
+```text
+ghcr.io/zaproxy/zaproxy@sha256:5ccfff9a411743ab2615136a2edd7416bec9ce41572fa94e935df38c14adb2b6
+```
+
+Use that exact reference as the scanner sandbox's `image:` and declare
+`command: [sleep, infinity]` to keep it running before `wip security scan`. This image has no
+ENTRYPOINT, so the command replaces its default `bash` CMD. Its execution user is `zap`, not
+root; reports are written to `/tmp/wip-zap-report.json`, which that user can write and the
+engine can read through the same user's exec session.
+
+The adapter passes Python source and arguments as separate argv elements. The fixed wrapper
+writes an [Automation Framework](https://www.zaproxy.org/docs/automate/automation-framework/)
+plan, then invokes `/zap/zap.sh -cmd -silent -addonuninstall oast -autorun <plan>`.
+The context confines the traditional spider to the supplied HTTP(S) origin and path subtree.
+Crawling is bounded to one minute, depth two and ten children; passive scanning waits at most
+one more minute. Form submission, robots.txt and sitemap discovery are disabled to avoid
+leaving the declared subtree. It does not run active scans or a browser spider. Silent mode disables
+unsolicited update/telemetry requests, and removal of the OAST add-on disables out-of-band
+callbacks. The declared internal network remains the enforcement boundary for egress.
+
+The report job writes ZAP's native `traditional-json` report. The rules identifier combines
+the immutable image digest with the reviewed `wip-passive-v1` profile; rules and add-ons come
+from that image rather than a scan-time update. Exit codes remain ZAP's own: Automation
+Framework returns zero on completion, one on errors, or two on warnings. A completed passive
+scan with no alerts does not establish that active or authenticated checks passed.
+
+`/tmp/wip-zap-unperformed.txt` retains the profile's omitted checks and crawl limits together
+with the native Automation Framework log. The engine collects that sidecar separately and
+the CLI writes it to stderr under `Unperformed checks (raw):`; stdout remains the original
+JSON report. Sidecars use the same collection deadline and retention limit as reports;
+missing, unreadable or oversized diagnostics are reported explicitly. These raw artifacts
+are not a normalized result schema; common result formatting is tracked in
+[the result-format work](https://github.com/slidict/wip/issues/269).
+
+Only unauthenticated targets are supported here. Credentials are not accepted through argv;
+[authenticated scanning](https://github.com/slidict/wip/issues/277) requires a separate secret
+transport design.
+
+Pull requests run the small [scan engine fixture](../tests/e2e/README.md#security-scans)
+instead of downloading ZAP. It checks real-WSLC isolation and report/omission collection.
+Scheduled and manually triggered runs additionally scan a single internal HTTP page with the
+real adapter. The pinned image is about 1.12 GiB compressed, so its download and registry
+availability are deliberately kept off unrelated pull requests. The real scenario has a
+bounded pull and short scan inside the workflow's 45-minute job budget.
+
 ## Internal adapter contract
 
 `ISecurityScanner`, `ScanEngine` and their plan, target, image and outcome types are internal
@@ -75,6 +124,7 @@ An adapter supplies a `ScanPlan`:
 | `Argv` | Executable and arguments inside the sandbox, passed directly without a shell |
 | `ReportPath` | Canonical absolute path of the report inside the container |
 | `RulesVersion` | Version or digest of the applied rule, template or add-on set |
+| `UnperformedChecksPath` | Optional absolute path for raw omitted-check information |
 
 The plan cannot set backend options, networks, mounts or environment variables. Its argv
 appears after the container ID and can only become the scanner command's arguments. The
@@ -144,6 +194,7 @@ ID and never become `run`, network or mount options. Lifecycle tests check sourc
 reference extraction and the shared running-container guards. Runner and CLI tests cover
 capture and report output behavior.
 
-The registry is tested as empty until a real adapter is added. No real-scanner end-to-end test
-exists yet; it belongs with that first adapter. Fake-backend tests do not verify actual WSLC
-process termination, image entrypoints or scanner report behavior in a running environment.
+Registry tests verify that `zap` resolves to the built-in adapter. Adapter tests check the
+pinned image, scope and callback controls, report paths and raw omitted-check information.
+Fake-backend tests do not verify actual WSLC process termination or scanner behavior; the
+lightweight and scheduled real-ZAP scenarios cover those runtime paths separately.

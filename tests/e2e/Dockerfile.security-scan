@@ -1,0 +1,14 @@
+FROM wip-e2e:latest
+
+# The local target keeps the build marker. The scanner itself uses the upstream base
+# image's real repository digest and receives the reviewed script through the test harness.
+
+# httpd is not in Alpine's base busybox. Measured on alpine:3.20:
+# `busybox --list | grep -c '^httpd$'` is 0 and `command -v httpd` finds nothing, which is
+# why the first real run failed with `exec: "httpd": executable file not found in $PATH`.
+# busybox-extras provides it at /usr/sbin/httpd. This assumes an apk-based base image, as
+# the rest of this fixture already assumes a busybox userland.
+RUN apk add --no-cache busybox-extras
+
+ENTRYPOINT []
+CMD ["httpd", "-f", "-p", "8080", "-h", "/srv"]

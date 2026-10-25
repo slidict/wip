@@ -12,6 +12,8 @@ namespace Wip.Security;
 /// <param name="TimedOut">Whether the execution deadline expired; exit 124 alone is ambiguous.</param>
 /// <param name="Report">The complete report, or null when collection did not produce one.</param>
 /// <param name="ReportError">The collection failure reason, independent of the scanner status.</param>
+/// <param name="UnperformedChecks">Unmodified tool diagnostics and profile omissions, when requested.</param>
+/// <param name="UnperformedChecksError">Why requested diagnostics could not be collected.</param>
 /// <remarks>
 /// A tool's non-zero status is not an error here: scanners use exit codes to report findings.
 /// Distinguishing "ran and found things" from "did not run" belongs to the result format that
@@ -26,7 +28,9 @@ internal sealed record ScanOutcome(
     int ExitCode,
     string? Report,
     bool TimedOut = false,
-    string? ReportError = null);
+    string? ReportError = null,
+    string? UnperformedChecks = null,
+    string? UnperformedChecksError = null);
 
 /// <summary>
 /// Drives exactly one registered scanner inside one declared sandbox, behind the boundary
@@ -174,11 +178,16 @@ internal sealed class ScanEngine(
                 // partial report must not be presented as a completed scanner result.
                 stopped = true;
                 Stop(sandbox);
-                return new(scanner.Name, sandbox, plan.Image.Reference, plan.RulesVersion, network, code, null, TimedOut: true);
+                return new(scanner.Name, sandbox, plan.Image.Reference, plan.RulesVersion, network, code, null, TimedOut: true,
+                    UnperformedChecksError: plan.UnperformedChecksPath is null ? null : "scan timed out before diagnostics could be collected");
             }
             var collectionDeadline = deadline < CollectionTimeout ? deadline : CollectionTimeout;
             var (report, reportError) = ReadReport(sandbox, plan.ReportPath, collectionDeadline);
-            return new(scanner.Name, sandbox, plan.Image.Reference, plan.RulesVersion, network, code, report, ReportError: reportError);
+            var (unperformed, diagnosticsError) = plan.UnperformedChecksPath is { } diagnosticsPath
+                ? ReadReport(sandbox, diagnosticsPath, collectionDeadline)
+                : (null, null);
+            return new(scanner.Name, sandbox, plan.Image.Reference, plan.RulesVersion, network, code, report,
+                ReportError: reportError, UnperformedChecks: unperformed, UnperformedChecksError: diagnosticsError);
         }
         finally
         {
