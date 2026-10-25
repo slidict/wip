@@ -830,6 +830,7 @@ public class ScanEngineTests
     [Theory]
     [InlineData(false, 0, 0)]
     [InlineData(false, 70, 1)]
+    [InlineData(false, 74, 1)]
     [InlineData(false, 124, 124)]
     [InlineData(true, 124, 70)]
     public void ResultAndBothRawArtifactsArePublishedBeforeTeardown(bool timedOut, int scannerCode, int processCode)
@@ -861,10 +862,16 @@ public class ScanEngineTests
         finally { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
     }
 
+    /// <summary>
+    /// The scan is kept, and the failed save still reaches the exit code: asking for --output
+    /// and receiving neither a file nor a nonzero status is the reading this format exists to
+    /// prevent. The scanner's own status stays in the outcome and the result document.
+    /// </summary>
     [Theory]
-    [InlineData(0, 0)]
-    [InlineData(7, 7)]
-    [InlineData(70, 1)]
+    [InlineData(0, ScanEngine.PersistenceFailedExitCode)]
+    [InlineData(7, ScanEngine.PersistenceFailedExitCode)]
+    [InlineData(70, ScanEngine.PersistenceFailedExitCode)]
+    [InlineData(74, ScanEngine.PersistenceFailedExitCode)]
     public void PersistenceFailureAfterPreflightPreservesTheCompletedScan(int scannerCode, int processCode)
     {
         var directory = Path.Combine(Path.GetTempPath(), "wip-result-failure-" + Guid.NewGuid().ToString("N"));

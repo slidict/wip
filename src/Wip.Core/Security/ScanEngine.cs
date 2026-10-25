@@ -36,10 +36,17 @@ internal sealed record ScanOutcome(
     ScanResult? Result = null,
     string? PersistenceError = null)
 {
+    /// <remarks>
+    /// An incomplete result outranks a failed save: a scan that did not finish is the more
+    /// serious of the two, and its reason is in the document either way. A scanner's own use
+    /// of a reserved code folds to 1 rather than claiming a condition that did not occur.
+    /// </remarks>
     internal int ProcessExitCode => Result?.Status switch
     {
         "incomplete" => ScanEngine.IncompleteExitCode,
-        "completed" when ExitCode == ScanEngine.IncompleteExitCode => 1,
+        "completed" when PersistenceError is not null => ScanEngine.PersistenceFailedExitCode,
+        "completed" when ExitCode == ScanEngine.IncompleteExitCode
+            || ExitCode == ScanEngine.PersistenceFailedExitCode => 1,
         _ => ExitCode
     };
 }
@@ -91,6 +98,14 @@ internal sealed class ScanEngine(
     // shell invocation failures. Completed scanners that return 70 map to 1 so only an
     // incomplete run returns 70; provenance and result.json retain the original tool code.
     internal const int IncompleteExitCode = 70;
+
+    // EX_IOERR (74), from the same sysexits range, for a scan that finished but whose
+    // artifacts did not reach the requested directory. Distinct from 70 because the two call
+    // for different responses: an incomplete scan has to be run again, while a completed one
+    // whose save failed has its report on stdout and needs the output path looked at. Exit 0
+    // would be the hole this result format exists to close -- asking for --output and getting
+    // neither a file nor a nonzero status is "nothing happened" presented as success.
+    internal const int PersistenceFailedExitCode = 74;
 
     private SandboxDefinition Definition(string sandbox) =>
         settings.Sandboxes.SingleOrDefault(s => s.Name == sandbox)

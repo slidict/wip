@@ -158,10 +158,19 @@ quotes or markup. The embedded coverage copy uses the same redaction as other re
 Check `status` before consuming `findings`. An incomplete result has a reason and no findings
 array, so it cannot appear as a clean empty scan. A completed result still has coverage:
 omitted active, authenticated or other checks are not evidence that those checks passed.
-The CLI reserves exit `70` for incomplete results, including when invoked from a WSL shell.
-A completed scanner that itself returns `70` maps to CLI exit `1`; its original `70` remains
-in `scannerExitCode` and provenance. Other completed scanner statuses are forwarded unchanged.
-This reservation makes CLI exit `70` unambiguously mean an incomplete result.
+The CLI reserves two exit codes, both nonzero through a WSL shell. `70` means the result is
+incomplete. `74` means the scan completed but its artifacts did not reach the requested
+directory, which can still happen after the preflight check — a full volume, or a directory
+removed mid-run. The two call for different responses: an incomplete scan has to be run again,
+while a completed one whose save failed has its report on stdout and needs the output path
+looked at. An incomplete result takes precedence when both apply, since its reason is in the
+document either way.
+
+A completed scanner that itself returns `70` or `74` maps to CLI exit `1`; its original status
+remains in `scannerExitCode` and provenance. Other completed scanner statuses are forwarded
+unchanged. So each reserved code means only what the CLI uses it for, and a completed scan whose
+result was not saved never returns `0` — asking for `--output` and receiving neither a file nor
+a nonzero status is the reading this format exists to prevent.
 
 ## Internal adapter contract
 
