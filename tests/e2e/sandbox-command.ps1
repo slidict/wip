@@ -1,0 +1,161 @@
+# Dot-source from run-e2e.ps1 after its fixture image has been built.
+# The fixture deliberately uses a one-shot CMD, not a fixed ENTRYPOINT.
+function Invoke-SandboxCommandE2E([string] $Namespace, [string] $Image) {
+    $sandboxes = New-Object 'Collections.Generic.List[string]'
+    $commandImage = "wip-e2e-command-${Namespace}:latest"
+    $entrypointImage = "wip-e2e-entrypoint-${Namespace}:latest"
+    $builtImages = New-Object 'Collections.Generic.List[string]'
+    $configPath = Join-Path $script:Workspace 'sandbox-command.yml'
+    $buildDirectory = Join-Path $script:Workspace 'sandbox-command-build'
+    $entrypointDirectory = Join-Path $script:Workspace 'sandbox-entrypoint-build'
+    $wslcConfig = $script:WslcPath.Replace("'", "''")
+    New-Item -ItemType Directory -Path $buildDirectory -Force | Out-Null
+    New-Item -ItemType Directory -Path $entrypointDirectory -Force | Out-Null
+    $dockerfile = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'Dockerfile.sandbox-command'))
+    $dockerfile = $dockerfile.Replace('FROM wip-e2e:latest', "FROM $Image")
+    [IO.File]::WriteAllText((Join-Path $buildDirectory 'Dockerfile'), $dockerfile)
+    $entrypointDockerfile = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'Dockerfile.sandbox-entrypoint'))
+    $entrypointDockerfile = $entrypointDockerfile.Replace('FROM wip-e2e:latest', "FROM $Image")
+    [IO.File]::WriteAllText((Join-Path $entrypointDirectory 'Dockerfile'), $entrypointDockerfile)
+
+    # A separate config leaves the other lifecycle fixtures unchanged. Both sandboxes use
+    # the same one-shot image; only the first declares a replacement CMD.
+    [IO.File]::WriteAllText($configPath, @"
+version: 1
+resource_namespace: $Namespace
+sandboxes:
+  - name: command-override
+    image: $commandImage
+    command: [sleep, '600']
+  - name: command-default
+    image: $commandImage
+  - name: command-entrypoint
+    image: $entrypointImage
+    command: ['600']
+mode: container
+wslc:
+  command: '$wslcConfig'
+container: unused-command-fixture
+dependencies:
+  unused-command-fixture:
+    image: $commandImage
+    workdir: /srv
+    interactive: false
+    remove: true
+    command: sleep 600
+"@)
+
+    # Preserve argv through the native invocation, but give every command a deadline,
+    # including image building, failed-create diagnostics and finally-block cleanup.
+    function Invoke-CommandFixture([string] $Exe, [string[]] $Arguments, [int] $TimeoutSeconds = 180) {
+        $job = Start-Job -ScriptBlock {
+            param($exe, $argv, $cwd)
+            $ErrorActionPreference = 'Stop'
+            $PSNativeCommandUseErrorActionPreference = $false
+            Set-Location $cwd
+            $text = & $exe @argv 2>&1 | Out-String
+            [pscustomobject]@{ Code = $LASTEXITCODE; Output = $text }
+        } -ArgumentList $Exe, $Arguments, $script:Workspace
+        try {
+            if (-not (Wait-Job $job -Timeout $TimeoutSeconds)) {
+                throw "timed out after ${TimeoutSeconds}s: $Exe $($Arguments -join ' ')"
+            }
+            $result = Receive-Job $job -ErrorAction SilentlyContinue
+            if ($null -eq $result -or $null -eq $result.Code) {
+                throw "no exit status from: $Exe $($Arguments -join ' ')"
+            }
+            Write-Host "`$ $Exe $($Arguments -join ' ')  -> exit $($result.Code)"
+            if ($result.Output.Trim()) { Write-Host $result.Output.TrimEnd() }
+            return $result
+        }
+        finally {
+            Remove-Job $job -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    function Invoke-CommandWip([string[]] $Arguments) {
+        Invoke-CommandFixture -Exe $script:WipPath -Arguments (@('--config', $configPath) + $Arguments)
+    }
+
+    # `wslc rmi <image>`, measured on wslc 3.0.3.0: it is advertised by `wslc --help` as
+    # "Deletes an image" and `wslc rmi --help` exits 0. Named directly rather than discovered
+    # by reading the help text, which is localised -- the same help on a Japanese host answers
+    # in Japanese, so parsing it reads a translation and the verb is the only stable part of it.
+    # A failure is reported rather than thrown: this runs in cleanup, after the assertions, and
+    # a leftover image must not be what a reader sees instead of the real failure.
+    function Remove-CommandImage([string] $Tag) {
+        $removed = Invoke-CommandFixture -Exe $script:WslcPath -Arguments @('rmi', $Tag) -TimeoutSeconds 120
+        if ($removed.Code -ne 0) {
+            $script:Failed = $true
+            Write-Warning "command fixture image cleanup failed (${Tag}): $($removed.Output.Trim())"
+        }
+    }
+
+    try {
+        Write-Step 'sandbox command replaces a one-shot image CMD'
+        $builtImages.Add($commandImage)
+        Assert-Exit (Invoke-CommandFixture -Exe $script:WslcPath -Arguments @('build', '-t', $commandImage, $buildDirectory) -TimeoutSeconds 300) 0 'build the one-shot CMD fixture'
+
+        $sandboxes.Add('command-override')
+        Assert-Exit (Invoke-CommandWip @('sandbox', 'create', 'command-override')) 0 'create with a declared resident command'
+        $status = Invoke-CommandWip @('sandbox', 'status', 'command-override')
+        Assert-Exit $status 0 'status of the command override'
+        Assert-Match $status '(?m)^command-override\s+running\s+wip-s-[a-f0-9]{40}\s+\S+\s*$' 'the overridden sandbox is running'
+        $mainProcess = Invoke-CommandWip @('sandbox', 'exec', 'command-override', '--', 'cat', '/proc/1/comm')
+        Assert-Exit $mainProcess 0 'read the overridden main process'
+        # Multiline: Invoke-CommandFixture merges stderr into Output, and wip writes an update
+        # notice there whenever a newer version is cached, which a whole-string anchor rejects.
+        Assert-Match $mainProcess '(?m)^sleep\s*$' 'the declared command replaced the one-shot CMD'
+        Assert-Exit (Invoke-CommandWip @('sandbox', 'exec', 'command-override', '--', 'sleep', '1')) 0 'the overridden sandbox stays available'
+        $stillRunning = Invoke-CommandWip @('sandbox', 'status', 'command-override')
+        Assert-Exit $stillRunning 0 'status after another command'
+        Assert-Match $stillRunning '(?m)^command-override\s+running\s' 'the resident command remains running'
+
+        Write-Step 'without command the same image keeps its one-shot default'
+        $sandboxes.Add('command-default')
+        $defaultCreate = Invoke-CommandWip @('sandbox', 'create', 'command-default')
+        Assert-NonZero $defaultCreate 'create without a command override'
+        Assert-Match $defaultCreate 'creation/start did not produce a running sandbox' 'failure identifies the exited one-shot CMD'
+        $defaultStatus = Invoke-CommandWip @('sandbox', 'status', 'command-default')
+        Assert-Exit $defaultStatus 0 'status of the default one-shot sandbox'
+        Assert-Match $defaultStatus '(?m)^command-default\s+exited\s+wip-s-[a-f0-9]{40}\s+\S+\s*$' 'without command the image default exits'
+
+        # The configuration the documents endorse: a fixed ENTRYPOINT taking the declared list
+        # as its arguments. Verification compares Config.Cmd, so this fails outright if the
+        # backend ever folds the entrypoint into it.
+        Write-Step 'a declared command supplies arguments to a fixed ENTRYPOINT'
+        $builtImages.Add($entrypointImage)
+        Assert-Exit (Invoke-CommandFixture -Exe $script:WslcPath -Arguments @('build', '-t', $entrypointImage, $entrypointDirectory) -TimeoutSeconds 300) 0 'build the fixed ENTRYPOINT fixture'
+        $sandboxes.Add('command-entrypoint')
+        Assert-Exit (Invoke-CommandWip @('sandbox', 'create', 'command-entrypoint')) 0 'create against a fixed ENTRYPOINT image'
+        $entrypointMain = Invoke-CommandWip @('sandbox', 'exec', 'command-entrypoint', '--', 'cat', '/proc/1/comm')
+        Assert-Exit $entrypointMain 0 'read the entrypoint main process'
+        Assert-Match $entrypointMain '(?m)^sleep\s*$' 'the entrypoint ran with the declared argument'
+        # Proves verification accepted it rather than skipping: exec passes through RunningId,
+        # which refuses a container whose Config.Cmd is not the declared list.
+        Assert-Exit (Invoke-CommandWip @('sandbox', 'exec', 'command-entrypoint', '--', 'true')) 0 'the entrypoint sandbox passes command verification'
+    }
+    finally {
+        foreach ($sandbox in $sandboxes) {
+            try {
+                $cleanup = Invoke-CommandWip @('sandbox', 'destroy', $sandbox)
+                if ($cleanup.Code -ne 0) {
+                    $script:Failed = $true
+                    Write-Warning "command fixture cleanup failed (${sandbox}): $($cleanup.Output.Trim())"
+                }
+            }
+            catch {
+                $script:Failed = $true
+                Write-Warning "command fixture cleanup failed (${sandbox}): $_"
+            }
+        }
+        # Only tags this run added, in case a build failed before producing one.
+        foreach ($tag in $builtImages) {
+            try { Remove-CommandImage $tag }
+            catch {
+                $script:Failed = $true
+                Write-Warning "command fixture image cleanup failed (${tag}): $_"
+            }
+        }
+    }
+}

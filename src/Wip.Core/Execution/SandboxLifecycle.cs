@@ -31,6 +31,9 @@ public sealed record SandboxStatus(
     /// is the only way to know what is actually running.
     /// </summary>
     public string? Image { get; init; } = Image;
+
+    /// <summary>The source argv in Config.Cmd, or null when it cannot be read.</summary>
+    public IReadOnlyList<string>? Command { get; init; }
 }
 
 /// <summary>How a backend invocation uses wip's own console.</summary>
@@ -107,7 +110,10 @@ public sealed class SandboxLifecycle(
         var state = State(record);
         if (state == "deleted") return new(name, backendName, null, "not found");
         var mounts = ExtractMounts(record);
-        return new(name, backendName, inspectedId, state, mounts, ExtractNetworks(record), ExtractImage(record));
+        return new(name, backendName, inspectedId, state, mounts, ExtractNetworks(record), ExtractImage(record))
+        {
+            Command = ExtractCommand(record)
+        };
     }
 
     public int Create(string name)
@@ -126,6 +132,7 @@ public sealed class SandboxLifecycle(
         {
             VerifyExistingMounts(name, existing, volumeDefs);
             VerifyExistingNetworks(name, existing, isolatedNetwork);
+            VerifyExistingCommand(name, definition, existing);
             if (existing.State == "running")
             {
                 if (volumeDefs.Count != 0 && volumes is not null)
@@ -175,11 +182,14 @@ public sealed class SandboxLifecycle(
                 }
             }
             runArgs.Add(definition.Image);
+            if (definition.Command is { } command) runArgs.AddRange(command);
             var created = backend(runArgs, MutationTimeout, SandboxConsoleMode.Stream);
             // Even a failed/timed-out run can leave a container. Keep it for ownership-checked recovery.
             if (created.Code != 0) return created.Code;
         }
-        if (Status(name).State != "running") throw Failure(name, "creation/start did not produce a running sandbox; inspect status and image CMD, then retry or destroy");
+        var current = Status(name);
+        if (current.State != "running") throw Failure(name, "creation/start did not produce a running sandbox; inspect status and image CMD, then retry or destroy");
+        VerifyExistingCommand(name, definition, current, freshlyCreated: true);
         if (volumeDefs.Count != 0 && volumes is not null)
         {
             foreach (var vDef in volumeDefs)
@@ -496,14 +506,16 @@ public sealed class SandboxLifecycle(
     /// <see cref="Attach"/> all pass through. Create refuses a container that is not attached
     /// to exactly its declared network, but until this, nothing else did: a container made
     /// before `network:` was added to wip.yml kept running on whatever it was given, and an
-    /// exec into it ran with unrestricted egress (slidict/wip#263). A sandbox that declares
+    /// exec into it ran with unrestricted egress. A sandbox that declares
     /// no network is unaffected, so this costs nothing where there is no boundary to check.
     /// </remarks>
     private string RunningId(string name)
     {
         var existing = Status(name);
         if (existing.Id is null || existing.State != "running") throw Failure(name, "sandbox is not running; run sandbox create first");
-        if (Definition(name).Network is { } networkName)
+        var definition = Definition(name);
+        VerifyExistingCommand(name, definition, existing);
+        if (definition.Network is { } networkName)
         {
             if (networks is null)
                 throw new ConfigException($"Sandbox {name}: network lifecycle is not configured; its declared network cannot be verified");
@@ -580,6 +592,71 @@ public sealed class SandboxLifecycle(
             }
         }
         throw new WipException("Sandbox backend returned malformed JSON; existence is unknown");
+    }
+
+    /// <summary>
+    /// Refuses a container whose command is not the declared one.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The same shape as the image check, for the same reason: a declaration can be edited
+    /// after the container was made, and the container keeps whatever argv it was created with.
+    /// Without this, editing <c>command:</c> left the old process as PID 1 while
+    /// <c>sandbox create</c> reported success.
+    /// </para>
+    /// <para>
+    /// <paramref name="freshlyCreated"/> separates two failures that need different advice. For
+    /// a container that already existed, a mismatch is drift and destroy-then-create fixes it.
+    /// For one wip just created, a mismatch means the backend did not record the argv wip
+    /// passed, and recreating reproduces it exactly -- so that advice would loop forever.
+    /// </para>
+    /// <para>
+    /// A declaration that was removed is not checked. "No command declared" would have to mean
+    /// "the image's own CMD", which needs the image inspected rather than the container, so
+    /// deleting <c>command:</c> from a live sandbox leaves the old process running and nothing
+    /// says so. Unlike <c>network:</c>, where undeclared genuinely asserts nothing, this one is
+    /// checkable and simply is not checked yet.
+    /// </para>
+    /// </remarks>
+    private static void VerifyExistingCommand(
+        string name, SandboxDefinition definition, SandboxStatus status, bool freshlyCreated = false)
+    {
+        if (definition.Command is not { } expected) return;
+
+        // Unreadable is not drift, wherever it is found. The backend is not reporting argv the
+        // way wip reads it, and no container this backend creates will, so destroy-and-create
+        // cannot help -- which is what the advice used to say here, and on the exec path it
+        // said it even after Create had already explained that recreating changes nothing.
+        if (status.Command is null)
+            throw Failure(
+                name,
+                "the declared command cannot be verified because the backend does not report Config.Cmd as an argv list; "
+                    + "recreating the sandbox will not change that. Remove command: to run the image's own CMD, "
+                    + "or use an image whose own CMD stays running.");
+
+        if (!expected.SequenceEqual(status.Command, StringComparer.Ordinal))
+        {
+            // Drift is fixable by recreating; a disagreement with argv wip itself just passed
+            // is not, and the container is already running, so say what does end it.
+            throw Failure(name, freshlyCreated
+                ? "the backend recorded a different command from the argv wip passed, so recreating the sandbox will not change it. "
+                    + "Remove command: to run the image's own CMD, or use an image whose own CMD stays running."
+                : "the declared command differs from Config.Cmd; run sandbox destroy, confirm absence, then sandbox create");
+        }
+    }
+
+    private static IReadOnlyList<string>? ExtractCommand(JsonElement record)
+    {
+        if (!record.TryGetProperty("Config", out var config) || config.ValueKind != JsonValueKind.Object ||
+            !config.TryGetProperty("Cmd", out var command) || command.ValueKind != JsonValueKind.Array)
+            return null;
+        var argv = new List<string>();
+        foreach (var item in command.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.String) return null;
+            argv.Add(item.GetString()!);
+        }
+        return argv.AsReadOnly();
     }
 
     /// <summary>

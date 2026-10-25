@@ -15,6 +15,117 @@ public class SandboxLifecycleTests
             image: fixture:latest
         """ + suffix, allowAliases: false)).SandboxResources;
 
+    [Fact]
+    public void CreatePlacesTheDeclaredCommandAfterTheImageWithoutShellInterpretation()
+    {
+        var fake = new Fake();
+        var settings = Settings("\n    command: [sleep, '600', 'literal ; $(touch /tmp/marker)']");
+
+        Assert.Equal(0, new SandboxLifecycle(settings, fake.Run).Create("first"));
+
+        var run = Assert.Single(fake.Calls, argv => argv[0] == "run");
+        Assert.Equal(new[]
+        {
+            "run", "--name", fake.Name, "-d", "--label", "io.slidict.wip.owner=v1:test:sandbox:first",
+            "fixture:latest", "sleep", "600", "literal ; $(touch /tmp/marker)"
+        }, run);
+    }
+
+    [Fact]
+    public void CreateWithoutACommandRetainsTheOriginalBackendArguments()
+    {
+        var fake = new Fake();
+
+        Assert.Equal(0, new SandboxLifecycle(Settings(), fake.Run).Create("first"));
+
+        var run = Assert.Single(fake.Calls, argv => argv[0] == "run");
+        Assert.Equal(new[]
+        {
+            "run", "--name", fake.Name, "-d", "--label", "io.slidict.wip.owner=v1:test:sandbox:first", "fixture:latest"
+        }, run);
+    }
+
+    [Theory]
+    [InlineData("running")]
+    [InlineData("exited")]
+    public void EditingTheDeclaredCommandRefusesToReuseOrStartTheExistingContainer(string state)
+    {
+        var fake = new Fake();
+        Assert.Equal(0, new SandboxLifecycle(Settings("\n    command: [sleep, '600']"), fake.Run).Create("first"));
+        fake.State = state;
+        fake.Containers.Clear();
+        fake.Calls.Clear();
+
+        var error = Assert.Throws<WipException>(() =>
+            new SandboxLifecycle(Settings("\n    command: [sleep, '900']"), fake.Run).Create("first"));
+
+        Assert.Contains("command", error.Message);
+        Assert.DoesNotContain(fake.Calls, argv => argv[0] is "start" or "run");
+    }
+
+    [Theory]
+    [InlineData("null")]
+    [InlineData("\"sleep 600\"")]
+    [InlineData("{}")]
+    [InlineData("[\"sleep\", 600]")]
+    public void AnUnreadableConfiguredCommandCannotBeAdopted(string commandJson)
+    {
+        var fake = new Fake { Exists = true };
+        fake.InspectOutput = JsonSerializer.Serialize(new[]
+        {
+            new
+            {
+                fake.Id, fake.Name, fake.State,
+                Labels = new Dictionary<string, string> { [SandboxLifecycle.OwnerLabel] = fake.Owner },
+                Config = new { Cmd = JsonSerializer.Deserialize<JsonElement>(commandJson) }
+            }
+        });
+
+        var error = Assert.Throws<WipException>(() =>
+            new SandboxLifecycle(Settings("\n    command: [sleep, '600']"), fake.Run).Create("first"));
+
+        Assert.Contains("command", error.Message);
+    }
+
+    [Fact]
+    public void MissingConfigCmdCannotBeReplacedByTopLevelCmd()
+    {
+        var fake = new Fake { Exists = true };
+        fake.InspectOutput = JsonSerializer.Serialize(new[]
+        {
+            new
+            {
+                fake.Id, fake.Name, fake.State,
+                Labels = new Dictionary<string, string> { [SandboxLifecycle.OwnerLabel] = fake.Owner },
+                Cmd = new[] { "sleep", "600" }
+            }
+        });
+        // The message is asserted, not just the type: this InspectOutput is hand-written and
+        // omits Mounts and other fields, so ownership or mount verification could throw first.
+        // Without this, reinstating a top-level-Cmd fallback would still look like a pass.
+        var error = Assert.Throws<WipException>(() =>
+            new SandboxLifecycle(Settings("\n    command: [sleep, '600']"), fake.Run).Create("first"));
+        Assert.Contains("command", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ExecutionRefusesAChangedDeclaredCommand()
+    {
+        var fake = new Fake { Exists = true, Command = ["sleep", "600"] };
+        var lifecycle = new SandboxLifecycle(Settings("\n    command: [sleep, '900']"), fake.Run);
+
+        Assert.Throws<WipException>(() => lifecycle.Exec("first", ["scanner"], TimeSpan.FromSeconds(1)));
+        Assert.DoesNotContain(fake.Calls, argv => argv[0] == "exec");
+    }
+
+    [Fact]
+    public void MatchingDeclaredCommandCanBeReused()
+    {
+        var fake = new Fake { Exists = true, Command = ["sleep", "600"] };
+        Assert.Equal(0, new SandboxLifecycle(Settings("\n    command: [sleep, '600']"), fake.Run).Create("first"));
+        Assert.DoesNotContain(fake.Calls, argv => argv[0] is "start" or "run");
+    }
+
     [Theory]
     [InlineData(null)]
     [InlineData("")]
@@ -59,6 +170,15 @@ public class SandboxLifecycleTests
         public readonly List<string[]> Calls = [];
         public readonly Dictionary<string, (string Id, string Owner, string State, List<SandboxMount> Mounts)> Containers = [];
         public List<SandboxMount> Mounts = [];
+        public string[]? Command;
+
+        /// <summary>
+        /// Per container, the way <c>Mounts</c> is. A single shared <c>Command</c> would report
+        /// the last-created container's argv for every container, so a test with two sandboxes
+        /// declaring different commands -- the shape the shared-mount tests already use --
+        /// could pass or fail for the wrong reason.
+        /// </summary>
+        public readonly Dictionary<string, string[]?> CommandsByContainer = [];
         public bool Exists;
         public string State = "running";
         public string Owner = "v1:test:sandbox:first";
@@ -103,10 +223,11 @@ public class SandboxLifecycleTests
                 {
                     var cName = Containers.First(kv => kv.Value == match).Key;
                     var mountsObj = match.Mounts.Select(m => new { Type = m.Type, Name = m.Name, Destination = m.Destination }).ToArray();
-                    return new(ProbeCode, JsonSerializer.Serialize(new[] { new { Id = inspectId, Name = cName, match.State, Labels = new Dictionary<string, string> { [SandboxLifecycle.OwnerLabel] = match.Owner }, Mounts = mountsObj } }));
+                    var cCommand = CommandsByContainer.TryGetValue(cName, out var recorded) ? recorded : Command;
+                    return new(ProbeCode, JsonSerializer.Serialize(new[] { new { Id = inspectId, Name = cName, match.State, Labels = new Dictionary<string, string> { [SandboxLifecycle.OwnerLabel] = match.Owner }, Config = new { Cmd = cCommand }, Mounts = mountsObj } }));
                 }
                 var defaultMounts = Mounts.Select(m => new { Type = m.Type, Name = m.Name, Destination = m.Destination }).ToArray();
-                return new(ProbeCode, JsonSerializer.Serialize(new[] { new { Id, Name, State, Labels = new Dictionary<string, string> { [SandboxLifecycle.OwnerLabel] = Owner }, Mounts = defaultMounts } }));
+                return new(ProbeCode, JsonSerializer.Serialize(new[] { new { Id, Name, State, Labels = new Dictionary<string, string> { [SandboxLifecycle.OwnerLabel] = Owner }, Config = new { Cmd = Command }, Mounts = defaultMounts } }));
             }
             Assert.NotEqual(SandboxConsoleMode.Capture, console);
             if (argv[0] is "exec" or "attach") { ExecTimeout = timeout; ExecConsole = console; return new(ExecCode, ""); }
@@ -115,6 +236,8 @@ public class SandboxLifecycleTests
             {
                 Exists = true;
                 State = "running";
+                var imageIndex = argv.ToList().IndexOf("fixture:latest");
+                if (imageIndex >= 0) Command = argv.Skip(imageIndex + 1).ToArray();
                 var nameIdx = argv.ToList().IndexOf("--name");
                 var labelIdx = argv.ToList().IndexOf("--label");
                 var cName = nameIdx >= 0 && nameIdx + 1 < argv.Count ? argv[nameIdx + 1] : Name;
@@ -135,6 +258,7 @@ public class SandboxLifecycleTests
                 }
                 Mounts = mounts;
                 Containers[cName] = (cId, cOwner, "running", mounts);
+                CommandsByContainer[cName] = Command;
             }
             if (argv[0] == "start" && MutationCode == 0) State = "running";
             if (argv[0] == "stop" && MutationCode == 0 && !LeaveResidue) State = "exited";

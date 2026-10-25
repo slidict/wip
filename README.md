@@ -229,7 +229,8 @@ volumes:
 
 sandboxes:
   - name: agent
-    image: example/tool:1 # its default command has to keep running
+    image: example/tool:1
+    command: [sleep, infinity] # optional argv list; the image must provide this command
     volumes: [state]
 ```
 
@@ -239,6 +240,12 @@ wip sandbox exec agent --interactive -- sh   # a session you drive; `--` keeps s
 wip sandbox stop agent                       # pause it — `create` resumes the same container
 wip sandbox destroy agent                    # remove it; persistent volumes survive
 ```
+
+The optional `command` list replaces the image CMD without shell splitting; omitting it
+preserves image defaults. It does not replace ENTRYPOINT, so choose a command compatible
+with the image. Flags and arguments containing spaces remain separate list elements, such
+as `[nginx, -g, 'daemon off;']`; the first list element must not contain whitespace.
+Changing a declared command requires destroying and recreating the sandbox.
 
 `create` / `list` / `status` / `exec` / `attach` / `stop` / `destroy` are the whole set. `exec`
 runs non-interactively with a 300-second deadline unless you pass `--interactive`, which has no

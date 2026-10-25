@@ -153,6 +153,102 @@ public class SandboxSettingsTests
     }
 
     [Fact]
+    public void DeclaredCommandIsATypedArgvAndRoundTripsWithoutShellInterpretation()
+    {
+        var config = Load("""
+            resource_namespace: example
+            sandboxes:
+              - name: box
+                image: tool
+                command: [sleep, infinity, 'a b; $(literal)']
+            """);
+
+        Assert.Equal(["sleep", "infinity", "a b; $(literal)"], config.SandboxResources.Sandboxes[0].Command);
+        var mapping = config.SandboxResources.ToMapping();
+        var sandbox = RubyValue.AsMapping(RubyValue.AsSequence(mapping["sandboxes"])![0])!;
+        Assert.Equal(["sleep", "infinity", "a b; $(literal)"], RubyValue.AsSequence(sandbox["command"])!.Cast<string>());
+        var restored = Load(YamlWriter.Dump(mapping));
+        var restoredSandbox = RubyValue.AsMapping(RubyValue.AsSequence(restored.SandboxResources.ToMapping()["sandboxes"])![0])!;
+        Assert.Equal(RubyValue.AsSequence(sandbox["command"]), RubyValue.AsSequence(restoredSandbox["command"]));
+    }
+
+    [Theory]
+    [InlineData("sleep infinity", "sequence")]
+    [InlineData("null", "sequence")]
+    [InlineData("{}", "sequence")]
+    [InlineData("[]", "empty")]
+    [InlineData("['']", "nonempty")]
+    [InlineData("['   ']", "whitespace")]
+    [InlineData("[sleep, null]", "nonempty")]
+    [InlineData("[sleep, 123]", "nonempty")]
+    [InlineData("[sleep, true]", "nonempty")]
+    [InlineData("[sleep, \"line\\nbreak\"]", "control")]
+    public void InvalidCommandsFailDuringConfigurationLoading(string command, string reason)
+    {
+        var error = Assert.Throws<ConfigException>(() => Load(
+            "resource_namespace: example\nsandboxes: [{name: box, image: tool, command: " + command + "}]"));
+
+        Assert.Contains("sandboxes.box.command", error.Message);
+        Assert.Contains(reason, error.Message);
+    }
+
+    [Theory]
+    [InlineData("[tail, -f, /dev/null]", "tail", "-f", "/dev/null")]
+    [InlineData("[nginx, -g, 'daemon off;']", "nginx", "-g", "daemon off;")]
+    [InlineData("[sh, -c, 'exec zap.sh -daemon -host 0.0.0.0']", "sh", "-c", "exec zap.sh -daemon -host 0.0.0.0")]
+    public void CommandFlagsAndLaterWhitespaceAreLiteralArguments(string yaml, string executable, string flag, string argument)
+    {
+        var settings = Load("resource_namespace: example\nsandboxes: [{name: box, image: tool, command: " + yaml + "}]").SandboxResources;
+
+        Assert.Equal([executable, flag, argument], settings.Sandboxes[0].Command);
+    }
+
+    [Theory]
+    [InlineData("-daemon")]
+    [InlineData("--")]
+    public void CommandCanStartWithAnEntrypointFlag(string argument)
+    {
+        var settings = Load("resource_namespace: example\nsandboxes: [{name: box, image: tool, command: ['" + argument + "']}]").SandboxResources;
+
+        Assert.Equal([argument], settings.Sandboxes[0].Command);
+    }
+
+    [Fact]
+    public void LaterCommandArgumentsCanBeOnlySpaces()
+    {
+        var settings = Load("resource_namespace: example\nsandboxes: [{name: box, image: tool, command: [printf, '   ']}]").SandboxResources;
+
+        Assert.Equal(["printf", "   "], settings.Sandboxes[0].Command);
+    }
+
+    [Theory]
+    [InlineData("[sleep 600]")]
+    [InlineData("['sleep 600']")]
+    [InlineData("[' sleep']")]
+    [InlineData("['sleep ']")]
+    [InlineData("['sleep\u00a0600']")]
+    public void WhitespaceInTheFirstCommandArgumentFailsDuringConfigurationLoading(string command)
+    {
+        var error = Assert.Throws<ConfigException>(() => Load(
+            "resource_namespace: example\nsandboxes: [{name: box, image: tool, command: " + command + "}]"));
+
+        Assert.Contains("sandboxes.box.command", error.Message);
+        Assert.Contains("first argument", error.Message);
+        Assert.Contains("whitespace", error.Message);
+    }
+
+    [Fact]
+    public void AbsentCommandDoesNotChangeTheNormalizedSandbox()
+    {
+        var settings = Load(Sample).SandboxResources;
+        Assert.All(settings.Sandboxes, sandbox => Assert.Null(sandbox.Command));
+        var sandboxes = settings.ToMapping()["sandboxes"];
+
+        Assert.All(RubyValue.AsSequence(sandboxes)!, sandbox =>
+            Assert.False(RubyValue.AsMapping(sandbox)!.ContainsKey("command")));
+    }
+
+    [Fact]
     public void EqualMountPathsAreValidWhenNeverCombinedInOneSandbox()
     {
         var config = Load("""

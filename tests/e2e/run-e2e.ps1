@@ -452,6 +452,9 @@ try {
     . (Join-Path $PSScriptRoot 'volume-lifecycle.ps1')
     Invoke-VolumeStorageE2E -Namespace $sandboxNamespace -Image 'wip-e2e:latest'
 
+    . (Join-Path $PSScriptRoot 'sandbox-command.ps1')
+    Invoke-SandboxCommandE2E -Namespace $sandboxNamespace -Image 'wip-e2e:latest'
+
     . (Join-Path $PSScriptRoot 'sandbox-mount.ps1')
     Invoke-SandboxMountE2E -Namespace $sandboxNamespace -Image 'wip-e2e:latest'
 
