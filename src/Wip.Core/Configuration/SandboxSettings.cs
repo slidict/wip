@@ -205,9 +205,12 @@ public sealed partial class SandboxSettings
         var command = new List<string>();
         foreach (var argument in argv)
         {
-            if (argument is not string text || string.IsNullOrWhiteSpace(text) || text.Any(char.IsControl))
+            if (argument is not string text || text.Length == 0 || text.Any(char.IsControl))
                 throw new ConfigException($"{path} entries must be nonempty strings without control characters");
-            if (text.StartsWith('-')) throw new ConfigException($"{path} entries must not start with '-'");
+            if (command.Count == 0 && text.Any(char.IsWhiteSpace))
+                throw new ConfigException($"{path} first argument must not contain whitespace; use separate argv entries");
+            // Each argument follows the image reference and is passed through ArgumentList,
+            // so leading '-' values belong to the container command, not backend options.
             command.Add(text);
         }
         return command.AsReadOnly();

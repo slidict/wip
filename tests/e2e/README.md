@@ -68,9 +68,12 @@ must fail creation and report an exited container.
 
 This tests command/CMD replacement, not ENTRYPOINT replacement. A fixed image ENTRYPOINT is
 unchanged by the sandbox command field. Each external invocation in this scenario, including
-build, status and cleanup, has a bounded deadline. Its fixture namespaces and ownership checks
-keep cleanup scoped to the resources created by the test. Real WSLC execution runs in the
-Windows e2e workflow; the unit suite does not execute this scenario.
+build, status and cleanup, has a bounded deadline. Sandbox cleanup verifies ownership; the
+built image uses a tag containing the run's resource namespace. After sandbox cleanup, the
+finalizer deletes only that tag using an image removal command advertised by WSLC's help.
+An unsupported removal command or failed deletion fails the run, as other cleanup failures do.
+Real WSLC execution runs in the Windows e2e workflow; the unit suite does not execute this
+scenario.
 
 ## The terminal half
 

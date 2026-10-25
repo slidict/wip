@@ -31,6 +31,9 @@ public sealed record SandboxStatus(
     /// is the only way to know what is actually running.
     /// </summary>
     public string? Image { get; init; } = Image;
+
+    /// <summary>The source argv in Config.Cmd, or null when it cannot be read.</summary>
+    public IReadOnlyList<string>? Command { get; init; }
 }
 
 /// <summary>How a backend invocation uses wip's own console.</summary>
@@ -107,7 +110,10 @@ public sealed class SandboxLifecycle(
         var state = State(record);
         if (state == "deleted") return new(name, backendName, null, "not found");
         var mounts = ExtractMounts(record);
-        return new(name, backendName, inspectedId, state, mounts, ExtractNetworks(record), ExtractImage(record));
+        return new(name, backendName, inspectedId, state, mounts, ExtractNetworks(record), ExtractImage(record))
+        {
+            Command = ExtractCommand(record)
+        };
     }
 
     public int Create(string name)
@@ -126,6 +132,7 @@ public sealed class SandboxLifecycle(
         {
             VerifyExistingMounts(name, existing, volumeDefs);
             VerifyExistingNetworks(name, existing, isolatedNetwork);
+            VerifyExistingCommand(name, definition, existing);
             if (existing.State == "running")
             {
                 if (volumeDefs.Count != 0 && volumes is not null)
@@ -180,7 +187,9 @@ public sealed class SandboxLifecycle(
             // Even a failed/timed-out run can leave a container. Keep it for ownership-checked recovery.
             if (created.Code != 0) return created.Code;
         }
-        if (Status(name).State != "running") throw Failure(name, "creation/start did not produce a running sandbox; inspect status and image CMD, then retry or destroy");
+        var current = Status(name);
+        if (current.State != "running") throw Failure(name, "creation/start did not produce a running sandbox; inspect status and image CMD, then retry or destroy");
+        VerifyExistingCommand(name, definition, current);
         if (volumeDefs.Count != 0 && volumes is not null)
         {
             foreach (var vDef in volumeDefs)
@@ -497,14 +506,16 @@ public sealed class SandboxLifecycle(
     /// <see cref="Attach"/> all pass through. Create refuses a container that is not attached
     /// to exactly its declared network, but until this, nothing else did: a container made
     /// before `network:` was added to wip.yml kept running on whatever it was given, and an
-    /// exec into it ran with unrestricted egress (slidict/wip#263). A sandbox that declares
+    /// exec into it ran with unrestricted egress. A sandbox that declares
     /// no network is unaffected, so this costs nothing where there is no boundary to check.
     /// </remarks>
     private string RunningId(string name)
     {
         var existing = Status(name);
         if (existing.Id is null || existing.State != "running") throw Failure(name, "sandbox is not running; run sandbox create first");
-        if (Definition(name).Network is { } networkName)
+        var definition = Definition(name);
+        VerifyExistingCommand(name, definition, existing);
+        if (definition.Network is { } networkName)
         {
             if (networks is null)
                 throw new ConfigException($"Sandbox {name}: network lifecycle is not configured; its declared network cannot be verified");
@@ -581,6 +592,29 @@ public sealed class SandboxLifecycle(
             }
         }
         throw new WipException("Sandbox backend returned malformed JSON; existence is unknown");
+    }
+
+    private static void VerifyExistingCommand(string name, SandboxDefinition definition, SandboxStatus status)
+    {
+        if (definition.Command is not { } expected) return;
+        if (status.Command is null)
+            throw Failure(name, "the declared command cannot be verified because Config.Cmd is unreadable; run sandbox destroy, confirm absence, then sandbox create");
+        if (!expected.SequenceEqual(status.Command, StringComparer.Ordinal))
+            throw Failure(name, "the declared command differs from Config.Cmd; run sandbox destroy, confirm absence, then sandbox create");
+    }
+
+    private static IReadOnlyList<string>? ExtractCommand(JsonElement record)
+    {
+        if (!record.TryGetProperty("Config", out var config) || config.ValueKind != JsonValueKind.Object ||
+            !config.TryGetProperty("Cmd", out var command) || command.ValueKind != JsonValueKind.Array)
+            return null;
+        var argv = new List<string>();
+        foreach (var item in command.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.String) return null;
+            argv.Add(item.GetString()!);
+        }
+        return argv.AsReadOnly();
     }
 
     /// <summary>

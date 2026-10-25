@@ -2,7 +2,8 @@
 # The fixture deliberately uses a one-shot CMD, not a fixed ENTRYPOINT.
 function Invoke-SandboxCommandE2E([string] $Namespace, [string] $Image) {
     $sandboxes = New-Object 'Collections.Generic.List[string]'
-    $commandImage = 'wip-e2e-command:latest'
+    $commandImage = "wip-e2e-command-${Namespace}:latest"
+    $imageBuildAttempted = $false
     $configPath = Join-Path $script:Workspace 'sandbox-command.yml'
     $buildDirectory = Join-Path $script:Workspace 'sandbox-command-build'
     $wslcConfig = $script:WslcPath.Replace("'", "''")
@@ -67,8 +68,37 @@ dependencies:
         Invoke-CommandFixture -Exe $script:WipPath -Arguments (@('--config', $configPath) + $Arguments)
     }
 
+    # Use only an image deletion verb advertised by this installation instead of
+    # assuming Docker aliases; fail cleanup if no supported verb can be identified.
+    function Remove-CommandImage {
+        $help = Invoke-CommandFixture -Exe $script:WslcPath -Arguments @('--help') -TimeoutSeconds 30
+        Assert-Exit $help 0 'read WSLC image cleanup commands'
+        $removeArguments = $null
+        if ($help.Output -match '(?m)^[ \t]*rmi(?:[ \t,]|$)') {
+            $removeArguments = @('rmi')
+        }
+        else {
+            foreach ($group in @('image', 'images')) {
+                if ($help.Output -notmatch ("(?m)^[ \t]*" + $group + '(?:[ \t,]|$)')) { continue }
+                $groupHelp = Invoke-CommandFixture -Exe $script:WslcPath -Arguments @($group, '--help') -TimeoutSeconds 30
+                if ($groupHelp.Code -ne 0) { continue }
+                foreach ($verb in @('remove', 'rm')) {
+                    if ($groupHelp.Output -match ("(?m)^[ \t]*" + $verb + '(?:[ \t,]|$)')) {
+                        $removeArguments = @($group, $verb)
+                        break
+                    }
+                }
+                if ($removeArguments) { break }
+            }
+        }
+        if (-not $removeArguments) { throw 'WSLC help advertises no supported image deletion command' }
+        $removed = Invoke-CommandFixture -Exe $script:WslcPath -Arguments ($removeArguments + @($commandImage)) -TimeoutSeconds 120
+        Assert-Exit $removed 0 "remove the namespaced command fixture image $commandImage"
+    }
+
     try {
         Write-Step 'sandbox command replaces a one-shot image CMD'
+        $imageBuildAttempted = $true
         Assert-Exit (Invoke-CommandFixture -Exe $script:WslcPath -Arguments @('build', '-t', $commandImage, $buildDirectory) -TimeoutSeconds 300) 0 'build the one-shot CMD fixture'
 
         $sandboxes.Add('command-override')
@@ -105,6 +135,13 @@ dependencies:
             catch {
                 $script:Failed = $true
                 Write-Warning "command fixture cleanup failed (${sandbox}): $_"
+            }
+        }
+        if ($imageBuildAttempted) {
+            try { Remove-CommandImage }
+            catch {
+                $script:Failed = $true
+                Write-Warning "command fixture image cleanup failed (${commandImage}): $_"
             }
         }
     }

@@ -46,6 +46,83 @@ public class SandboxLifecycleTests
     }
 
     [Theory]
+    [InlineData("running")]
+    [InlineData("exited")]
+    public void EditingTheDeclaredCommandRefusesToReuseOrStartTheExistingContainer(string state)
+    {
+        var fake = new Fake();
+        Assert.Equal(0, new SandboxLifecycle(Settings("\n    command: [sleep, '600']"), fake.Run).Create("first"));
+        fake.State = state;
+        fake.Containers.Clear();
+        fake.Calls.Clear();
+
+        var error = Assert.Throws<WipException>(() =>
+            new SandboxLifecycle(Settings("\n    command: [sleep, '900']"), fake.Run).Create("first"));
+
+        Assert.Contains("command", error.Message);
+        Assert.DoesNotContain(fake.Calls, argv => argv[0] is "start" or "run");
+    }
+
+    [Theory]
+    [InlineData("null")]
+    [InlineData("\"sleep 600\"")]
+    [InlineData("{}")]
+    [InlineData("[\"sleep\", 600]")]
+    public void AnUnreadableConfiguredCommandCannotBeAdopted(string commandJson)
+    {
+        var fake = new Fake { Exists = true };
+        fake.InspectOutput = JsonSerializer.Serialize(new[]
+        {
+            new
+            {
+                fake.Id, fake.Name, fake.State,
+                Labels = new Dictionary<string, string> { [SandboxLifecycle.OwnerLabel] = fake.Owner },
+                Config = new { Cmd = JsonSerializer.Deserialize<JsonElement>(commandJson) }
+            }
+        });
+
+        var error = Assert.Throws<WipException>(() =>
+            new SandboxLifecycle(Settings("\n    command: [sleep, '600']"), fake.Run).Create("first"));
+
+        Assert.Contains("command", error.Message);
+    }
+
+    [Fact]
+    public void MissingConfigCmdCannotBeReplacedByTopLevelCmd()
+    {
+        var fake = new Fake { Exists = true };
+        fake.InspectOutput = JsonSerializer.Serialize(new[]
+        {
+            new
+            {
+                fake.Id, fake.Name, fake.State,
+                Labels = new Dictionary<string, string> { [SandboxLifecycle.OwnerLabel] = fake.Owner },
+                Cmd = new[] { "sleep", "600" }
+            }
+        });
+        Assert.Throws<WipException>(() =>
+            new SandboxLifecycle(Settings("\n    command: [sleep, '600']"), fake.Run).Create("first"));
+    }
+
+    [Fact]
+    public void ExecutionRefusesAChangedDeclaredCommand()
+    {
+        var fake = new Fake { Exists = true, Command = ["sleep", "600"] };
+        var lifecycle = new SandboxLifecycle(Settings("\n    command: [sleep, '900']"), fake.Run);
+
+        Assert.Throws<WipException>(() => lifecycle.Exec("first", ["scanner"], TimeSpan.FromSeconds(1)));
+        Assert.DoesNotContain(fake.Calls, argv => argv[0] == "exec");
+    }
+
+    [Fact]
+    public void MatchingDeclaredCommandCanBeReused()
+    {
+        var fake = new Fake { Exists = true, Command = ["sleep", "600"] };
+        Assert.Equal(0, new SandboxLifecycle(Settings("\n    command: [sleep, '600']"), fake.Run).Create("first"));
+        Assert.DoesNotContain(fake.Calls, argv => argv[0] is "start" or "run");
+    }
+
+    [Theory]
     [InlineData(null)]
     [InlineData("")]
     public void ImageIdIsNotReportedAsTheSourceImageReference(string? sourceReference)
@@ -89,6 +166,7 @@ public class SandboxLifecycleTests
         public readonly List<string[]> Calls = [];
         public readonly Dictionary<string, (string Id, string Owner, string State, List<SandboxMount> Mounts)> Containers = [];
         public List<SandboxMount> Mounts = [];
+        public string[]? Command;
         public bool Exists;
         public string State = "running";
         public string Owner = "v1:test:sandbox:first";
@@ -133,10 +211,10 @@ public class SandboxLifecycleTests
                 {
                     var cName = Containers.First(kv => kv.Value == match).Key;
                     var mountsObj = match.Mounts.Select(m => new { Type = m.Type, Name = m.Name, Destination = m.Destination }).ToArray();
-                    return new(ProbeCode, JsonSerializer.Serialize(new[] { new { Id = inspectId, Name = cName, match.State, Labels = new Dictionary<string, string> { [SandboxLifecycle.OwnerLabel] = match.Owner }, Mounts = mountsObj } }));
+                    return new(ProbeCode, JsonSerializer.Serialize(new[] { new { Id = inspectId, Name = cName, match.State, Labels = new Dictionary<string, string> { [SandboxLifecycle.OwnerLabel] = match.Owner }, Config = new { Cmd = Command }, Mounts = mountsObj } }));
                 }
                 var defaultMounts = Mounts.Select(m => new { Type = m.Type, Name = m.Name, Destination = m.Destination }).ToArray();
-                return new(ProbeCode, JsonSerializer.Serialize(new[] { new { Id, Name, State, Labels = new Dictionary<string, string> { [SandboxLifecycle.OwnerLabel] = Owner }, Mounts = defaultMounts } }));
+                return new(ProbeCode, JsonSerializer.Serialize(new[] { new { Id, Name, State, Labels = new Dictionary<string, string> { [SandboxLifecycle.OwnerLabel] = Owner }, Config = new { Cmd = Command }, Mounts = defaultMounts } }));
             }
             Assert.NotEqual(SandboxConsoleMode.Capture, console);
             if (argv[0] is "exec" or "attach") { ExecTimeout = timeout; ExecConsole = console; return new(ExecCode, ""); }
@@ -145,6 +223,8 @@ public class SandboxLifecycleTests
             {
                 Exists = true;
                 State = "running";
+                var imageIndex = argv.ToList().IndexOf("fixture:latest");
+                if (imageIndex >= 0) Command = argv.Skip(imageIndex + 1).ToArray();
                 var nameIdx = argv.ToList().IndexOf("--name");
                 var labelIdx = argv.ToList().IndexOf("--label");
                 var cName = nameIdx >= 0 && nameIdx + 1 < argv.Count ? argv[nameIdx + 1] : Name;

@@ -44,11 +44,15 @@ available in the actual scanner image. The adapter's `ScanPlan.Image` and the sa
 through exec while the declared main command keeps the container alive until cleanup.
 
 The list is passed after the image reference, never through shell splitting or expansion.
-It cannot become backend options. Loading rejects an empty list, nonstring or empty elements,
-control characters, and any element beginning with `-`. Omit `command` to retain the image's
-original CMD and ENTRYPOINT unchanged. The declaration applies when a container is created;
-starting or reusing an existing container preserves its original command. To apply an edited
-command, explicitly destroy and recreate the sandbox.
+Flags are allowed there because they cannot become backend options. Loading rejects an empty
+list, nonstring or empty elements, control characters, and whitespace in the first element.
+Later arguments may contain spaces, as in `[nginx, -g, 'daemon off;']`.
+Omit `command` to retain the image's original CMD and ENTRYPOINT unchanged.
+
+When a command is declared, reusing, starting or executing inside an existing container
+requires a matching `Config.Cmd`; an unreadable command is refused. To apply an edited
+command, explicitly destroy and recreate the sandbox rather than relying on an implicit
+configuration change.
 
 This overrides CMD, not ENTRYPOINT. An image with a fixed scanner ENTRYPOINT still receives
 the declared list as arguments to that entrypoint. The keepalive example therefore requires

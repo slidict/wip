@@ -16,10 +16,17 @@ sandboxes:
 `command` is a list of strings passed after the image reference, without shell splitting or
 expansion. It replaces the image CMD, not ENTRYPOINT; a fixed entrypoint still receives these
 arguments. Choose a command available in the image and compatible with its entrypoint.
-Omit the field to preserve the image defaults. Empty lists, empty or nonstring elements,
-control characters and elements beginning with `-` are rejected during configuration loading.
-Command edits affect new containers only: destroy and recreate an existing sandbox to apply
-them; starting or reusing it preserves its original command.
+Omit the field to preserve the image defaults. Flags are allowed because all list elements
+follow the image reference and cannot become backend options. For example,
+`command: [nginx, -g, 'daemon off;']` preserves the last argument as one value.
+Configuration loading rejects empty lists, empty or nonstring elements, control characters,
+and whitespace in the first element. Later arguments may contain spaces;
+`[sleep 600]` is invalid, while `[sleep, '600']` is valid.
+
+When `command` is declared, the recorded `Config.Cmd` must match it before an existing
+container is reused, started or entered through exec, capture or attach. An unreadable
+command is refused rather than treated as a match. To apply an edited command, destroy and
+recreate the sandbox; existing container configuration is not changed implicitly.
 
 ```powershell
 wip sandbox create first
@@ -44,7 +51,7 @@ Check status and, if necessary, destroy the dedicated sandbox before retrying no
 
 | Operation | Existing owned resource | Missing resource |
 | --- | --- | --- |
-| create | Running: success without another container; created/exited: start the verified ID; unknown: recovery error | Run the configured image and verify ownership/state |
+| create | Verify any declared command; running: success without another container; created/exited: start the verified ID; unknown: recovery error | Run the configured image and verify ownership/state |
 | status | Print logical name, state, backend name and ID | Print `not found`, success |
 | list | Print one `status` line per declared sandbox, in wip.yml's order | Lines read `not found`; no declarations prints nothing, success |
 | stop | Running: stop the verified ID, then confirm the same ID is exited; created/exited: success without mutation; other states: error | Success |
@@ -200,7 +207,8 @@ Stop returns 0 for verified stopped/missing resources, the backend's nonzero exi
 failure (124 for timeout), and 1 for configuration/ownership/readback errors.
 
 After a failed create, run status with the same declaration. An owned running residue makes
-repeated create succeed; an owned stopped residue is started. Fix an invalid image/CMD by
+repeated create succeed when its declared command still matches; an owned stopped residue
+is started after the same check. Fix an invalid image/CMD by
 destroying the owned sandbox, updating configuration and creating again. Image changes do not
 replace an existing container implicitly. After failed destroy, inspect status and repeat destroy.
 Ownership mismatch requires investigation outside this automatic lifecycle; do not remove the

@@ -178,13 +178,11 @@ public class SandboxSettingsTests
     [InlineData("{}", "sequence")]
     [InlineData("[]", "empty")]
     [InlineData("['']", "nonempty")]
-    [InlineData("['   ']", "nonempty")]
+    [InlineData("['   ']", "whitespace")]
     [InlineData("[sleep, null]", "nonempty")]
     [InlineData("[sleep, 123]", "nonempty")]
     [InlineData("[sleep, true]", "nonempty")]
     [InlineData("[sleep, \"line\\nbreak\"]", "control")]
-    [InlineData("['-sleep']", "start with '-'")]
-    [InlineData("[sleep, '--privileged']", "start with '-'")]
     public void InvalidCommandsFailDuringConfigurationLoading(string command, string reason)
     {
         var error = Assert.Throws<ConfigException>(() => Load(
@@ -192,6 +190,51 @@ public class SandboxSettingsTests
 
         Assert.Contains("sandboxes.box.command", error.Message);
         Assert.Contains(reason, error.Message);
+    }
+
+    [Theory]
+    [InlineData("[tail, -f, /dev/null]", "tail", "-f", "/dev/null")]
+    [InlineData("[nginx, -g, 'daemon off;']", "nginx", "-g", "daemon off;")]
+    [InlineData("[sh, -c, 'exec zap.sh -daemon -host 0.0.0.0']", "sh", "-c", "exec zap.sh -daemon -host 0.0.0.0")]
+    public void CommandFlagsAndLaterWhitespaceAreLiteralArguments(string yaml, string executable, string flag, string argument)
+    {
+        var settings = Load("resource_namespace: example\nsandboxes: [{name: box, image: tool, command: " + yaml + "}]").SandboxResources;
+
+        Assert.Equal([executable, flag, argument], settings.Sandboxes[0].Command);
+    }
+
+    [Theory]
+    [InlineData("-daemon")]
+    [InlineData("--")]
+    public void CommandCanStartWithAnEntrypointFlag(string argument)
+    {
+        var settings = Load("resource_namespace: example\nsandboxes: [{name: box, image: tool, command: ['" + argument + "']}]").SandboxResources;
+
+        Assert.Equal([argument], settings.Sandboxes[0].Command);
+    }
+
+    [Fact]
+    public void LaterCommandArgumentsCanBeOnlySpaces()
+    {
+        var settings = Load("resource_namespace: example\nsandboxes: [{name: box, image: tool, command: [printf, '   ']}]").SandboxResources;
+
+        Assert.Equal(["printf", "   "], settings.Sandboxes[0].Command);
+    }
+
+    [Theory]
+    [InlineData("[sleep 600]")]
+    [InlineData("['sleep 600']")]
+    [InlineData("[' sleep']")]
+    [InlineData("['sleep ']")]
+    [InlineData("['sleep\u00a0600']")]
+    public void WhitespaceInTheFirstCommandArgumentFailsDuringConfigurationLoading(string command)
+    {
+        var error = Assert.Throws<ConfigException>(() => Load(
+            "resource_namespace: example\nsandboxes: [{name: box, image: tool, command: " + command + "}]"));
+
+        Assert.Contains("sandboxes.box.command", error.Message);
+        Assert.Contains("first argument", error.Message);
+        Assert.Contains("whitespace", error.Message);
     }
 
     [Fact]
