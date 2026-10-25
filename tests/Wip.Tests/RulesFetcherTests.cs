@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.ComponentModel;
 using Wip.Security;
 
@@ -143,11 +144,64 @@ public sealed class RulesFetcherTests : IDisposable
         Assert.Throws<WipException>(() => noGit.RequireStaged(Rules));
     }
 
+    [Fact]
+    public void EveryGitInvocationPinsAttributeDrivenNativeLineEndingsToLf()
+    {
+        var fake = new FakeGit();
+        new RulesFetcher(root, fake.Run).Fetch(Rules);
+        Assert.All(fake.Commands, command =>
+        {
+            var options = command.Select((argument, index) => (argument, index))
+                .Where(item => item.argument == "-c").Select(item => command[item.index + 1]);
+            Assert.Contains("core.autocrlf=false", options);
+            Assert.Contains("core.eol=lf", options);
+        });
+    }
+
+    [Fact]
+    public void VerifiedTreeCountIncludesEveryRegularFileAndNestedFileWithoutGitMetadata()
+    {
+        var fake = new FakeGit { NestedFiles = true };
+        var fetcher = new RulesFetcher(root, fake.Run);
+        var path = fetcher.Fetch(Rules);
+        var staged = fetcher.RequireStagedTree(Rules);
+        Assert.Equal(path, staged.Path);
+        Assert.Equal(3, staged.FileCount);
+        Assert.Equal(path, fetcher.RequireStaged(Rules));
+        Assert.Equal(4, fake.Commands.Count);
+    }
+
+    [Fact]
+    public void LegacyNativeEolCachesAreRefusedWithoutFetchingOverTheNetwork()
+    {
+        var fake = new FakeGit();
+        var fetcher = new RulesFetcher(root, fake.Run);
+        fetcher.Fetch(Rules);
+        var markerPath = Path.Combine(root, Commit, "verified.json");
+        using var document = JsonDocument.Parse(File.ReadAllText(markerPath));
+        var fingerprint = document.RootElement.GetProperty("treeSha256").GetString();
+        using (var stream = File.Create(markerPath))
+        using (var writer = new Utf8JsonWriter(stream))
+        {
+            writer.WriteStartObject();
+            writer.WriteNumber("version", 1);
+            writer.WriteString("commit", Commit);
+            writer.WriteString("treeSha256", fingerprint);
+            writer.WriteEndObject();
+        }
+        var noGit = new RulesFetcher(root, (_, _) => throw new InvalidOperationException("legacy entries must not silently fetch"));
+        var failure = Assert.Throws<WipException>(() => noGit.Fetch(Rules));
+        Assert.Contains("prepare again", failure.Message);
+        Assert.Throws<WipException>(() => noGit.RequireStagedTree(Rules));
+        Assert.Equal(4, fake.Commands.Count);
+    }
+
     private sealed class FakeGit
     {
         internal string ResolvedCommit { get; init; } = Commit;
         internal int FetchCode { get; init; }
         internal bool EmptyCheckout { get; init; }
+        internal bool NestedFiles { get; init; }
         internal string? LinkTarget { get; init; }
         internal List<IReadOnlyList<string>> Commands { get; } = [];
         internal List<string> Operations { get; } = [];
@@ -171,6 +225,12 @@ public sealed class RulesFetcherTests : IDisposable
                 case "rev-parse": return (0, ResolvedCommit + "\n");
                 case "checkout":
                     if (!EmptyCheckout) File.WriteAllText(Path.Combine(tree, "rules.yaml"), "pinned rule content");
+                    if (NestedFiles)
+                    {
+                        Directory.CreateDirectory(Path.Combine(tree, "nested"));
+                        File.WriteAllText(Path.Combine(tree, "another.yaml"), "another rule");
+                        File.WriteAllText(Path.Combine(tree, "nested", "nested.yaml"), "nested rule");
+                    }
                     if (LinkTarget is not null) File.CreateSymbolicLink(Path.Combine(tree, "linked-rule.yaml"), LinkTarget);
                     return (0, "");
                 default: throw new InvalidOperationException("unexpected git operation");

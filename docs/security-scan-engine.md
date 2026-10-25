@@ -213,16 +213,34 @@ remove a top-level container directory. Branches, tags and short hashes are refu
 After pulling the image, `Prepare` uses host-side git to fetch the pinned commit into a staging
 tree, verifies that `FETCH_HEAD` exactly equals the pin, and checks out that commit. Missing or
 unrunnable git, a failed fetch/checkout, a mismatched commit or an unusable rule tree stops
-preparation; there is no scan without the declared rules. Failed temporary staging is cleaned
-up without replacing the original error if cleanup also fails.
+preparation; there is no scan without the declared rules. Git uses `core.autocrlf=false` and
+`core.eol=lf`: disabling autocrlf alone leaves attribute-driven default line endings dependent
+on the host, which would also make cached fingerprints host-dependent. An explicit repository
+`eol=crlf` attribute still overrides this LF default. Failed temporary staging is cleaned up
+without replacing the original error if cleanup also fails.
 
 Verified trees are cached under `<config directory>/.wip/scanner-rules/<commit>/tree`.
 The commit names immutable content; published verification metadata and a tree fingerprint
 protect reuse against an incomplete or changed local entry. A second preparation of the same
 valid pin reuses the tree without fetching. Verification metadata stays outside the copied
-tree, and symlinks are refused. `Run` requires a valid staged entry and performs no git fetch.
-Native absolute host source paths are passed directly to `container cp`. The rules-specific
-copy path is covered by fake-backend tests; real WSLC execution is not verified locally.
+tree, and symlinks are refused. Version 2 cache markers reject older entries that may carry
+native line endings; remove a rejected entry and prepare again. There is no silent reuse or
+automatic migration. `Run` requires a valid staged entry and performs no git fetch.
+Host source paths pass through `WslPath.ForWslc` with a pinned-rules context label before
+`container cp`. Its default WSL-UNC refusal names the host-path cause rather than allowing an
+empty transfer to look like empty rules. Runtime state under any in-tree `.wip/` directory,
+including this cache, is ignored by git. The rules copy is covered by fake-backend tests;
+real WSLC execution is not verified locally.
+
+Before fetching and again before running, the engine rejects overlap between either the
+rules path or its derived staging path and any referenced declared volume mount. The check
+covers both directions, including a mount nested inside either path, so replacement cannot
+remove mounted data. This belongs to the engine because only it has the sandbox declaration.
+Before copying, `Run` also checks the running container's reported mounts, including stale
+or implicit mounts absent from that declaration. Before removing either destination, separate
+`exec <container> test -L <ancestor>` calls reject symlinked ancestors or an unverifiable
+probe. Rejecting aliases keeps a path from resolving into a mount that its written spelling
+does not overlap; missing ancestors can still be created normally.
 
 After image and network verification, the engine uses a derived `<path>.staging` directory.
 WSLC requires the copy destination to exist and nests the source directory inside it; even a
@@ -244,22 +262,31 @@ tar and backend stdin plumbing; this sequence needs neither. A failed copy, move
 a missing path or an empty rules directory refuses execution. The copy uses the already
 verified scanner image, with no separate mirror image or volume declaration.
 
-Before executing the scanner, the engine checks rules directories for missing `o+x`, then
-checks that a regular file exists, then checks files for missing `o+r`. Each check uses a
-separate backend invocation without a shell:
+Before executing the scanner, the engine probes every ancestor from `/` down to the rules
+path and every directory in the rules tree for other-user read and traversal permissions.
+It checks rather than chmods ancestors, preserving the image's existing access policy.
+Appending `/.` resolves an ancestor directory even when its path ends in a symlink, so the
+`-type d` predicate cannot silently skip it. Each probe is a separate backend invocation
+without a shell:
 
 ```text
-find <path> -type d ! -perm -o+x -print -quit
-find <path> -type f -print -quit
+find <ancestor>/. -maxdepth 0 -type d ! -perm -o+rx -print -quit
+find <path> -type d ! -perm -o+rx -print -quit
+find <path> -type f -print0
 find <path> -type f ! -perm -o+r -print -quit
 ```
 
-The copy is performed as root while the scanner may run as another user, so the permission
-checks intentionally inspect the other-user bits rather than effective access. BusyBox
-1.36.1 in Alpine 3.20 rejects `-readable`; these `-perm` predicates work there and with GNU
-findutils. An untraversable directory, an empty tree and an unreadable file have distinct
-refusal messages. A nonzero exit or timeout from either permission probe also refuses the
-scan rather than assuming the rules are usable.
+The NUL-separated file list is counted against the exact number of regular files hashed in
+the verified host tree. An empty copy or count mismatch refuses the scan and reports both
+expected and actual counts; one copied file cannot stand in for the complete rule set.
+
+The copy is performed as root while the scanner may run as another user, so permission
+checks inspect the other-user bits rather than effective access. Directories need both
+`o+r` to list files and `o+x` to traverse them; files need `o+r`. BusyBox 1.36.1 in Alpine 3.20
+rejects `-readable`; these `-perm` predicates work there and with GNU findutils. Missing
+ancestor access, unreadable directories, an empty or partial tree, and unreadable files have
+distinct refusals. A nonzero exit or timeout from any probe also refuses the scan rather than
+assuming the rules are usable.
 
 Provenance appends `;rules-commit:<commit>` to the adapter's `RulesVersion` once, so both stderr
 and the result document identify the pin. The colon preserves the commit through normalized

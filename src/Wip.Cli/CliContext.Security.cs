@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text;
 using Wip.Configuration;
 using Wip.Execution;
+using Wip.Platform;
 using Wip.Security;
 
 namespace Wip.Cli;
@@ -30,11 +31,11 @@ internal sealed partial class CliContext
         var networks = new NetworkLifecycle(Config.SandboxResources, backend);
         var lifecycle = new SandboxLifecycle(Config.SandboxResources, backend, null, networks);
         // Constructing the fetcher is lazy: adapters with image-bundled rules neither touch
-        // this cache nor require git. Container cp consumes a native absolute local path.
+        // this cache nor require git. Apply the common host-path guard only when copying rules.
         var rulesFetcher = new RulesFetcher(Path.Combine(ConfigDirectory, ".wip", "scanner-rules"));
         var engine = new ScanEngine(Config.SandboxResources, lifecycle, networks, backend,
             rulesFetcher: rulesFetcher,
-            mapRulesSource: Path.GetFullPath);
+            mapRulesSource: source => WslPath.ForWslc(Path.GetFullPath(source), "the pinned scanner rules source"));
 
         var scanner = ScanEngine.Select(tool);
         var scanTarget = new ScanTarget(target);

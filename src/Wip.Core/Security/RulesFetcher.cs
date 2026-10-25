@@ -13,6 +13,9 @@ internal sealed class RulesFetcher(
     Func<IReadOnlyList<string>, TimeSpan, (int Code, string Output)>? run = null)
 {
     internal const string TreeDirectoryName = "tree";
+    // Version 1 allowed host-native EOL conversion. Refuse those entries rather than
+    // reuse checkouts whose bytes may depend on the host that prepared them.
+    private const int CacheVersion = 2;
 
     private static readonly TimeSpan LocalTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan FetchTimeout = TimeSpan.FromMinutes(5);
@@ -48,9 +51,9 @@ internal sealed class RulesFetcher(
             {
                 using var writer = new Utf8JsonWriter(stream);
                 writer.WriteStartObject();
-                writer.WriteNumber("version", 1);
+                writer.WriteNumber("version", CacheVersion);
                 writer.WriteString("commit", rules.Commit);
-                writer.WriteString("treeSha256", fingerprint);
+                writer.WriteString("treeSha256", fingerprint.Hash);
                 writer.WriteEndObject();
                 writer.Flush();
                 stream.Flush(flushToDisk: true);
@@ -74,7 +77,9 @@ internal sealed class RulesFetcher(
         }
     }
 
-    internal string RequireStaged(PinnedRules rules)
+    internal string RequireStaged(PinnedRules rules) => RequireStagedTree(rules).Path;
+
+    internal (string Path, int FileCount) RequireStagedTree(PinnedRules rules)
     {
         rules.Validate("rules");
         var entry = Path.Combine(Path.GetFullPath(cacheDirectory), rules.Commit);
@@ -89,15 +94,17 @@ internal sealed class RulesFetcher(
             using var document = JsonDocument.Parse(File.ReadAllText(marker));
             var root = document.RootElement;
             if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("version", out var version) ||
-                version.ValueKind != JsonValueKind.Number || !version.TryGetInt32(out var number) || number != 1 ||
+                version.ValueKind != JsonValueKind.Number || !version.TryGetInt32(out var number) || number != CacheVersion ||
                 !root.TryGetProperty("commit", out var commit) || commit.ValueKind != JsonValueKind.String || commit.GetString() != rules.Commit ||
-                !root.TryGetProperty("treeSha256", out var digest) || digest.ValueKind != JsonValueKind.String ||
-                !string.Equals(digest.GetString(), Fingerprint(tree), StringComparison.Ordinal))
+                !root.TryGetProperty("treeSha256", out var digest) || digest.ValueKind != JsonValueKind.String)
+                throw new WipException("Pinned rules cache does not match its verified content; remove the cache entry and prepare again");
+            var fingerprint = Fingerprint(tree);
+            if (!string.Equals(digest.GetString(), fingerprint.Hash, StringComparison.Ordinal))
                 throw new WipException("Pinned rules cache does not match its verified content; remove the cache entry and prepare again");
             // The commit name is the verified immutable pin, so reuse needs no network.
             // The marker/fingerprint reject partial publication and later content changes.
             // This is a user-owned host cache, not a boundary against a user rewriting both.
-            return tree;
+            return (tree, fingerprint.FileCount);
         }
         catch (JsonException error) { throw new WipException("Pinned rules cache verification marker is malformed", error); }
         catch (IOException error) { throw new WipException("Pinned rules cache could not be read", error); }
@@ -106,7 +113,10 @@ internal sealed class RulesFetcher(
 
     private string Git(string tree, string hooks, string configuration, IReadOnlyList<string> arguments, TimeSpan timeout)
     {
-        string[] command = ["git", "-c", "core.hooksPath=" + hooks, "-c", "core.autocrlf=false",
+        // autocrlf=false alone does not stop attribute-driven native EOL conversion.
+        // Measured blob: a LF b LF c LF; native checkout: a CRLF b CRLF c CRLF;
+        // with core.eol=lf: a LF b LF c LF. Otherwise fingerprints depend on the host.
+        string[] command = ["git", "-c", "core.hooksPath=" + hooks, "-c", "core.autocrlf=false", "-c", "core.eol=lf",
             "-c", "credential.helper=", "-c", "protocol.allow=never", "-c", "protocol.https.allow=always", "-C", tree, .. arguments];
         (int Code, string Output) result;
         try { result = run is not null ? run(command, timeout) : RunGit(command, timeout, tree, hooks, configuration); }
@@ -142,7 +152,7 @@ internal sealed class RulesFetcher(
         return (code, output.ToString());
     }
 
-    private static string Fingerprint(string tree)
+    private static (string Hash, int FileCount) Fingerprint(string tree)
     {
         RejectLink(tree);
         var files = new List<string>();
@@ -156,7 +166,7 @@ internal sealed class RulesFetcher(
             using var content = File.OpenRead(path);
             hash.AppendData(SHA256.HashData(content));
         }
-        return Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
+        return (Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant(), files.Count);
     }
 
     private static void CollectFiles(string directory, List<string> files)
@@ -193,8 +203,7 @@ internal sealed class RulesFetcher(
         else
         {
             File.SetAttributes(path, attributes & ~FileAttributes.ReadOnly);
-            if ((attributes & FileAttributes.Directory) != 0) Directory.Delete(path);
-            else File.Delete(path);
+            File.Delete(path);
         }
     }
 }
