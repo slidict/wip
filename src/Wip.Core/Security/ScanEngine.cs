@@ -1,0 +1,255 @@
+using Wip.Configuration;
+using Wip.Execution;
+
+namespace Wip.Security;
+
+/// <param name="Tool">The registered name that was run.</param>
+/// <param name="Sandbox">The declared sandbox it ran in.</param>
+/// <param name="Image">The pinned image the plan named.</param>
+/// <param name="RulesVersion">The rule set the plan pinned.</param>
+/// <param name="Network">The backend name of the boundary the run was verified behind.</param>
+/// <param name="ExitCode">The tool status, or the reserved timeout status when TimedOut is true.</param>
+/// <param name="TimedOut">Whether the execution deadline expired; exit 124 alone is ambiguous.</param>
+/// <param name="Report">The complete report, or null when collection did not produce one.</param>
+/// <param name="ReportError">The collection failure reason, independent of the scanner status.</param>
+/// <remarks>
+/// A tool's non-zero status is not an error here: scanners use exit codes to report findings.
+/// Distinguishing "ran and found things" from "did not run" belongs to the result format that
+/// consumes this, so it carries the status and the report without judging either.
+/// </remarks>
+internal sealed record ScanOutcome(
+    string Tool,
+    string Sandbox,
+    string Image,
+    string RulesVersion,
+    string Network,
+    int ExitCode,
+    string? Report,
+    bool TimedOut = false,
+    string? ReportError = null);
+
+/// <summary>
+/// Drives exactly one registered scanner inside one declared sandbox, behind the boundary
+/// that sandbox declares.
+/// </summary>
+/// <remarks>
+/// <para>
+/// Preparation validates the plan and requests its image from the host-side backend.
+/// Execution independently validates that an already-running sandbox uses that image and
+/// the declared boundary. There is no preparation token: Run revalidates its inputs rather
+/// than requiring proof that Prepare was called. The CLI calls both in order.
+/// </para>
+/// <para>
+/// The engine builds every backend invocation. An adapter supplies a <see cref="ScanPlan"/>
+/// and nothing else, so there is no path by which it can widen the boundary -- the property
+/// required for isolation and the reason the plan type carries no backend arguments.
+/// </para>
+/// </remarks>
+internal sealed class ScanEngine(
+    SandboxSettings settings,
+    SandboxLifecycle sandboxes,
+    INetworkLifecycle networks,
+    SandboxBackend backend)
+{
+    /// <summary>
+    /// Allows a host-side registry request to finish. An existing runnable sandbox already
+    /// has this immutable image locally; a pull need not download new layers.
+    /// </summary>
+    private static readonly TimeSpan PullTimeout = TimeSpan.FromMinutes(20);
+
+    /// <summary>
+    /// Long by the standards of the other deadlines in wip, because an active web scan is
+    /// minutes to tens of minutes of work rather than a backend call that either answers or
+    /// has hung. Still bounded: an unbounded scan is one that can hold a sandbox forever.
+    /// </summary>
+    internal static readonly TimeSpan DefaultScanTimeout = TimeSpan.FromMinutes(30);
+
+    /// <summary>Collection is a bounded read, not another scan-length operation.</summary>
+    private static readonly TimeSpan CollectionTimeout = TimeSpan.FromSeconds(10);
+
+    /// <summary>The complete report must fit this retained-text budget.</summary>
+    internal const int MaxReportCharacters = 1024 * 1024;
+
+    private SandboxDefinition Definition(string sandbox) =>
+        settings.Sandboxes.SingleOrDefault(s => s.Name == sandbox)
+            ?? throw new ConfigException($"Unknown sandbox: {sandbox}");
+
+    /// <summary>Registered tool names, so a caller can list the choices without resolving one.</summary>
+    internal static IReadOnlyList<string> Tools => ScannerRegistry.Names;
+
+    /// <summary>
+    /// The one scanner a selector names, from the build-time table. Resolution lives here so
+    /// the registry stays the only way to obtain a scanner, while the phases below take the
+    /// scanner itself -- which is what makes "one tool per run" a property of the signature
+    /// rather than a rule to remember, and what lets the engine be tested without adding a
+    /// test-only entry to the registry (arbitrary external tools cannot extend it).
+    /// </summary>
+    internal static ISecurityScanner Select(string tool) => ScannerRegistry.Resolve(tool);
+
+    /// <summary>
+    /// Validates a plan and requests its image through the host-side backend, outside the
+    /// isolated sandbox. This does not create or start a sandbox. A successful Run requires
+    /// one already running from this image, so the image may already be present locally.
+    /// </summary>
+    /// <returns>The validated plan for the caller to pass to Run.</returns>
+    internal ScanPlan Prepare(ISecurityScanner scanner, string sandbox, ScanTarget target)
+    {
+        target.Validate();
+        var definition = Definition(sandbox);
+        // Checked before the image is fetched: a sandbox that cannot be isolated will never be
+        // scanned, so pulling for it would be work done for a run that cannot happen.
+        RequireDeclaredNetwork(definition, sandbox);
+        var plan = scanner.Plan(target);
+        plan.Validate(scanner.Name);
+        // Before the pull, so a sandbox that would run a different image is refused rather
+        // than having an image fetched for it that nothing will use.
+        RequirePinnedImage(definition, sandbox, plan);
+        // This registry request cannot replace the digest-pinned image with different
+        // content. It does not prove the sandbox is running or that rules were installed.
+        var pulled = backend(["pull", plan.Image.Reference], PullTimeout, SandboxConsoleMode.Stream);
+        if (pulled.Code != 0)
+            throw new WipException(
+                $"Scanner {scanner.Name}: pulling {plan.Image.Reference} failed (exit {pulled.Code}); " +
+                "no scan was started, because an isolated sandbox cannot fetch it later");
+        return plan;
+    }
+
+    /// <summary>
+    /// Runs a validated plan inside the sandbox, behind its declared boundary, and collects
+    /// the report. Stops and cleans up whatever happens.
+    /// </summary>
+    /// <param name="plan">
+    /// A plan, normally returned by Prepare. It is independently validated here; the type
+    /// carries no preparation history and callers can supply a plan without calling Prepare.
+    /// </param>
+    internal ScanOutcome Run(ISecurityScanner scanner, string sandbox, ScanPlan plan, TimeSpan? timeout = null)
+    {
+        var definition = Definition(sandbox);
+        var declared = RequireDeclaredNetwork(definition, sandbox);
+        plan.Validate(scanner.Name);
+        // Re-checked here for the reason the plan is re-validated: a caller can reach Run with
+        // a plan it built itself, so neither the plan nor the pairing is taken on trust.
+        RequirePinnedImage(definition, sandbox, plan);
+
+        var deadline = timeout ?? DefaultScanTimeout;
+        // Both bounds here, not just the lower one: the upper is what Exec enforces, and
+        // leaving it to that would reject the deadline only after the boundary checks below
+        // had run, in a place that reads as a scan failure rather than a bad argument.
+        if (deadline <= TimeSpan.Zero || deadline.TotalMilliseconds > int.MaxValue)
+            throw new ConfigException("Scan timeout must be positive and at most 2147483 seconds");
+
+        // The boundary is verified here, immediately before anything executes, and not taken
+        // on trust from `sandbox create`. A container created before the network was declared
+        // is still running on whatever it was given: create refuses it, but nothing else did
+        // until now (slidict/wip#263). This is the check at the moment it matters.
+        var network = networks.VerifiedBackendName(declared);
+        var status = sandboxes.Status(sandbox);
+        if (status.Id is null || status.State != "running")
+            throw new WipException($"Sandbox {sandbox}: is not running; run sandbox create before a scan");
+        if (status.Networks.Count != 1 || status.Networks[0] != network)
+            throw new WipException(
+                $"Sandbox {sandbox}: is not attached to exactly its declared network; no scan was started. " +
+                "Run sandbox destroy, confirm absence, then sandbox create.");
+        // The declaration is not enough. A container is created from whatever the declaration
+        // said at the time, so editing it to a different pinned image afterwards leaves the old
+        // image running while the plan -- and the outcome -- name the new one. Comparing what
+        // is actually running is what keeps "which tool ran" answerable.
+        if (status.Image is not { } running)
+            throw new WipException(
+                $"Sandbox {sandbox}: the running container's image could not be read, so the pinned tool is unverified; no scan was started");
+        if (!string.Equals(running, plan.Image.Reference, StringComparison.Ordinal))
+            throw new WipException(
+                $"Sandbox {sandbox}: is running image '{running}', but the tool pins '{plan.Image.Reference}'. " +
+                "The declaration changed after the container was created, so run sandbox destroy, confirm absence, then sandbox create.");
+
+        var stopped = false;
+        try
+        {
+            var execution = sandboxes.ExecWithResult(sandbox, plan.Argv, deadline);
+            var code = execution.Code;
+            if (execution.TimedOut)
+            {
+                // Killing the host exec client does not stop processes inside the container.
+                // Stop before any collection; exec cannot read a stopped container, and a
+                // partial report must not be presented as a completed scanner result.
+                stopped = true;
+                Stop(sandbox);
+                return new(scanner.Name, sandbox, plan.Image.Reference, plan.RulesVersion, network, code, null, TimedOut: true);
+            }
+            var collectionDeadline = deadline < CollectionTimeout ? deadline : CollectionTimeout;
+            var (report, reportError) = ReadReport(sandbox, plan.ReportPath, collectionDeadline);
+            return new(scanner.Name, sandbox, plan.Image.Reference, plan.RulesVersion, network, code, report, ReportError: reportError);
+        }
+        finally
+        {
+            // The container stop includes the tool's children. Removal remains sandbox
+            // destroy's responsibility, so failed runs leave the container inspectable.
+            if (!stopped) Stop(sandbox);
+        }
+    }
+
+    /// <summary>
+    /// Refuses a sandbox whose declared image is not the one the plan pinned.
+    /// </summary>
+    /// <remarks>
+    /// Without this the pin guarantees nothing. The scan runs as an exec inside the declared
+    /// sandbox, so the tool that actually executes is whatever that sandbox's image provides;
+    /// pulling the plan's image would leave it unused, and the outcome would name an image
+    /// that had not run. Binding the two is what makes "which tool ran" answerable, so the
+    /// scanner's immutable image belongs in the sandbox declaration.
+    /// </remarks>
+    private static void RequirePinnedImage(SandboxDefinition definition, string sandbox, ScanPlan plan)
+    {
+        if (string.Equals(definition.Image, plan.Image.Reference, StringComparison.Ordinal)) return;
+        throw new ConfigException(
+            $"Sandbox {sandbox}: declares image '{definition.Image}', but the tool pins " +
+            $"'{plan.Image.Reference}'. The scan runs inside this sandbox, so its declaration must name " +
+            "the pinned image -- otherwise the tool that runs is not the one that was pinned.");
+    }
+
+    /// <summary>
+    /// The declared network's name, or a refusal: there is no unrestricted scan mode.
+    /// </summary>
+    private static string RequireDeclaredNetwork(SandboxDefinition definition, string sandbox) =>
+        definition.Network
+        ?? throw new ConfigException(
+            $"Sandbox {sandbox}: declares no network; a scan requires an internal network, " +
+            $"so add a networks: entry with internal: true and reference it from sandboxes.{sandbox}.network");
+
+    /// <summary>
+    /// The report as the tool left it, or null when there is none. Read as bytes through the
+    /// sandbox rather than trusted as text: the content is a tool's output, which is treated
+    /// as untrusted input downstream, and nothing here interprets it.
+    /// </summary>
+    private (string? Report, string? Error) ReadReport(string sandbox, string reportPath, TimeSpan timeout)
+    {
+        // `cat` with the path as its own argument, never a shell line: a report path is data,
+        // and composing it into `sh -c` would make it executable.
+        try
+        {
+            var captured = sandboxes.CaptureReport(sandbox, ["cat", reportPath], timeout);
+            if (captured.TimedOut)
+                return (null, $"report collection timed out after {timeout.TotalSeconds:g} seconds");
+            if (captured.OutputLimitExceeded || captured.Output.Length > MaxReportCharacters)
+                return (null, "report exceeded the 1 Mi-character retention limit; no partial report was returned");
+            if (captured.Code != 0)
+                return (null, $"report collection failed (exit {captured.Code})");
+            return (captured.Output, null);
+        }
+        catch (WipException error)
+        {
+            // Collection failure must not erase the scanner's status and provenance.
+            return (null, $"report collection failed: {error.Message}");
+        }
+    }
+
+    private void Stop(string sandbox)
+    {
+        // A cleanup failure must not replace the scan's own outcome, so it is swallowed here
+        // and left to `sandbox status` to show. Rethrowing from a finally would discard
+        // whichever result or exception brought us here.
+        // ConfigException derives from WipException, so the one clause covers both.
+        try { sandboxes.Stop(sandbox); }
+        catch (WipException) { }
+    }
+}

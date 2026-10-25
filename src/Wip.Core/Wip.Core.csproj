@@ -12,6 +12,8 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="Wip.Tests" />
+    <!-- The CLI drives scans through the internal contract without exposing a plugin API. -->
+    <InternalsVisibleTo Include="wip" />
   </ItemGroup>
 
 </Project>

@@ -5,7 +5,11 @@ using Wip.Configuration;
 
 namespace Wip.Execution;
 
-public sealed record SandboxCommandResult(int Code, string Output);
+public sealed record SandboxCommandResult(int Code, string Output)
+{
+    public bool TimedOut { get; init; }
+    public bool OutputLimitExceeded { get; init; }
+}
 public sealed record SandboxMount(string Type, string Name, string Destination);
 public sealed record SandboxStatus(
     string Name,
@@ -13,12 +17,20 @@ public sealed record SandboxStatus(
     string? Id,
     string State,
     IReadOnlyList<SandboxMount>? Mounts = null,
-    IReadOnlyList<string>? Networks = null)
+    IReadOnlyList<string>? Networks = null,
+    string? Image = null)
 {
     public IReadOnlyList<SandboxMount> Mounts { get; init; } = Mounts ?? [];
 
     /// <summary>Backend names of every network the container is attached to.</summary>
     public IReadOnlyList<string> Networks { get; init; } = Networks ?? [];
+
+    /// <summary>
+    /// The image reference the container was created from, as the backend recorded it, or null
+    /// when it cannot be read. A declaration can be edited after a container exists, so this
+    /// is the only way to know what is actually running.
+    /// </summary>
+    public string? Image { get; init; } = Image;
 }
 
 /// <summary>How a backend invocation uses wip's own console.</summary>
@@ -37,6 +49,9 @@ public enum SandboxConsoleMode
 
     /// <summary>Hand wip's own stdin/stdout/stderr to the child so a user can drive it.</summary>
     Interactive,
+
+    /// <summary>Capture a scan report with an explicit storage limit.</summary>
+    CaptureReport,
 }
 
 /// <summary>Backend argv are passed directly, never through a shell. Capture is only needed for probes.</summary>
@@ -92,7 +107,7 @@ public sealed class SandboxLifecycle(
         var state = State(record);
         if (state == "deleted") return new(name, backendName, null, "not found");
         var mounts = ExtractMounts(record);
-        return new(name, backendName, inspectedId, state, mounts, ExtractNetworks(record));
+        return new(name, backendName, inspectedId, state, mounts, ExtractNetworks(record), ExtractImage(record));
     }
 
     public int Create(string name)
@@ -348,13 +363,44 @@ public sealed class SandboxLifecycle(
     /// Variables exported to the child with <c>-e</c>; null or empty leaves the backend argv
     /// exactly as it was before the report relay existed.
     /// </param>
-    public int Exec(string name, IReadOnlyList<string> argv, TimeSpan timeout, IReadOnlyList<KeyValuePair<string, string>>? environment = null)
+    public int Exec(string name, IReadOnlyList<string> argv, TimeSpan timeout, IReadOnlyList<KeyValuePair<string, string>>? environment = null) =>
+        ExecWithResult(name, argv, timeout, environment).Code;
+
+    /// <summary>Execute while retaining timeout information separately from the exit code.</summary>
+    internal SandboxCommandResult ExecWithResult(string name, IReadOnlyList<string> argv, TimeSpan timeout, IReadOnlyList<KeyValuePair<string, string>>? environment = null)
     {
         ValidateArgv(argv);
         if (timeout <= TimeSpan.Zero || timeout.TotalMilliseconds > int.MaxValue)
             throw new ConfigException("sandbox exec timeout must be positive and at most 2147483 seconds");
         var options = EnvironmentOptions(environment);
-        return backend(["exec", .. options, RunningId(name), .. argv], timeout, SandboxConsoleMode.Stream).Code;
+        return backend(["exec", .. options, RunningId(name), .. argv], timeout, SandboxConsoleMode.Stream);
+    }
+
+    /// <summary>
+    /// Runs the same argv as <see cref="Exec"/> but keeps the child's output instead of
+    /// streaming it, for a caller that has to read what the command printed -- collecting a
+    /// scanner's report, say -- rather than show it.
+    /// </summary>
+    /// <remarks>
+    /// The status is returned alongside the output rather than thrown on, because a non-zero
+    /// exit is an answer here: a report that is not there is a fact about the run, not a
+    /// failure of the read.
+    /// </remarks>
+    public SandboxCommandResult Capture(string name, IReadOnlyList<string> argv, TimeSpan timeout)
+    {
+        ValidateArgv(argv);
+        if (timeout <= TimeSpan.Zero || timeout.TotalMilliseconds > int.MaxValue)
+            throw new ConfigException("sandbox capture timeout must be positive and at most 2147483 seconds");
+        return backend(["exec", RunningId(name), .. argv], timeout, SandboxConsoleMode.Capture);
+    }
+
+    /// <summary>Collect a scan report without limiting ordinary probe output.</summary>
+    internal SandboxCommandResult CaptureReport(string name, IReadOnlyList<string> argv, TimeSpan timeout)
+    {
+        ValidateArgv(argv);
+        if (timeout <= TimeSpan.Zero || timeout.TotalMilliseconds > int.MaxValue)
+            throw new ConfigException("sandbox capture timeout must be positive and at most 2147483 seconds");
+        return backend(["exec", RunningId(name), .. argv], timeout, SandboxConsoleMode.CaptureReport);
     }
 
     /// <summary>
@@ -441,11 +487,30 @@ public sealed class SandboxLifecycle(
         return options;
     }
 
-    /// <summary>The verified ID of the owned container, which must already be running.</summary>
+    /// <summary>
+    /// The verified, running container's ID -- verified including its declared boundary.
+    /// </summary>
+    /// <remarks>
+    /// The network check lives here because this is the guard <see cref="Exec"/>,
+    /// <see cref="Capture"/>, <see cref="ExecArguments"/>, <see cref="ExecInteractive"/> and
+    /// <see cref="Attach"/> all pass through. Create refuses a container that is not attached
+    /// to exactly its declared network, but until this, nothing else did: a container made
+    /// before `network:` was added to wip.yml kept running on whatever it was given, and an
+    /// exec into it ran with unrestricted egress (slidict/wip#263). A sandbox that declares
+    /// no network is unaffected, so this costs nothing where there is no boundary to check.
+    /// </remarks>
     private string RunningId(string name)
     {
         var existing = Status(name);
         if (existing.Id is null || existing.State != "running") throw Failure(name, "sandbox is not running; run sandbox create first");
+        if (Definition(name).Network is { } networkName)
+        {
+            if (networks is null)
+                throw new ConfigException($"Sandbox {name}: network lifecycle is not configured; its declared network cannot be verified");
+            var expected = networks.VerifiedBackendName(networkName);
+            if (existing.Networks.Count != 1 || existing.Networks[0] != expected)
+                throw Failure(name, "is not attached to exactly its declared network; run sandbox destroy, confirm absence, then sandbox create");
+        }
         return existing.Id;
     }
 
@@ -515,6 +580,21 @@ public sealed class SandboxLifecycle(
             }
         }
         throw new WipException("Sandbox backend returned malformed JSON; existence is unknown");
+    }
+
+    /// <summary>
+    /// The source reference in <c>Config.Image</c>, or null when unavailable. The top-level
+    /// <c>Image</c> is a config image ID, not a repository reference, and cannot substitute
+    /// for it when verifying the image declared by a scan plan.
+    /// </summary>
+    private static string? ExtractImage(JsonElement record)
+    {
+        if (record.TryGetProperty("Config", out var config) && config.ValueKind == JsonValueKind.Object &&
+            Text(config, "Image") is { Length: > 0 } declared)
+        {
+            return declared;
+        }
+        return null;
     }
 
     /// <summary>

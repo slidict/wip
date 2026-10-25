@@ -55,12 +55,19 @@ Measured against WSLC on 2026-10-24, a container attached only to an internal ne
 reach an external IPv4 address, cannot reach a public resolver, and cannot resolve a name at
 all.
 
-**External IPv6 reachability is unverified.** The fixture holds no global IPv6 address, so
-there was no IPv6 egress to block and nothing was established either way — a `ping -6` that
-fails for want of a stack says nothing about the boundary. The test asserts that absence
-rather than dressing it up as a block, and runs the reachability assertion only on a sandbox
-that does hold an address. Treat IPv6 isolation as unverified until it runs somewhere IPv6 is
-configured.
+**External IPv6 reachability is unverified, and WSLC is why.** The fixture holds no global
+IPv6 address, so there was no IPv6 egress to block and nothing was established either way — a
+`ping -6` that fails for want of a stack says nothing about the boundary. The test asserts
+that absence rather than dressing it up as a block, and runs the reachability assertion only
+on a sandbox that does hold an address.
+
+This is not a gap in the fixture. Measured against WSLC 3.0.3: a network created with an IPv6
+subnet and gateway is accepted and records the subnet in its IPAM configuration, yet
+`EnableIPv6` stays false, an IPv4 subnet is assigned alongside, and a container on it gets no
+IPv6 address; the driver option `com.docker.network.enable_ipv6=true` is stored and ignored.
+An IPv6 declaration therefore does not fail — it silently yields an IPv4-only network. So IPv6
+isolation stays unverified until WSLC supports IPv6 at all, and the sandbox networking this
+builds on is IPv4 only, as the README states.
 
 Names derive from the resource namespace the same way sandbox and volume names do
 (`wip-n-` + a SHA-256 prefix of `<namespace>:network:<name>`), so two declared networks never

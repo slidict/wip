@@ -200,7 +200,7 @@ function Invoke-NetworkIsolationE2E([string] $Namespace) {
 
         # ------------------------------------------------------------ the forbidden paths
         #
-        # The forbidden list. Each is one probe whose success would be the leak.
+        # Probe each forbidden egress path; any success would reveal a boundary leak.
         Assert-Blocked 'scan-scanner' 'nc -z -w 3 1.1.1.1 443' 'an internet IPv4 address over TCP'
         Assert-Blocked 'scan-scanner' 'ping -c 1 -W 2 1.1.1.1' 'an internet IPv4 address over ICMP'
         # Egress to a public resolver, as a query actually addressed to it. Verified to

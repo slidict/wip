@@ -69,6 +69,15 @@ public sealed class CommandRunner
         IReadOnlyDictionary<string, string>? environment = null,
         bool interactive = false,
         string? workingDirectory = null,
+        TimeSpan? timeout = null) =>
+        RunWithOutcome(command, environment, interactive, workingDirectory, timeout).Code;
+
+    /// <summary>Returns timeout enforcement separately from the child's exit code.</summary>
+    public (int Code, bool TimedOut) RunWithOutcome(
+        IReadOnlyList<string> command,
+        IReadOnlyDictionary<string, string>? environment = null,
+        bool interactive = false,
+        string? workingDirectory = null,
         TimeSpan? timeout = null)
     {
         if (debug)
@@ -92,14 +101,21 @@ public sealed class CommandRunner
             startInfo.WorkingDirectory = workingDirectory;
         }
 
-        return interactive ? RunInherited(startInfo) : RunCaptured(startInfo, timeout);
+        return interactive ? (RunInherited(startInfo), false) : RunCaptured(startInfo, timeout);
     }
 
-    private int RunCaptured(ProcessStartInfo startInfo, TimeSpan? timeout)
+    internal static void ConfigureCapturedStreams(ProcessStartInfo startInfo)
     {
         startInfo.RedirectStandardOutput = true;
         startInfo.RedirectStandardError = true;
         startInfo.RedirectStandardInput = true;
+        startInfo.StandardOutputEncoding = new UTF8Encoding(false);
+        startInfo.StandardErrorEncoding = new UTF8Encoding(false);
+    }
+
+    private (int Code, bool TimedOut) RunCaptured(ProcessStartInfo startInfo, TimeSpan? timeout)
+    {
+        ConfigureCapturedStreams(startInfo);
 
         var captured = new StringBuilder();
 
@@ -146,12 +162,12 @@ public sealed class CommandRunner
                 ReportHint(captured.ToString());
             }
 
-            return code;
+            return (code, !exited);
         }
         catch (System.ComponentModel.Win32Exception exception)
         {
             error.WriteLine(exception.Message);
-            return 127;
+            return (127, false);
         }
     }
 
