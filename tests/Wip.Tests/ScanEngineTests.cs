@@ -48,7 +48,8 @@ public class ScanEngineTests
         new PinnedImage(Pinned),
         ["zap-baseline", "-t", "http://app.test:8080"],
         reportPath,
-        "2.15.0");
+        "2.15.0",
+        "/out/unperformed.txt");
 
     private sealed class StubScanner(ScanPlan? plan = null, string name = "stub", IReadOnlyList<ScanFinding>? findings = null) : ISecurityScanner
     {
@@ -377,6 +378,23 @@ public class ScanEngineTests
         Assert.False(Ran(fake, "pull"));
     }
 
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void APlanWithoutACoveragePathFailsValidationBeforeAnyBackendCall(string? coveragePath)
+    {
+        var fake = new Fake();
+        var plan = ValidPlan() with { UnperformedChecksPath = coveragePath! };
+
+        var validation = Assert.Throws<ConfigException>(() => plan.Validate("stub"));
+        Assert.Contains("unperformed-checks path is required", validation.Message);
+        Assert.Contains("not checked", validation.Message);
+        Assert.Throws<ConfigException>(() =>
+            Engine(fake).Prepare(new StubScanner(plan), "scanner", new ScanTarget("http://app.test:8080")));
+        Assert.Empty(fake.Calls);
+    }
+
     [Fact]
     public void AnEmptyArgvIsRefused()
     {
@@ -536,7 +554,7 @@ public class ScanEngineTests
 
         Engine(fake).Run(new StubScanner(), "scanner", ValidPlan(), new ScanTarget("http://app.test:8080"));
 
-        var read = fake.Calls.Single(c => c.Contains("cat"));
+        var read = fake.Calls.Single(c => c.Contains("cat") && c.Contains("/out/report.json"));
         Assert.Equal(["exec", "container-id", "cat", "/out/report.json"], read);
         Assert.DoesNotContain("sh", read);
     }
@@ -707,6 +725,15 @@ public class ScanEngineTests
         Assert.True(outcome.TimedOut);
         Assert.Null(outcome.UnperformedChecks);
         Assert.NotNull(outcome.UnperformedChecksError);
+
+        using var output = new StringWriter();
+        using var error = new StringWriter();
+        var code = CliContext.WriteScanOutcome(outcome, plan.ReportPath, output, error,
+            isOutputRedirected: true, isErrorRedirected: true);
+        Assert.Equal(70, code);
+        Assert.Contains("timed out; requested sandbox stop without collecting a partial report", error.ToString());
+        Assert.Contains("unperformed-check diagnostics unavailable: scan timed out before diagnostics could be collected", error.ToString());
+        Assert.DoesNotContain("wrote no report", error.ToString());
     }
 
     [Fact]

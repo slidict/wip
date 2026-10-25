@@ -164,7 +164,12 @@ An adapter supplies a `ScanPlan`:
 | `Argv` | Executable and arguments inside the sandbox, passed directly without a shell |
 | `ReportPath` | Canonical absolute path of the report inside the container |
 | `RulesVersion` | Version or digest of the applied rule, template or add-on set |
-| `UnperformedChecksPath` | Optional absolute path for raw omitted-check information |
+| `UnperformedChecksPath` | Required canonical absolute path for raw omitted-check information; missing paths are rejected before execution |
+
+Every adapter must declare a coverage record so an empty finding list cannot imply that
+unreported checks ran. Plan validation rejects missing coverage paths before backend calls;
+`unperformed-checks-lost` is reserved for a requested record that is lost, unreadable,
+oversized or empty after execution.
 
 The plan cannot set backend options, networks, mounts or environment variables. Its argv
 appears after the container ID and can only become the scanner command's arguments. The

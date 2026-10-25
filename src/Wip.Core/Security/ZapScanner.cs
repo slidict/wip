@@ -46,8 +46,8 @@ internal sealed class ZapScanner : ISecurityScanner
         // prefix to a sibling, port, scheme, or host. No browser or active-scan job runs.
         // Spider.start disables automatic redirects and filters seeds before dispatch;
         // DefaultFetchFilter rejects URLs outside the context (including redirect targets):
-        // The traditional spider's context restriction is documented here:
-        // https://www.zaproxy.org/docs/api/#spider
+        // https://github.com/zaproxy/zap-extensions/blob/main/addOns/spider/src/main/java/org/zaproxy/addon/spider/Spider.java
+        // https://github.com/zaproxy/zap-extensions/blob/main/addOns/spider/src/main/java/org/zaproxy/addon/spider/filters/DefaultFetchFilter.java
         var environment = Map(
             ("contexts", List(Map(("name", "wip"), ("urls", List(url)),
                 ("includePaths", List("^" + scope + "$")), ("excludePaths", List("^(?!" + scope + "$).*"))))),

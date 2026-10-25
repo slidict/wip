@@ -200,9 +200,7 @@ internal sealed class ScanEngine(
             }
             var collectionDeadline = deadline < CollectionTimeout ? deadline : CollectionTimeout;
             var (report, reportError) = ReadReport(sandbox, plan.ReportPath, collectionDeadline);
-            var (unperformed, diagnosticsError) = plan.UnperformedChecksPath is { } diagnosticsPath
-                ? ReadReport(sandbox, diagnosticsPath, collectionDeadline)
-                : (null, null);
+            var (unperformed, diagnosticsError) = ReadReport(sandbox, plan.UnperformedChecksPath, collectionDeadline);
             var outcome = new ScanOutcome(scanner.Name, sandbox, plan.Image.Reference, plan.RulesVersion, network, code, report,
                 ReportError: reportError, UnperformedChecks: unperformed, UnperformedChecksError: diagnosticsError);
             return FinishResult(scanner, target, outcome, runId, startedAt, outputDirectory, commit);
