@@ -77,7 +77,6 @@ internal sealed record ScanPlan(
         return parts.Length == 2 && parts[0].Length > 0 && !parts[0].Contains('@') &&
                !parts[0].Any(char.IsWhiteSpace) && parts[1].Length == 64 && parts[1].All(Uri.IsHexDigit);
     }
-
 }
 
 /// <summary>
