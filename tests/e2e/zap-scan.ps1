@@ -15,6 +15,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false
+. (Join-Path $PSScriptRoot 'private-address.ps1')
 $wipPath = (Resolve-Path -LiteralPath $Wip).Path
 $wslcPath = (Get-Command $Wslc -ErrorAction Stop).Source
 $namespace = 'zap-e2e-' + [guid]::NewGuid().ToString('N').Substring(0, 12)
@@ -122,6 +123,7 @@ try {
     Assert-ZapExit $address 0 'read the target address'
     $match = [regex]::Match($address.Stdout, 'inet (\d+\.\d+\.\d+\.\d+)')
     if (-not $match.Success) { throw "cannot read target address: $($address.Output.Trim())" }
+    Assert-PrivateIPv4 $match.Groups[1].Value 'the ZAP scan target address'
     $target = 'http://' + $match.Groups[1].Value + ':8080/'
     Assert-ZapExit (Invoke-ZapWip @('sandbox', 'exec', 'zap-target', '--', 'sh', '-c',
         'printf "%s" "<html><head><title>ZAP fixture</title></head><body>scan target</body></html>" > /srv/index.html')) 0 'write a single page without outbound links'

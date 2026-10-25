@@ -1,5 +1,6 @@
 # Dot-source from run-e2e.ps1. Real engine execution uses an explicit test-only harness;
 # no fixture is registered in the production scanner table.
+. (Join-Path $PSScriptRoot 'private-address.ps1')
 function Invoke-SecurityScanE2E([string] $Namespace, [string] $Image, [string] $BaseImage, [string] $Harness) {
     $sandboxes = New-Object 'Collections.Generic.List[string]'
     $targetImage = "wip-e2e-scan-${Namespace}:latest"
@@ -92,6 +93,7 @@ dependencies:
         Assert-Exit $address 0 'read the internal HTTP target address'
         $matched = [regex]::Match($address.Output, 'inet (\d+\.\d+\.\d+\.\d+)')
         if (-not $matched.Success) { throw 'the HTTP target has no readable IPv4 address' }
+        Assert-PrivateIPv4 $matched.Groups[1].Value 'the scan target address'
         $target = "http://$($matched.Groups[1].Value):8080/marker.txt"
 
         $scan = Invoke-ScanBounded -Exe $Harness -Arguments @($configPath, $scannerImage, $target, $fixtureScript, $outcomePath) -TimeoutSeconds 300
