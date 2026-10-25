@@ -7,7 +7,7 @@ public sealed class RulesFetcherTests : IDisposable
 {
     private const string Commit = "0123456789abcdef0123456789abcdef01234567";
     private readonly string root = Path.Combine(Path.GetTempPath(), "wip-rules-fetch-" + Guid.NewGuid().ToString("N"));
-    private static readonly PinnedRules Rules = new("https://example.invalid/rules.git", Commit, "/rules");
+    private static readonly PinnedRules Rules = new("https://example.invalid/rules.git", Commit, "/opt/wip-rules");
 
     [Fact]
     public void ConstructionDoesNotTouchDiskOrRequireGitForAdaptersWithoutRules()

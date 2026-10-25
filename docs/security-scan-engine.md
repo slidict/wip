@@ -206,7 +206,9 @@ An adapter whose rules are not bundled in its image declares `ScanPlan.Rules` wi
 `RepositoryUrl`, immutable `Commit` and destination `ContainerPath`. This data cannot select a
 mount, volume, network, helper image or backend option. Validation requires an absolute HTTPS
 URL without userinfo or control characters, exactly 40 lowercase hexadecimal commit characters,
-and a canonical absolute nonroot Linux destination. Branches, tags and short hashes are refused.
+and a canonical absolute Linux destination with at least two nonempty path segments.
+`/opt/wip-rules` is accepted; `/etc`, `/usr` and `/rules` are refused so replacing rules cannot
+remove a top-level container directory. Branches, tags and short hashes are refused.
 
 After pulling the image, `Prepare` uses host-side git to fetch the pinned commit into a staging
 tree, verifies that `FETCH_HEAD` exactly equals the pin, and checks out that commit. Missing or
@@ -222,10 +224,25 @@ tree, and symlinks are refused. `Run` requires a valid staged entry and performs
 Native absolute host source paths are passed directly to `container cp`. The rules-specific
 copy path is covered by fake-backend tests; real WSLC execution is not verified locally.
 
-After image and network verification, the engine replaces the declared destination and copies
-the staged tree with backend argv `container cp <source> <container>:<path>`, without a shell.
-A copy failure, missing path or empty rules directory refuses execution. The copy uses the
-already verified scanner image, with no separate mirror image or volume declaration.
+After image and network verification, the engine uses a derived `<path>.staging` directory.
+WSLC requires the copy destination to exist and nests the source directory inside it; even a
+source ending in `/.` does not copy only its contents. The host cache's source basename is
+always `tree`, so the engine uses separate backend argv calls, never a shell:
+
+```text
+exec <container> rm -rf -- <path> <path>.staging
+exec <container> mkdir -p -- <path>.staging
+container cp <source> <container>:<path>.staging
+exec <container> mv -- <path>.staging/tree <path>
+exec <container> rmdir -- <path>.staging
+```
+
+The nonempty `.staging` suffix cannot equal the validated rules path, and the adapter cannot
+choose a separate staging destination. Moving the known `tree` directory puts its contents
+directly at the declared path. Stdin-tar extraction also avoids nesting, but would require host
+tar and backend stdin plumbing; this sequence needs neither. A failed copy, move or cleanup,
+a missing path or an empty rules directory refuses execution. The copy uses the already
+verified scanner image, with no separate mirror image or volume declaration.
 
 Provenance appends `;rules-commit:<commit>` to the adapter's `RulesVersion` once, so both stderr
 and the result document identify the pin. The colon preserves the commit through normalized

@@ -26,5 +26,9 @@ internal sealed record PinnedRules(string RepositoryUrl, string Commit, string C
             throw new ConfigException(
                 $"Scanner {tool}: rules container path must be a canonical absolute Linux path, " +
                 "so staging targets exactly the directory declared by the adapter");
+        if (ContainerPath[1..].Split('/').Length < 2)
+            throw new ConfigException(
+                $"Scanner {tool}: rules container path must have at least two nonempty path segments, " +
+                "so staging cannot remove a top-level container directory");
     }
 }

@@ -12,6 +12,8 @@ internal sealed class RulesFetcher(
     string cacheDirectory,
     Func<IReadOnlyList<string>, TimeSpan, (int Code, string Output)>? run = null)
 {
+    internal const string TreeDirectoryName = "tree";
+
     private static readonly TimeSpan LocalTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan FetchTimeout = TimeSpan.FromMinutes(5);
 
@@ -25,7 +27,7 @@ internal sealed class RulesFetcher(
         try
         {
             Directory.CreateDirectory(temporary);
-            var tree = Path.Combine(temporary, "tree");
+            var tree = Path.Combine(temporary, TreeDirectoryName);
             var hooks = Path.Combine(temporary, "hooks");
             var configuration = Path.Combine(temporary, "git-config");
             Directory.CreateDirectory(tree);
@@ -76,7 +78,7 @@ internal sealed class RulesFetcher(
     {
         rules.Validate("rules");
         var entry = Path.Combine(Path.GetFullPath(cacheDirectory), rules.Commit);
-        var tree = Path.Combine(entry, "tree");
+        var tree = Path.Combine(entry, TreeDirectoryName);
         var marker = Path.Combine(entry, "verified.json");
         try
         {

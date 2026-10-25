@@ -262,13 +262,17 @@ internal sealed class ScanEngine(
         var staged = RequireRulesFetcher().RequireStaged(rules);
         var source = mapStagedSource is null ? Path.GetFullPath(staged) : mapStagedSource(staged);
         var limit = TimeSpan.FromMinutes(1);
-        // Copy into an absent destination so old files and cp's directory nesting cannot
-        // change the pinned tree. Validation refuses the container root before this point.
-        var parent = rules.ContainerPath[..rules.ContainerPath.LastIndexOf('/')];
-        if (parent.Length == 0) parent = "/";
-        RequireCopyStep(["exec", container, "rm", "-rf", "--", rules.ContainerPath]);
-        RequireCopyStep(["exec", container, "mkdir", "-p", "--", parent]);
-        RequireCopyStep(["container", "cp", source, container + ":" + rules.ContainerPath]);
+        // WSLC requires an existing destination and nests the source directory even when
+        // the source ends in /.; stdin tar extracts contents directly but needs backend
+        // stdin plumbing and host tar. Nest then move; the cache names the copied directory.
+        // Appending to the final canonical segment makes staging a distinct sibling of
+        // the rules path, never the rules path itself or one of its ancestors.
+        var staging = rules.ContainerPath + ".staging";
+        RequireCopyStep(["exec", container, "rm", "-rf", "--", rules.ContainerPath, staging]);
+        RequireCopyStep(["exec", container, "mkdir", "-p", "--", staging]);
+        RequireCopyStep(["container", "cp", source, container + ":" + staging]);
+        RequireCopyStep(["exec", container, "mv", "--", staging + "/" + RulesFetcher.TreeDirectoryName, rules.ContainerPath]);
+        RequireCopyStep(["exec", container, "rmdir", "--", staging]);
         var contents = backend(["exec", container, "find", rules.ContainerPath, "-type", "f", "-print", "-quit"],
             limit, SandboxConsoleMode.Capture);
         if (contents.Code != 0 || contents.TimedOut || string.IsNullOrWhiteSpace(contents.Output))

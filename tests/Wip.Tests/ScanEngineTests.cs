@@ -83,6 +83,8 @@ public class ScanEngineTests
         public int RulesCopyCode;
         public bool RulesEmpty;
         public int RulesReadCode;
+        public readonly HashSet<string> RulesDirectories = [];
+        public readonly HashSet<string> RulesFiles = [];
         public readonly List<TimeSpan> ReportTimeouts = [];
         public string Report = "{\"alerts\":[]}";
         public bool ReportMissing;
@@ -143,9 +145,48 @@ public class ScanEngineTests
                     },
                 }));
             }
-            if (argv is ["container", "cp", ..]) return new(RulesCopyCode, "");
-            if (argv is ["exec", _, "rm" or "mkdir", ..]) return new(0, "");
-            if (argv is ["exec", _, "find", ..]) return new(RulesReadCode, RulesEmpty ? "" : "/rules/template.yaml\n");
+            // Model the measured WSLC behavior: destination must exist, and a directory
+            // source is nested by basename even if its contents were intended.
+            if (argv is ["container", "cp", var source, var target])
+            {
+                var destination = target[(target.IndexOf(':') + 1)..];
+                if (RulesCopyCode != 0) return new(RulesCopyCode, "");
+                if (!RulesDirectories.Contains(destination)) return new(1, "destination missing");
+                var nested = destination + "/" + Path.GetFileName(source);
+                RulesDirectories.Add(nested);
+                if (!RulesEmpty) RulesFiles.Add(nested + "/template.yaml");
+                return new(0, "");
+            }
+            if (argv is ["exec", _, "rm", "-rf", "--", ..])
+            {
+                foreach (var path in argv.Skip(5))
+                {
+                    RulesDirectories.RemoveWhere(entry => entry == path || entry.StartsWith(path + "/", StringComparison.Ordinal));
+                    RulesFiles.RemoveWhere(entry => entry.StartsWith(path + "/", StringComparison.Ordinal));
+                }
+                return new(0, "");
+            }
+            if (argv is ["exec", _, "mkdir", "-p", "--", var directory])
+            {
+                RulesDirectories.Add(directory);
+                return new(0, "");
+            }
+            if (argv is ["exec", _, "mv", "--", var from, var to])
+            {
+                if (!RulesDirectories.Remove(from) || RulesDirectories.Contains(to)) return new(1, "invalid move");
+                RulesDirectories.Add(to);
+                foreach (var file in RulesFiles.Where(file => file.StartsWith(from + "/", StringComparison.Ordinal)).ToArray())
+                {
+                    RulesFiles.Remove(file);
+                    RulesFiles.Add(to + file[from.Length..]);
+                }
+                return new(0, "");
+            }
+            if (argv is ["exec", _, "rmdir", "--", var emptyDirectory])
+                return new(RulesDirectories.Remove(emptyDirectory) &&
+                    !RulesDirectories.Any(path => path.StartsWith(emptyDirectory + "/", StringComparison.Ordinal)) ? 0 : 1, "");
+            if (argv is ["exec", _, "find", var rulesPath, ..])
+                return new(RulesReadCode, string.Join('\n', RulesFiles.Where(file => file.StartsWith(rulesPath + "/", StringComparison.Ordinal))));
             if (argv is ["exec", _, "cat", ..])
             {
                 if (argv[^1] == "/out/unperformed.txt")
@@ -189,7 +230,7 @@ public class ScanEngineTests
     private sealed class RulesCacheFixture : IDisposable
     {
         public readonly string Root = Path.Combine(Path.GetTempPath(), "wip-rules-engine-" + Guid.NewGuid().ToString("N"));
-        public readonly PinnedRules Rules = new("https://example.invalid/rules.git", new string('a', 40), "/rules");
+        public readonly PinnedRules Rules = new("https://example.invalid/rules.git", new string('a', 40), "/opt/wip-rules");
         public readonly List<string[]> GitCalls = [];
         public Action? BeforeGit;
         public bool WrongCommit;
@@ -250,6 +291,8 @@ public class ScanEngineTests
         cache.Fetcher.Fetch(cache.Rules);
         var gitCalls = cache.GitCalls.Count;
         var fake = new Fake();
+        fake.RulesDirectories.UnionWith(["/opt/wip-rules", "/opt/wip-rules.staging", "/opt/wip-rules.staging/old"]);
+        fake.RulesFiles.UnionWith(["/opt/wip-rules/old.yaml", "/opt/wip-rules.staging/old/stale.yaml"]);
         var plan = ValidPlan() with { Rules = cache.Rules };
         string? mapped = null;
         var engine = Engine(fake, rulesFetcher: cache.Fetcher, mapRulesSource: source =>
@@ -262,10 +305,16 @@ public class ScanEngineTests
 
         Assert.Equal(cache.Fetcher.RequireStaged(cache.Rules), mapped);
         var copy = Assert.Single(fake.Calls, command => command is ["container", "cp", ..]);
-        Assert.Equal(new[] { "container", "cp", "/mapped staging/tree", "container-id:/rules" }, copy);
+        Assert.Equal(new[] { "container", "cp", "/mapped staging/tree", "container-id:/opt/wip-rules.staging" }, copy);
         var copyIndex = fake.Calls.IndexOf(copy);
-        Assert.Contains(fake.Calls.Take(copyIndex), command => command.SequenceEqual(new[] { "exec", "container-id", "rm", "-rf", "--", "/rules" }));
-        Assert.Contains(fake.Calls.Take(copyIndex), command => command.SequenceEqual(new[] { "exec", "container-id", "mkdir", "-p", "--", "/" }));
+        Assert.Contains(fake.Calls.Take(copyIndex), command => command.SequenceEqual(new[] { "exec", "container-id", "rm", "-rf", "--", "/opt/wip-rules", "/opt/wip-rules.staging" }));
+        Assert.Contains(fake.Calls.Take(copyIndex), command => command.SequenceEqual(new[] { "exec", "container-id", "mkdir", "-p", "--", "/opt/wip-rules.staging" }));
+        var moveIndex = fake.Calls.FindIndex(command => command.SequenceEqual(new[] { "exec", "container-id", "mv", "--", "/opt/wip-rules.staging/tree", "/opt/wip-rules" }));
+        var cleanupIndex = fake.Calls.FindIndex(command => command.SequenceEqual(new[] { "exec", "container-id", "rmdir", "--", "/opt/wip-rules.staging" }));
+        Assert.True(copyIndex < moveIndex && moveIndex < cleanupIndex);
+        Assert.True(cleanupIndex < fake.Calls.FindIndex(command => command is ["exec", _, "find", ..]));
+        Assert.Equal(["/opt/wip-rules/template.yaml"], fake.RulesFiles);
+        Assert.DoesNotContain("/opt/wip-rules.staging", fake.RulesDirectories);
         Assert.True(copyIndex < fake.Calls.FindIndex(command => command is ["exec", _, "find", ..]));
         Assert.True(fake.Calls.FindIndex(command => command is ["exec", _, "find", ..]) <
                     fake.Calls.FindIndex(command => command is ["exec", _, "zap-baseline", ..]));
@@ -344,7 +393,7 @@ public class ScanEngineTests
         Assert.Empty(cache.GitCalls);
         Assert.False(Directory.Exists(cache.Root));
         Assert.False(Ran(fake, "container", "cp"));
-        Assert.DoesNotContain(fake.Calls, command => command is ["exec", _, "rm" or "mkdir" or "find", ..]);
+        Assert.DoesNotContain(fake.Calls, command => command is ["exec", _, "rm" or "mkdir" or "mv" or "rmdir" or "find", ..]);
     }
 
     // ----------------------------------------------------------------- one tool, from the table

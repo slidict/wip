@@ -22,7 +22,7 @@ public class ScanRulesValidationTests
     [Fact]
     public void ACompleteHttpsCommitPinAndCanonicalPathAreAccepted()
     {
-        var rules = new PinnedRules("https://rules.test/catalog.git", Commit, "/scanner/rules");
+        var rules = new PinnedRules("https://rules.test/catalog.git", Commit, "/opt/wip-rules");
         var plan = Plan(rules);
 
         plan.Validate("fixture");
@@ -70,6 +70,19 @@ public class ScanRulesValidationTests
             Plan(new PinnedRules("https://rules.test/catalog.git", Commit, "/")).Validate("fixture"));
 
         Assert.Contains("cannot replace the container root", error.Message);
+    }
+
+    [Theory]
+    [InlineData("/etc")]
+    [InlineData("/usr")]
+    [InlineData("/rules")]
+    public void RulesCannotReplaceATopLevelContainerDirectory(string containerPath)
+    {
+        var error = Assert.Throws<ConfigException>(() =>
+            Plan(new PinnedRules("https://rules.test/catalog.git", Commit, containerPath)).Validate("fixture"));
+
+        Assert.Contains("at least two", error.Message);
+        Assert.Contains("top-level", error.Message);
     }
 
     [Theory]
