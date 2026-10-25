@@ -15,17 +15,18 @@ namespace Wip.Tests;
 /// failed. A guard whose scope excludes where the problem lives is not a guard.
 /// </para>
 /// <para>
-/// The file list comes from <c>git ls-files</c> rather than from walking the directory. What
-/// matters is what the repository publishes, and a working tree also holds scratch notes,
-/// ignored build output and published binaries; failing <c>dotnet test</c> over a local note
-/// that never ships would be a false alarm, and reading a published tree as text is pointless
-/// work. Tracked content is exactly the set this is about.
+/// Both the content and the path are matched, and both come from git rather than from the
+/// working tree. What gets published is what gets committed, which is the index: a file staged
+/// with the name and then corrected without staging the correction still commits the name,
+/// while a working-tree read of it passes. Reading the index also removes the question of what
+/// to do about a tracked file that is missing or unreadable in the working tree -- a sparse
+/// checkout, a file deleted but not yet committed -- because an indexed blob is always there
+/// to read. Every one of those was a way to pass while covering less than this claims to.
 /// </para>
 /// <para>
-/// Both the path and the content are matched, and a tracked file that cannot be read is
-/// reported rather than skipped. Every one of those was a way to pass while covering less than
-/// the set above -- a directory named after the tracker, a file missing from the working tree,
-/// a read that threw -- which is the same hole as the one in the first paragraph.
+/// Walking the directory instead would check the wrong set the other way: a working tree also
+/// holds scratch notes, ignored build output and published binaries, and failing
+/// <c>dotnet test</c> over a local note that never ships would be a false alarm.
 /// </para>
 /// <para>
 /// Only the literal name is matched. A bare <c>#NNN</c> cannot be checked here, because this
@@ -51,36 +52,27 @@ public class PrivateTrackerReferenceTests
     public void NoTrackedFileNamesThePrivateTracker()
     {
         var root = RepositoryRoot();
+        if (!GitOpensRepository(root)) return;
+
         var tracked = TrackedFiles(root);
+        if (tracked is null) return;
         Assert.NotEmpty(tracked);
 
-        var offenders = new List<string>();
-        var uninspected = new List<string>();
+        var offenders = new SortedSet<string>(StringComparer.Ordinal);
+
+        // The path is published as well as the content, so a directory named after the tracker
+        // leaks it whatever the file holds. Not covered by the content search below, which
+        // reads blobs and never looks at where they live.
         foreach (var relative in tracked)
         {
-            // The path is published too, so a directory named after the tracker leaks it
-            // whatever the file contains. Checked before reading, because this one holds for a
-            // path that is not in the working tree at all.
-            if (relative.Contains(PrivateTracker, StringComparison.OrdinalIgnoreCase))
-            {
-                offenders.Add(relative);
-                continue;
-            }
-            if (Allowed.Contains(relative, StringComparer.Ordinal)) continue;
+            if (relative.Contains(PrivateTracker, StringComparison.OrdinalIgnoreCase)) offenders.Add(relative);
+        }
 
-            var path = Path.Combine(root, relative.Replace('/', Path.DirectorySeparatorChar));
-            // A tracked file this cannot read is a tracked file this did not check, and the
-            // whole point is to cover everything the repository publishes. Skipping it would
-            // pass while leaving the content unexamined -- the same shape of hole the test
-            // exists to close -- so it is reported instead.
-            string text;
-            try { text = File.ReadAllText(path); }
-            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
-            {
-                uninspected.Add($"{relative} ({error.GetType().Name})");
-                continue;
-            }
-            if (text.Contains(PrivateTracker, StringComparison.OrdinalIgnoreCase)) offenders.Add(relative);
+        var naming = IndexedFilesNamingTheTracker(root);
+        if (naming is null) return;
+        foreach (var relative in naming)
+        {
+            if (!Allowed.Contains(relative, StringComparer.Ordinal)) offenders.Add(relative);
         }
 
         Assert.True(offenders.Count == 0, string.Join("\n", [
@@ -88,50 +80,73 @@ public class PrivateTrackerReferenceTests
             "公開リポジトリの読み手は辿れないため、指していた対象そのものを書く。",
             .. offenders.Select(o => $"  {o}"),
         ]));
-        Assert.True(uninspected.Count == 0, string.Join("\n", [
-            "これらの追跡ファイルを読めなかったため、照合できていない。",
-            "読めないものを通すと、検査したつもりで中身を見ていない状態になる。",
-            .. uninspected.Select(o => $"  {o}"),
-        ]));
     }
 
     /// <summary>
-    /// Tracked paths, repository-relative with forward slashes, as git reports them.
+    /// Whether git, run the way this test runs it, opened the repository under test. Returns
+    /// <c>false</c> when git is unavailable and the test skipped.
     /// </summary>
     /// <remarks>
-    /// <para>
-    /// <c>-z</c> so a path with a newline or a non-ASCII character arrives verbatim instead of
-    /// quoted. The test skips rather than falls back to walking the tree: a fallback would
-    /// quietly check a different set of files than the one it claims to.
-    /// </para>
-    /// <para>
-    /// <c>WorkingDirectory</c> alone does not decide which repository git reads.
-    /// <c>GIT_DIR</c>, <c>GIT_WORK_TREE</c> and <c>GIT_INDEX_FILE</c> override it, and an
-    /// inherited one would list another repository's files -- a non-empty list that contains
-    /// nothing of this repository, so every path misses here and the test passes having
-    /// scanned nothing. They are removed, and then the repository git actually opened is
-    /// compared to the one being tested rather than assumed.
-    /// </para>
+    /// Clearing the variables in <see cref="RepositoryLocationVariables"/> is not something a
+    /// test can observe directly, and anything else that redirects git would be just as
+    /// invisible. This asks git which repository it opened and compares the answer, so a
+    /// redirected run fails instead of scanning a different tree and passing.
     /// </remarks>
-    private static IReadOnlyList<string> TrackedFiles(string root)
+    private static bool GitOpensRepository(string root)
     {
         var toplevel = Git(root, ["rev-parse", "--show-toplevel"]);
-        if (toplevel is null) return [];
+        if (toplevel is null) return false;
+
         var reported = new DirectoryInfo(toplevel.Trim()).FullName;
         Assert.True(
             string.Equals(reported, new DirectoryInfo(root).FullName, StringComparison.OrdinalIgnoreCase),
             $"gitが開いたリポジトリ（{reported}）が検査対象（{root}）と違う。");
+        return true;
+    }
 
+    /// <summary>
+    /// Tracked paths, repository-relative with forward slashes, as git reports them.
+    /// <c>null</c> when git is unavailable and the test skipped.
+    /// </summary>
+    /// <remarks>
+    /// <c>-z</c> so a path with a newline or a non-ASCII character arrives verbatim instead of
+    /// quoted.
+    /// </remarks>
+    private static IReadOnlyList<string>? TrackedFiles(string root)
+    {
         var output = Git(root, ["ls-files", "-z"]);
-        if (output is null) return [];
-        return output.Split('\0', StringSplitOptions.RemoveEmptyEntries);
+        return output?.Split('\0', StringSplitOptions.RemoveEmptyEntries);
+    }
+
+    /// <summary>
+    /// Indexed files whose staged content contains the tracker's name, searched by git so the
+    /// bytes examined are the ones a commit would publish. <c>null</c> when git is unavailable.
+    /// </summary>
+    /// <remarks>
+    /// <c>git grep</c> exits 1 for "no match", which is the passing case here, so only a code
+    /// above 1 is a failure. Binary blobs are searched too rather than excluded: a name in one
+    /// is still published.
+    /// </remarks>
+    private static IReadOnlyList<string>? IndexedFilesNamingTheTracker(string root)
+    {
+        var output = Git(root, ["grep", "--cached", "-l", "-i", "-z", "-F", "-e", PrivateTracker], allowNoMatch: true);
+        return output?.Split('\0', StringSplitOptions.RemoveEmptyEntries);
     }
 
     /// <summary>
     /// Runs git in <paramref name="root"/> and returns stdout, or <c>null</c> when git is not
     /// available (the test skips).
     /// </summary>
-    private static string? Git(string root, string[] arguments)
+    /// <remarks>
+    /// <c>WorkingDirectory</c> alone does not decide which repository git reads.
+    /// <c>GIT_DIR</c>, <c>GIT_WORK_TREE</c> and <c>GIT_INDEX_FILE</c> override it, and an
+    /// inherited one would read another repository -- a non-empty file list that contains
+    /// nothing of this repository, so nothing here matches and the test passes having scanned
+    /// nothing. They are removed, and the repository git actually opened is then compared
+    /// against the one under test rather than assumed, since removing them is not by itself
+    /// checkable.
+    /// </remarks>
+    private static string? Git(string root, string[] arguments, bool allowNoMatch = false)
     {
         var start = new ProcessStartInfo("git")
         {
@@ -149,7 +164,8 @@ public class PrivateTrackerReferenceTests
             Assert.NotNull(process);
             var output = process.StandardOutput.ReadToEnd();
             process.WaitForExit();
-            Assert.True(process.ExitCode == 0, $"git {string.Join(' ', arguments)} exited {process.ExitCode}");
+            var tolerated = process.ExitCode == 0 || (allowNoMatch && process.ExitCode == 1);
+            Assert.True(tolerated, $"git {string.Join(' ', arguments)} exited {process.ExitCode}");
             return output;
         }
         catch (Exception error) when (error is System.ComponentModel.Win32Exception or FileNotFoundException)
