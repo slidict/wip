@@ -21,11 +21,25 @@ $namespace = 'zap-e2e-' + [guid]::NewGuid().ToString('N').Substring(0, 12)
 $workspace = Join-Path $WorkRoot $namespace
 $zapImage = 'ghcr.io/zaproxy/zaproxy@sha256:5ccfff9a411743ab2615136a2edd7416bec9ce41572fa94e935df38c14adb2b6'
 $sandboxes = New-Object 'Collections.Generic.List[string]'
+$builtImages = New-Object 'Collections.Generic.List[string]'
 $failed = $false
 New-Item -ItemType Directory -Path $workspace -Force | Out-Null
 $configPath = Join-Path $workspace 'wip.yml'
 $quotedWslc = $wslcPath.Replace("'", "''")
-$quotedTarget = $TargetImage.Replace("'", "''")
+
+# The HTTP target is the same derived image security-scan.ps1 builds, from the same
+# Dockerfile, because httpd is not in Alpine's base busybox -- measured on alpine:3.20,
+# `busybox --list` has no httpd applet and `command -v httpd` finds nothing. Running
+# $TargetImage directly is what failed the first dispatched run of this scenario with
+# `exec: "httpd": executable file not found in $PATH`. One Dockerfile keeps the HTTP target
+# defined in a single place rather than twice.
+$targetImage = "wip-e2e-zap-target-${namespace}:latest"
+$targetBuildDirectory = Join-Path $workspace 'zap-target-build'
+New-Item -ItemType Directory -Path $targetBuildDirectory -Force | Out-Null
+$targetDockerfile = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'Dockerfile.security-scan'))
+$targetDockerfile = $targetDockerfile.Replace('FROM wip-e2e:latest', "FROM $TargetImage")
+[IO.File]::WriteAllText((Join-Path $targetBuildDirectory 'Dockerfile'), $targetDockerfile)
+$quotedTarget = $targetImage.Replace("'", "''")
 [IO.File]::WriteAllText($configPath, @"
 version: 1
 resource_namespace: $namespace
@@ -96,6 +110,8 @@ try {
     # The image is about 1.12 GiB compressed. Bound the one real download separately from
     # execution; later Prepare still performs its own availability check outside isolation.
     Assert-ZapExit (Invoke-ZapBounded -Exe $wslcPath -Arguments @('pull', $zapImage) -TimeoutSeconds 600) 0 'pull the immutable ZAP image'
+    $builtImages.Add($targetImage)
+    Assert-ZapExit (Invoke-ZapBounded -Exe $wslcPath -Arguments @('build', '-t', $targetImage, $targetBuildDirectory) -TimeoutSeconds 300) 0 'build the HTTP target with httpd available'
     $sandboxes.Add('zap-target')
     Assert-ZapExit (Invoke-ZapWip @('sandbox', 'create', 'zap-target')) 0 'create the unauthenticated HTTP target'
     $address = Invoke-ZapWip @('sandbox', 'exec', 'zap-target', '--', 'ip', '-4', '-o', 'addr', 'show', 'eth0')
@@ -148,6 +164,21 @@ finally {
         catch {
             $failed = $true
             Write-Warning "ZAP fixture cleanup failed (${sandbox}): $_"
+        }
+    }
+    # Only tags this run built. The pinned ZAP image is left in the runner's store: it is
+    # immutable by digest, and re-downloading 1.12 GiB on the next scheduled run buys nothing.
+    foreach ($tag in $builtImages) {
+        try {
+            $removed = Invoke-ZapBounded -Exe $wslcPath -Arguments @('rmi', $tag) -TimeoutSeconds 120
+            if ($removed.Code -ne 0) {
+                $failed = $true
+                Write-Warning "ZAP fixture image cleanup failed (${tag}): $($removed.Output.Trim())"
+            }
+        }
+        catch {
+            $failed = $true
+            Write-Warning "ZAP fixture image cleanup failed (${tag}): $_"
         }
     }
     if ($failed) { Write-Host "ZAP fixture workspace retained: $workspace" }
