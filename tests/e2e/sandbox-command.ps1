@@ -26,6 +26,13 @@ mode: container
 wslc:
   command: '$wslcConfig'
 container: unused-command-fixture
+dependencies:
+  unused-command-fixture:
+    image: $commandImage
+    workdir: /srv
+    interactive: false
+    remove: true
+    command: sleep 600
 "@)
 
     # Preserve argv through the native invocation, but give every command a deadline,
