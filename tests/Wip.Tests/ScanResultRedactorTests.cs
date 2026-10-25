@@ -7,6 +7,7 @@ public sealed class ScanResultRedactorTests
     [Theory]
     [InlineData("Authorization: Bearer header-secret", "header-secret")]
     [InlineData("Cookie: sid=cookie-secret", "cookie-secret")]
+    [InlineData("{\"Cookie\":\"sid=json-cookie-secret\"}", "json-cookie-secret")]
     [InlineData("Set-Cookie: session=cookie-secret; HttpOnly", "cookie-secret")]
     [InlineData("Proxy-Authorization: Basic basic-secret", "basic-secret")]
     [InlineData("https://target/path?access_token=query-secret&safe=yes", "query-secret")]
@@ -43,6 +44,42 @@ public sealed class ScanResultRedactorTests
         Assert.Contains("tracking=" + ScanResultRedactor.Marker, redacted);
         Assert.DoesNotContain("0123456789abcdef0123456789abcdef", redacted);
         Assert.Contains("plain=ok", redacted);
+    }
+
+    [Theory]
+    [InlineData("http://auth:8080/marker.txt", "http://auth:8080/marker.txt")]
+    [InlineData("http://my-auth:8080/app", "http://my-auth:8080/app")]
+    [InlineData("http://session:3000/x", "http://session:3000/x")]
+    [InlineData("http://api-secret:9000/", "http://api-secret:9000/")]
+    [InlineData("http://app:8080/marker.txt", "http://app:8080/marker.txt")]
+    [InlineData("Cookie: sid=abc123", "Cookie: [REDACTED]")]
+    [InlineData("http://cookie:8080/x", "http://cookie:8080/x")]
+    [InlineData("http://authorization:8080/x", "http://authorization:8080/x")]
+    public void AliasAuthoritiesRemainIntactWhileCookieHeadersAreRedacted(string input, string expected)
+    {
+        Assert.Equal(expected, ScanResultRedactor.Redact(input));
+    }
+
+    [Theory]
+    [InlineData("http://target/reset/0123456789abcdef0123456789abcdef", "http://target/reset/[REDACTED]")]
+    [InlineData("/reset/0123456789abcdef0123456789abcdef", "/reset/[REDACTED]")]
+    [InlineData("http://auth:8080/reset/0123456789abcdef0123456789abcdef?plain=ok", "http://auth:8080/reset/[REDACTED]?plain=ok")]
+    [InlineData("GET /reset/0123456789abcdef0123456789abcdef HTTP/1.1", "GET /reset/[REDACTED] HTTP/1.1")]
+    public void TokensInUrlAndLocationPathSegmentsAreRedacted(string input, string expected)
+    {
+        Assert.Equal(expected, ScanResultRedactor.Redact(input));
+    }
+
+    [Theory]
+    [InlineData("http://target/reset/account/verification")]
+    [InlineData("/reset/account/verification")]
+    [InlineData("http://0123456789abcdef0123456789abcdef:8080/ordinary")]
+    [InlineData("http://0123456789abcdef0123456789abcdef")]
+    [InlineData("image/tool@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")]
+    [InlineData("0123456789abcdef0123456789abcdef01234567")]
+    public void OrdinaryPathsAndNonPathIdentifiersArePreserved(string input)
+    {
+        Assert.Equal(input, ScanResultRedactor.Redact(input));
     }
 
     [Fact]

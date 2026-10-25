@@ -92,6 +92,7 @@ public class ScanEngineTests
         public bool ReportThrows;
         public bool StopThrows;
         public Action? BeforeStop;
+        public Action? AfterExec;
 
         /// <summary>
         /// What the running container was created from. Defaults to the declared image; a test
@@ -154,6 +155,7 @@ public class ScanEngineTests
             if (argv[0] == "exec")
             {
                 if (ExecThrows) throw new WipException("scanner failed to start");
+                AfterExec?.Invoke();
                 return new(ExecCode, "") { TimedOut = ExecTimedOut };
             }
             if (argv[0] == "stop")
@@ -857,6 +859,48 @@ public class ScanEngineTests
             Assert.True(observed);
         }
         finally { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+    }
+
+    [Theory]
+    [InlineData(0, 0)]
+    [InlineData(7, 7)]
+    [InlineData(70, 1)]
+    public void PersistenceFailureAfterPreflightPreservesTheCompletedScan(int scannerCode, int processCode)
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "wip-result-failure-" + Guid.NewGuid().ToString("N"));
+        var fake = new Fake { ExecCode = scannerCode };
+        fake.AfterExec = () =>
+        {
+            Assert.True(Directory.Exists(directory));
+            Directory.Delete(directory);
+            File.WriteAllText(directory, "the output location became a file after preflight");
+        };
+        try
+        {
+            var outcome = Engine(fake).Run(new StubScanner(), "scanner", ValidPlan(),
+                new ScanTarget("http://app.test"), outputDirectory: directory);
+
+            Assert.Equal(fake.Report, outcome.Report);
+            Assert.Equal(fake.Diagnostics, outcome.UnperformedChecks);
+            Assert.Equal(scannerCode, outcome.ExitCode);
+            Assert.Equal(processCode, outcome.ProcessExitCode);
+            Assert.Equal("completed", outcome.Result!.Status);
+            Assert.Equal(scannerCode, outcome.Result.ScannerExitCode);
+            Assert.Contains("could not be saved", outcome.PersistenceError);
+            Assert.Single(fake.Calls, argv => argv[0] == "stop");
+
+            using var output = new StringWriter();
+            using var error = new StringWriter();
+            Assert.Equal(processCode, CliContext.WriteScanOutcome(outcome, ValidPlan().ReportPath, output, error, true, true));
+            Assert.Equal(fake.Report, output.ToString());
+            Assert.Contains($"exit={scannerCode}", error.ToString());
+            Assert.Contains("result persistence failed", error.ToString());
+        }
+        finally
+        {
+            if (File.Exists(directory)) File.Delete(directory);
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
     }
 
     // ----------------------------------------------------------------- cleanup

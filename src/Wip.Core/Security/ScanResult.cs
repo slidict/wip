@@ -95,9 +95,9 @@ internal static class ScanResultWriter
         }
         else writer.WriteString("reason", result.IncompleteReason);
         writer.WriteStartObject("coverage");
-        // Coverage is raw diagnostic text, like its separate artifact. Findings and run
-        // metadata are redacted; preserving coverage verbatim is part of this contract.
-        if (result.UnperformedChecks is { } rawCoverage) writer.WriteString("unperformedChecks", rawCoverage);
+        // The embedded copy shares the document's redaction boundary. The separate
+        // unperformed-checks.txt artifact preserves the exact captured diagnostic text.
+        if (result.UnperformedChecks is { } rawCoverage) WriteString(writer, "unperformedChecks", rawCoverage);
         else WriteString(writer, "missingReason", result.CoverageMissingReason);
         writer.WriteEndObject();
         writer.WriteEndObject();

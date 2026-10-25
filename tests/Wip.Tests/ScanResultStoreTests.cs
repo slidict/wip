@@ -94,6 +94,25 @@ public sealed class ScanResultStoreTests : IDisposable
     }
 
     [Fact]
+    public void EmbeddedCoverageIsRedactedWhileItsRawArtifactIsPreserved()
+    {
+        const string raw = "Crawled http://auth:8080/reset?token=coverage-plain-secret\nCookie: sid=coverage-cookie-secret\nCrawled /reset/0123456789abcdef0123456789abcdef\n";
+        var result = Completed() with { UnperformedChecks = raw };
+
+        var runDirectory = new ScanResultStore(directory).Write(result, "raw report", raw);
+        var serialized = File.ReadAllText(Path.Combine(runDirectory, "result.json"));
+        using var document = JsonDocument.Parse(serialized);
+        var coverage = document.RootElement.GetProperty("coverage").GetProperty("unperformedChecks").GetString();
+
+        Assert.Contains("[REDACTED]", coverage);
+        Assert.Contains("http://auth:8080/reset?token=[REDACTED]", coverage);
+        Assert.DoesNotContain("coverage-plain-secret", serialized);
+        Assert.DoesNotContain("coverage-cookie-secret", serialized);
+        Assert.DoesNotContain("0123456789abcdef0123456789abcdef", serialized);
+        Assert.Equal(raw, File.ReadAllText(Path.Combine(runDirectory, "unperformed-checks.txt")));
+    }
+
+    [Fact]
     public void EvidenceForASecretParameterIsMaskedWithoutChangingItsParameterName()
     {
         const string secret = "aStandaloneSecretTokenValue";

@@ -123,6 +123,11 @@ The directory is checked and created before the scan starts, and before the imag
 an unusable path costs neither a pull nor a run. Persistence happens after the scan, so a path
 rejected there would take a completed scan's report with it.
 
+If storage fails after the preflight check, the CLI reports the persistence error on stderr
+and still returns the captured report, coverage and scan status. The primary scan outcome is
+preserved; a persistence error does not invent a new incomplete-scan reason or change the
+scanner's completed status. Verify that `result.json` was published before consuming artifacts.
+
 The JSON contract is versioned and written through `Utf8JsonWriter`:
 
 | Field | Consumer contract |
@@ -133,17 +138,22 @@ The JSON contract is versioned and written through `Utf8JsonWriter`:
 | `scannerExitCode` | The original scanner status, independent of result completeness |
 | `findings` | Present only for `completed`; an empty array means no findings were reported within the recorded coverage |
 | `reason` | Present only for `incomplete`: `timeout`, `report-collection-failed`, `report-empty`, `report-unparseable` or `unperformed-checks-lost` |
-| `coverage` | Verbatim `unperformedChecks`, or `missingReason` explaining why it is unavailable |
+| `coverage` | Redacted `unperformedChecks`, or `missingReason` explaining why it is unavailable |
 
 Each finding has optional `ruleId`, `name`, `severity`, `confidence` and `evidence`, plus
 `location` containing optional `path`, `method` and `parameter`. Absent scanner fields remain
 absent. ZAP severity codes map to `informational`, `low`, `medium` and `high`; confidence
 codes map to `false-positive`, `low`, `medium`, `high` and `confirmed`. Unknown codes remain
 strings rather than fabricated defaults. Location drops the deployment's scheme, host, port, query string and fragment so a
-finding remains comparable across deployment authorities. Secret-shaped values in normalized
+finding remains comparable across deployment authorities. A blank or unusable instance URI omits
+only that instance's path; malformed report structure still makes the run incomplete. Locations
+are not unique across origins within a multi-site report, so consumers must not merge different
+sites by location alone. Origins remain in the raw report; a stable logical-site mapping is not
+yet part of this format. Secret-shaped values in normalized
 fields are replaced with `[REDACTED]` before writing; the separate raw artifacts are unchanged.
 JSON string escaping preserves document structure even when scanner text contains controls,
-quotes or markup. Raw coverage remains unmodified and may contain sensitive tool diagnostics.
+quotes or markup. The embedded coverage copy uses the same redaction as other result strings;
+`unperformed-checks.txt` remains verbatim for investigation and may contain sensitive diagnostics.
 
 Check `status` before consuming `findings`. An incomplete result has a reason and no findings
 array, so it cannot appear as a clean empty scan. A completed result still has coverage:

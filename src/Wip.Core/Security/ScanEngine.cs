@@ -15,6 +15,7 @@ namespace Wip.Security;
 /// <param name="ReportError">The collection failure reason, independent of the scanner status.</param>
 /// <param name="UnperformedChecks">Unmodified tool diagnostics and profile omissions, when requested.</param>
 /// <param name="UnperformedChecksError">Why requested diagnostics could not be collected.</param>
+/// <param name="PersistenceError">Why artifacts could not be saved, without replacing the scan result.</param>
 /// <remarks>
 /// A tool's non-zero status is not an error here: scanners use exit codes to report findings.
 /// Distinguishing "ran and found things" from "did not run" belongs to the result format that
@@ -32,7 +33,8 @@ internal sealed record ScanOutcome(
     string? ReportError = null,
     string? UnperformedChecks = null,
     string? UnperformedChecksError = null,
-    ScanResult? Result = null)
+    ScanResult? Result = null,
+    string? PersistenceError = null)
 {
     internal int ProcessExitCode => Result?.Status switch
     {
@@ -168,6 +170,9 @@ internal sealed class ScanEngine(
         // is still running on whatever it was given: create refuses it, but nothing else did
         // until now (slidict/wip#263). This is the check at the moment it matters.
         var network = networks.VerifiedBackendName(declared);
+        // Set only after the owned/internal verification succeeds, and pass the attestation
+        // to result construction instead of assuming that every finishing path verified it.
+        var networkVerifiedInternal = true;
         var status = sandboxes.Status(sandbox);
         if (status.Id is null || status.State != "running")
             throw new WipException($"Sandbox {sandbox}: is not running; run sandbox create before a scan");
@@ -197,14 +202,14 @@ internal sealed class ScanEngine(
                 // incomplete metadata before the finally block stops the container.
                 var timedOut = new ScanOutcome(scanner.Name, sandbox, plan.Image.Reference, plan.RulesVersion, network, code, null, TimedOut: true,
                     UnperformedChecksError: "scan timed out before diagnostics could be collected");
-                return FinishResult(scanner, target, timedOut, runId, startedAt, outputDirectory, commit);
+                return FinishResult(scanner, target, timedOut, runId, startedAt, networkVerifiedInternal, outputDirectory, commit);
             }
             var collectionDeadline = deadline < CollectionTimeout ? deadline : CollectionTimeout;
             var (report, reportError) = ReadReport(sandbox, plan.ReportPath, collectionDeadline);
             var (unperformed, diagnosticsError) = ReadReport(sandbox, plan.UnperformedChecksPath, collectionDeadline);
             var outcome = new ScanOutcome(scanner.Name, sandbox, plan.Image.Reference, plan.RulesVersion, network, code, report,
                 ReportError: reportError, UnperformedChecks: unperformed, UnperformedChecksError: diagnosticsError);
-            return FinishResult(scanner, target, outcome, runId, startedAt, outputDirectory, commit);
+            return FinishResult(scanner, target, outcome, runId, startedAt, networkVerifiedInternal, outputDirectory, commit);
         }
         finally
         {
@@ -215,7 +220,7 @@ internal sealed class ScanEngine(
     }
 
     private static ScanOutcome FinishResult(ISecurityScanner scanner, ScanTarget target, ScanOutcome outcome,
-        string runId, DateTimeOffset startedAt, string? outputDirectory, string? commit)
+        string runId, DateTimeOffset startedAt, bool networkVerifiedInternal, string? outputDirectory, string? commit)
     {
         string? reason = outcome.TimedOut ? "timeout"
             : outcome.ReportError is not null || outcome.Report is null ? "report-collection-failed"
@@ -233,16 +238,25 @@ internal sealed class ScanEngine(
         if (reason is null && missingCoverage is not null) reason = "unperformed-checks-lost";
 
         var run = new ScanRunMetadata(runId, startedAt, DateTimeOffset.UtcNow, outcome.Tool, outcome.Image,
-            outcome.RulesVersion, outcome.Sandbox, outcome.Network, true, target.Address, commit);
+            outcome.RulesVersion, outcome.Sandbox, outcome.Network, networkVerifiedInternal, target.Address, commit);
         var result = new ScanResult(run, reason is null ? "completed" : "incomplete",
             Findings: reason is null ? findings : null, IncompleteReason: reason,
             UnperformedChecks: missingCoverage is null ? outcome.UnperformedChecks : null,
             CoverageMissingReason: missingCoverage, ScannerExitCode: outcome.ExitCode);
         // The adapter only converts report text. The engine alone chooses the output path
         // and publishes all artifacts while the sandbox is still available, before teardown.
+        var finished = outcome with { Result = result };
         if (outputDirectory is not null)
-            new ScanResultStore(outputDirectory).Write(result, outcome.Report, outcome.UnperformedChecks);
-        return outcome with { Result = result };
+        {
+            try { new ScanResultStore(outputDirectory).Write(result, outcome.Report, outcome.UnperformedChecks); }
+            catch (WipException error)
+            {
+                // Preflight cannot prevent a later disk failure. Keep the primary report,
+                // scanner status and normalized result, and report storage failure separately.
+                return finished with { PersistenceError = error.Message };
+            }
+        }
+        return finished;
     }
 
     /// <summary>

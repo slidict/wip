@@ -87,6 +87,22 @@ public sealed class SecurityOutputTests
     }
 
     [Fact]
+    public void PersistenceErrorsAreReportedWithoutReplacingRawOutputOrScannerStatus()
+    {
+        const string report = "{\"site\":[]}";
+        var outcome = new ScanOutcome("zap", "scanner", "image", "rules", "isolated", 7, report,
+            PersistenceError: "disk full\u001b[2J");
+        using var output = new StringWriter();
+        using var error = new StringWriter();
+
+        Assert.Equal(7, CliContext.WriteScanOutcome(outcome, "/report.json", output, error, true));
+
+        Assert.Equal(report, output.ToString());
+        Assert.Contains("exit=7", error.ToString());
+        Assert.Contains("result persistence failed: disk full\\u001b[2J", error.ToString());
+    }
+
+    [Fact]
     public void CapturedStreamsExplicitlyUseUtf8()
     {
         var startInfo = new ProcessStartInfo();

@@ -173,6 +173,34 @@ public class ZapScannerTests
     }
 
     [Fact]
+    public void UnusableInstanceUrisDoNotDiscardOtherFindingsOrInstanceFields()
+    {
+        const string report = """
+            {"site":[{"alerts":[{"pluginid":"10020","name":"Header issue","riskcode":"2","confidence":"3",
+            "instances":[{"uri":"http://app.test:8080/app","method":"get","param":"valid","evidence":"good evidence"},
+                         {"uri":"","method":"post","param":"blank","evidence":"blank URI evidence"},
+                         {"uri":"not a URI","method":"put","param":"invalid","evidence":"invalid URI evidence"},
+                         {"uri":{},"method":"patch","param":"malformed","evidence":"malformed URI evidence"}]}]}]}
+            """;
+
+        var findings = ScanEngine.Select("zap").ConvertReport(report);
+
+        Assert.Equal(4, findings.Count);
+        Assert.Equal(new ScanLocation("/app", "GET", "valid"), findings[0].Location);
+        Assert.Equal(new ScanLocation(null, "POST", "blank"), findings[1].Location);
+        Assert.Equal(new ScanLocation(null, "PUT", "invalid"), findings[2].Location);
+        Assert.Equal(new ScanLocation(null, "PATCH", "malformed"), findings[3].Location);
+        Assert.Equal(["good evidence", "blank URI evidence", "invalid URI evidence", "malformed URI evidence"], findings.Select(finding => finding.Evidence));
+        Assert.All(findings, finding =>
+        {
+            Assert.Equal("10020", finding.RuleId);
+            Assert.Equal("Header issue", finding.Name);
+            Assert.Equal("medium", finding.Severity);
+            Assert.Equal("high", finding.Confidence);
+        });
+    }
+
+    [Fact]
     public void MissingOptionalFieldsStayAbsentWithoutLosingTheAlert()
     {
         var findings = ScanEngine.Select("zap").ConvertReport("""

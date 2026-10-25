@@ -117,7 +117,7 @@ internal sealed class ZapScanner : ISecurityScanner
                         throw new FormatException("ZAP instances must be objects");
                     findings.Add(finding with
                     {
-                        Location = new ScanLocation(ReportPathOnly(ReportText(instance, "uri")),
+                        Location = new ScanLocation(ReportPathOnly(instance),
                             ReportText(instance, "method")?.ToUpperInvariant(), ReportText(instance, "param")),
                         Evidence = ReportText(instance, "evidence")
                     });
@@ -145,11 +145,14 @@ internal sealed class ZapScanner : ISecurityScanner
         };
     }
 
-    private static string? ReportPathOnly(string? address)
+    private static string? ReportPathOnly(JsonElement instance)
     {
-        if (address is null) return null;
-        if (!Uri.TryCreate(address, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https"))
-            throw new FormatException("ZAP instance URI must be an absolute HTTP or HTTPS URL");
+        // A damaged URI field does not invalidate the rest of this instance or report.
+        // Root and collection structure are still validated separately above.
+        if (!instance.TryGetProperty("uri", out var value) || value.ValueKind != JsonValueKind.String)
+            return null;
+        if (!Uri.TryCreate(value.GetString(), UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https"))
+            return null;
         // Query strings may carry credentials and are not part of a stable endpoint key.
         return uri.AbsolutePath;
     }

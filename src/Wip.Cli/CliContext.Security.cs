@@ -67,6 +67,12 @@ internal sealed partial class CliContext
             error.WriteLine($"{outcome.Tool}: the unperformed-check record came back empty; which checks were skipped is unknown");
         if (outcome.Result is { Status: "incomplete" } result)
             error.WriteLine($"{outcome.Tool}: scan result incomplete: {result.IncompleteReason}");
+        if (outcome.PersistenceError is { } persistenceError)
+        {
+            error.Write($"{outcome.Tool}: result persistence failed: ");
+            WriteSecurityReport(error, persistenceError, isErrorRedirected);
+            error.WriteLine();
+        }
         return outcome.ProcessExitCode;
     }
 
