@@ -1,14 +1,22 @@
 # Sandbox and volume contract
 
-This is the configuration and ownership contract for workspace slidict/workspace#194 (parent slidict/workspace#192).
+This is the configuration and ownership contract for declared sandboxes and volumes.
 The configuration model, validation, [named sandbox lifecycle](sandbox-lifecycle.md),
 [declared volume storage](volume-lifecycle.md) and mount integration are implemented.
 Loading YAML or running `wip config` never creates, mounts, snapshots or deletes resources.
 The existing `up`, `down`, `run`, `exec` and `sync` commands still target legacy dependencies;
-they do not operate on these new declarations. Sandbox execution belongs to slidict/workspace#195,
-volume lifecycle to slidict/workspace#196, mount integration to slidict/workspace#197, and workspace adoption to slidict/workspace#198.
-Those management Issues live in the private workspace repository. Public implementation
-PRs should describe the technical change without publishing team credentials or local paths.
+they do not operate on these new declarations.
+
+The work was split into four parts -- sandbox execution, volume lifecycle, mount integration,
+and adopting the declarations in a real configuration -- each landing separately. This
+document is the contract they share.
+
+This repository is public. Documentation, comments and pull request descriptions describe the
+technical change; they do not carry the team's issue tracking, credentials, or local paths.
+`PrivateTrackerReferenceTests` checks the tracked tree for the private tracker's name, and
+`WikiTapeTests.PrivateMarkers` checks `docs/tapes` -- which the wiki serves as raw URLs -- for
+internal tool names and host paths as well. Neither covers prose outside those rules, so the
+rule is the thing to follow.
 
 ## Schema, version 1 additive extension
 
@@ -96,7 +104,7 @@ one whole-tree copy, not a backend call's.
 
 ## Responsibility and ownership
 
-Resource identity is `(resource_namespace, resource kind, name)`. slidict/workspace#195/#196 must map it
+Resource identity is `(resource_namespace, resource kind, name)`. Execution and volume lifecycle must map it
 to collision-safe backend names and persist ownership metadata; deleting by an unscoped
 name or adopting an unrelated existing resource is prohibited. Choose separate namespaces
 for independent projects. Moving the config directory does not change identity; changing
@@ -139,22 +147,22 @@ mounts or `sync.volume`. Existing CommandBuilder and SyncSettings continue their
 contracts; they are not lifecycle implementations for the new resources. This PR preserves
 legacy execution rather than prematurely connecting the new schema to it.
 
-## Snapshot/restore decision for slidict/workspace#196
+## Snapshot/restore decision
 
-Snapshot/restore is **not required for the initial slidict/workspace#192 acceptance criteria**: retaining
+Snapshot/restore is **not required by the initial acceptance criteria**: retaining
 persistent data across sandbox recreation and deleting ephemeral data are lifecycle
 guarantees, not backups. No snapshot fields or promised command are introduced here.
 Existing config/CommandBuilder/SyncSettings expose neither a generic storage snapshot
 contract nor a restore transaction; a source sync is not a consistent backup.
 
-slidict/workspace#196 should first implement and verify persistence, reference protection and cleanup.
+The volume lifecycle should first implement and verify persistence, reference protection and cleanup.
 If recovery beyond retained storage becomes a requirement, create a separately estimated
 snapshot/restore unit before implementing it. Its data scope must be one explicitly selected
 owned volume; it must define quiescing all users, destination/retention, backend capability,
 and restore into an inactive volume with rollback. It must not capture whole host homes,
 credentials or unrelated mounted volumes. Unsupported backend capability must fail explicitly;
 do not substitute a live filesystem copy and claim snapshot consistency. This decision and
-its rationale satisfy the conditional snapshot/restore handoff in slidict/workspace#194/#196 without silently
+its rationale satisfy the conditional snapshot/restore handoff without silently
 dropping a mandatory parent criterion.
 
 ## Verification and handoff
@@ -166,6 +174,6 @@ generation, the shared rsync invocation, `delete: false`, the refusal of an unde
 absent volume and an unusable resolved source, and that running references do not block it.
 Run `dotnet test tests/Wip.Tests/Wip.Tests.csproj --configuration Release` and the existing
 build/AOT CI. No live sandbox or credential access is needed for this schema-only Issue.
-slidict/workspace#195/#196 can use the typed definitions and this ownership contract independently;
-slidict/workspace#197 integrates their runtimes; slidict/workspace#198 adds actual workspace config and verifies all clients.
-Completing a child Issue does not close parent slidict/workspace#192 or claim the remaining runtimes exist.
+Execution and volume lifecycle can use the typed definitions and this ownership contract
+independently; mount integration joins their runtimes; adoption adds a real configuration and
+verifies all clients. Completing one part does not claim the remaining runtimes exist.

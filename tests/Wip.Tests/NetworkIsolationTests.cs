@@ -432,7 +432,7 @@ public class NetworkIsolationTests
     public void ParallelSandboxesGetDistinctNetworkNames()
     {
         // Two scans must not share a boundary: reaching the other sandbox is exactly one of
-        // the paths #687 requires to be blocked.
+        // the paths the isolation work requires to be blocked.
         Assert.NotEqual(NetworkLifecycle.BackendName(Namespace, "scan-a"), NetworkLifecycle.BackendName(Namespace, "scan-b"));
         // And the same declared name in a different project is a different network.
         Assert.NotEqual(NetworkLifecycle.BackendName("other", "scan"), NetworkLifecycle.BackendName(Namespace, "scan"));

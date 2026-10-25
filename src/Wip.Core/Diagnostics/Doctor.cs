@@ -28,7 +28,7 @@ public sealed class Doctor
     /// <param name="aiAvailable">How to decide a server is listening. Injectable because the
     /// default reaches a real socket: <see cref="LocalAiProvider.IsAvailable"/> opens a TCP
     /// connection, so a test otherwise has to hold a real port open and hope nothing else
-    /// takes it (slidict/workspace#276).</param>
+    /// takes it, which is what failed on CI before these were injectable.</param>
     /// <param name="aiDiscoverModel">How to ask the server for its models. Injectable for the
     /// same reason — the default issues a real HTTP request.</param>
     public Doctor(

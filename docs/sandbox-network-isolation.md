@@ -5,9 +5,8 @@ means the container is attached to that network and nothing else, and that wip r
 start the container at all unless it has confirmed the network exists, belongs to wip, and is
 internal.
 
-Implemented for slidict/workspace#687, the first part of the single-tool penetration testing
-platform (slidict/workspace#692). Nothing here is specific to scanning: it is the generic
-declaration the scanner adapters in #688 onwards build on.
+Built for the single-tool penetration testing platform, as its first part. Nothing here is
+specific to scanning: it is the generic declaration the scanner adapters build on.
 
 ## Schema, version 1 additive extension
 
