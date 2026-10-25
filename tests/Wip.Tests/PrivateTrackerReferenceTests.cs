@@ -38,7 +38,8 @@ namespace Wip.Tests;
 /// <b>The name is deliberately not written out here.</b> An earlier revision spelled it into
 /// the constant so the search would find its own declaration, which did prove the pattern --
 /// by putting the exact string this test exists to keep out of the repository into a tracked,
-/// published file. Hashing proves the same thing without publishing it. Do not inline it.
+/// published file. The digest catches the same mistake while leaving nothing readable behind;
+/// it is a commitment, not a secret (see <see cref="PatternDigest"/>). Do not inline it.
 /// </para>
 /// <para>
 /// Nothing is allowlisted either. <see cref="WikiTapeTests"/> takes the name from
@@ -60,9 +61,17 @@ public class PrivateTrackerReferenceTests
     internal static readonly string PrivateTracker = string.Join('/', "slidict", "workspace");
 
     /// <summary>
-    /// SHA-256 of <see cref="PrivateTracker"/>. A digest is not the name: it pins the pattern
-    /// without disclosing it to a reader of this public file.
+    /// SHA-256 of <see cref="PrivateTracker"/>, as a commitment to the pattern -- enough to
+    /// catch a typo, which is all it is for.
     /// </summary>
+    /// <remarks>
+    /// <b>It is not secrecy.</b> The name is short and guessable from this repository's own URL,
+    /// so anyone who guesses it can confirm the guess against this digest in one hash. What the
+    /// rule is actually about is a reader finding an unfollowable reference and a public file
+    /// carrying the team's tracking, and a hex string is neither: it cannot be read, searched
+    /// for, indexed, or followed. Writing the name out plainly, which an earlier revision did,
+    /// is what fails that test.
+    /// </remarks>
     private const string PatternDigest = "e4c06a3a20b44c903e50773f56d02011b978d64eb2653a9b8fc0afaa04415b1b";
 
     /// <summary>
@@ -91,12 +100,25 @@ public class PrivateTrackerReferenceTests
     public void SearchReachesThisRepository()
     {
         var root = RepositoryRoot();
-        Assert.Contains(ThisFile, Split(Git(root, ["ls-files", "-z"])));
+        RequireThisFile(Split(Git(root, ["ls-files", "-z"])), "ls-files");
         foreach (var index in new[] { true, false })
         {
-            Assert.Contains(ThisFile, Split(Grep(root, KnownNeedle, index)));
+            RequireThisFile(Split(Grep(root, KnownNeedle, index)), index ? "grep --cached" : "grep");
         }
     }
+
+    /// <summary>
+    /// Requires a result to contain this file, without printing the result.
+    /// </summary>
+    /// <remarks>
+    /// <c>Assert.Contains</c> dumps the collection it searched, and one of the things that
+    /// collection can hold is a path named after the tracker -- in a public CI log, which is
+    /// what every other message here is redacted for.
+    /// </remarks>
+    private static void RequireThisFile(string[] result, string what) =>
+        Assert.True(
+            result.Contains(ThisFile, StringComparer.Ordinal),
+            $"git {what} did not report {ThisFile}, so it did not read this repository.");
 
     [Fact]
     public void NoTrackedFileNamesThePrivateTracker()
@@ -105,6 +127,10 @@ public class PrivateTrackerReferenceTests
 
         var paths = Split(Git(root, ["ls-files", "-z"]));
         Assert.NotEmpty(paths);
+        // Not left to SearchReachesThisRepository: run alone, with wip's sources sitting inside
+        // some other repository's working tree, a one-file list would satisfy NotEmpty and the
+        // searches would cover that one file, so this would pass having read nothing of wip.
+        RequireThisFile(paths, "ls-files");
 
         var offenders = new SortedSet<string>(StringComparer.Ordinal);
         // A content search reads blobs and never looks at where they live.
@@ -155,9 +181,9 @@ public class PrivateTrackerReferenceTests
     /// against publishing the name, and remove it silently: the run would stay green with
     /// nothing checked. The one case that skips is a source tree with no repository in it -- a
     /// downloaded archive, a Docker stage that copies sources in -- where there is no tracked
-    /// set to read at all. It is decided on the first call, by
-    /// <see cref="RepositoryIsReadable"/>, rather than on any call: deciding it late would let
-    /// a later failure discard findings the earlier calls had already collected.
+    /// set to read at all. <see cref="RepositoryIsReadable"/> answers that question once, so the
+    /// skip happens before anything is collected; a later call that stops seeing a repository
+    /// fails instead, rather than discarding what the earlier calls already found.
     /// </para>
     /// <para>
     /// Failure messages name the subcommand but never the arguments, and redact git's own
@@ -171,9 +197,11 @@ public class PrivateTrackerReferenceTests
 
         if (exitCode != 0 && NotARepository(error))
         {
-            // Only reachable before the first assertion: RepositoryIsReadable has already
-            // skipped when there is no repository, so reaching it here means git stopped
-            // seeing one mid-run, which is a failure and not a reason to drop findings.
+            // Reachable from any call, not just the first: RepositoryIsReadable has already
+            // said there is a repository, so git failing to see one now means it was lost or
+            // misconfigured mid-run (a checkout removed under the test, or a bare repository
+            // where only the working-tree search fails). That is a failure, not a reason to
+            // skip -- skipping here would throw away whatever the earlier calls found.
             Assert.Fail($"git {subcommand} lost the repository: {Redact(error)}");
         }
 
