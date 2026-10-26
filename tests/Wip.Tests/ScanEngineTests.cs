@@ -85,6 +85,7 @@ public class ScanEngineTests
         public int RulesCopyCode;
         public bool RulesEmpty;
         public int RulesReadCode;
+        public Func<string[], SandboxCommandResult>? EffectivePermissionProbe;
         public bool RulesUnreadableFile;
         public bool RulesUntraversableDirectory;
         public bool RulesUnreadableDirectory;
@@ -220,7 +221,16 @@ public class ScanEngineTests
             if (argv is ["exec", _, "rmdir", "--", var emptyDirectory])
                 return new(RulesDirectories.Remove(emptyDirectory) &&
                     !RulesDirectories.Any(path => path.StartsWith(emptyDirectory + "/", StringComparison.Ordinal)) ? 0 : 1, "");
-            if (argv is ["exec", _, "find", var ancestor, "-maxdepth", "0", "-type", "d", "!", "-perm", "-o+rx", "-print", "-quit"])
+            if (argv is ["exec", _, "find", ..] && argv.Contains("-exec"))
+            {
+                if (EffectivePermissionProbe is not null) return EffectivePermissionProbe(argv.ToArray());
+                var ancestorProbe = argv.Contains("-maxdepth");
+                var denied = ancestorProbe ? RulesBlockedAncestor is not null
+                    : argv.Contains("f") ? RulesUnreadableFile
+                    : RulesUnreadableDirectory || RulesUntraversableDirectory;
+                return new(0, denied ? argv[3] : "");
+            }
+            if (argv is ["exec", _, "find", var ancestor, "-maxdepth", "0", "-type", "d", "!", "-perm", "-111", "-print", "-quit"])
             {
                 var resolvedAncestor = ancestor.EndsWith("/.", StringComparison.Ordinal) ? ancestor[..^2] : ancestor;
                 if (resolvedAncestor.Length == 0) resolvedAncestor = "/";
@@ -228,12 +238,13 @@ public class ScanEngineTests
                     resolvedAncestor == RulesBlockedAncestor ? resolvedAncestor : "")
                 { TimedOut = resolvedAncestor == RulesFailedAncestor && RulesAncestorPermissionTimedOut };
             }
-            if (argv is ["exec", _, "find", var directoryPath, "-type", "d", "!", "-perm", var permission, "-print", "-quit"] &&
-                permission is "-o+x" or "-o+rx")
+            if (argv is ["exec", _, "find", var directoryPath, "-type", "d", "!", "-perm", "-555", "-print", "-quit"])
+                // -555 is read and execute for every class, so one predicate now reports both an
+                // unreadable and an untraversable directory; the effective probe tells them apart.
                 return new(RulesDirectoryPermissionCode,
-                    RulesUntraversableDirectory || (permission == "-o+rx" && RulesUnreadableDirectory) ? directoryPath + "/private" : "")
+                    RulesUntraversableDirectory || RulesUnreadableDirectory ? directoryPath + "/private" : "")
                 { TimedOut = RulesDirectoryPermissionTimedOut };
-            if (argv is ["exec", _, "find", var filePath, "-type", "f", "!", "-perm", "-o+r", "-print", "-quit"])
+            if (argv is ["exec", _, "find", var filePath, "-type", "f", "!", "-perm", "-444", "-print", "-quit"])
                 return new(RulesFilePermissionCode, RulesUnreadableFile ? filePath + "/private.yaml" : "")
                 { TimedOut = RulesFilePermissionTimedOut };
             if (argv is ["exec", _, "find", var countedPath, "-type", "f", "-print0"])
@@ -472,17 +483,205 @@ public class ScanEngineTests
         Assert.Equal("completed", outcome.Result!.Status);
         var probes = fake.Calls.Where(command => command is ["exec", _, "find", ..]).ToArray();
         Assert.Equal(5, probes.Length);
-        Assert.Equal(new[] { "exec", "container-id", "find", "/.", "-maxdepth", "0", "-type", "d", "!", "-perm", "-o+rx", "-print", "-quit" }, probes[0]);
-        Assert.Equal(new[] { "exec", "container-id", "find", "/opt/.", "-maxdepth", "0", "-type", "d", "!", "-perm", "-o+rx", "-print", "-quit" }, probes[1]);
-        Assert.Equal(new[] { "exec", "container-id", "find", "/opt/wip-rules", "-type", "d", "!", "-perm", "-o+rx", "-print", "-quit" }, probes[2]);
+        Assert.Equal(new[] { "exec", "container-id", "find", "/.", "-maxdepth", "0", "-type", "d", "!", "-perm", "-111", "-print", "-quit" }, probes[0]);
+        Assert.Equal(new[] { "exec", "container-id", "find", "/opt/.", "-maxdepth", "0", "-type", "d", "!", "-perm", "-111", "-print", "-quit" }, probes[1]);
+        Assert.Equal(new[] { "exec", "container-id", "find", "/opt/wip-rules", "-type", "d", "!", "-perm", "-555", "-print", "-quit" }, probes[2]);
         Assert.Equal(new[] { "exec", "container-id", "find", "/opt/wip-rules", "-type", "f", "-print0" }, probes[3]);
-        Assert.Equal(new[] { "exec", "container-id", "find", "/opt/wip-rules", "-type", "f", "!", "-perm", "-o+r", "-print", "-quit" }, probes[4]);
+        Assert.Equal(new[] { "exec", "container-id", "find", "/opt/wip-rules", "-type", "f", "!", "-perm", "-444", "-print", "-quit" }, probes[4]);
         Assert.DoesNotContain(fake.Calls, command => command.Contains("-readable"));
         Assert.EndsWith(";rules-commit:" + cache.Rules.Commit, outcome.RulesVersion);
         using var stream = new MemoryStream();
         ScanResultWriter.Write(stream, outcome.Result);
         using var result = JsonDocument.Parse(stream.ToArray());
         Assert.Contains(cache.Rules.Commit, result.RootElement.GetProperty("run").GetProperty("rulesVersion").GetString());
+    }
+
+    // Linux integration: exercise the generated find argv with real credentials. Root
+    // without DAC bypass capabilities can be denied too (as on restricted filesystems).
+    [Theory]
+    [InlineData(0, true, "ancestor")]
+    [InlineData(0, false, "ancestor")]
+    [InlineData(65534, true, "ancestor")]
+    [InlineData(65534, false, "ancestor")]
+    [InlineData(0, true, "directory")]
+    [InlineData(0, false, "directory")]
+    [InlineData(65534, true, "directory")]
+    [InlineData(65534, false, "directory")]
+    [InlineData(0, true, "file")]
+    [InlineData(0, false, "file")]
+    [InlineData(65534, true, "file")]
+    [InlineData(65534, false, "file")]
+    public void RulesAccessUsesScannerCredentials(int uid, bool readable, string kind)
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            Assert.Skip("Credential switching requires Linux");
+            return;
+        }
+        Assert.SkipWhen(!File.Exists("/usr/bin/setpriv"), "Credential switching requires setpriv");
+        Assert.SkipWhen(RunProcess("id", ["-u"]).Output.Trim() != "0", "Credential switching requires root");
+        var tree = Path.Combine(Path.GetTempPath(), "wip-access-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tree);
+        var file = Path.Combine(tree, "rule.yaml");
+        File.WriteAllText(file, "rule");
+        try
+        {
+            Assert.Equal(0, RunProcess("chown", ["-R", "0:65534", tree]).Code);
+            File.SetUnixFileMode(tree, (UnixFileMode)(readable || kind == "file" ? 0x1E8 : 0)); // 0750, group access
+            File.SetUnixFileMode(file, (UnixFileMode)(readable ? 0x1A0 : 0)); // 0640
+            using var cache = new RulesCacheFixture();
+            cache.Fetcher.Fetch(cache.Rules);
+            var fake = new Fake
+            {
+                RulesBlockedAncestor = kind == "ancestor" ? "/opt" : null,
+                RulesUnreadableDirectory = kind == "directory",
+                RulesUnreadableFile = kind == "file",
+                EffectivePermissionProbe = argv =>
+                {
+                    var args = argv.Skip(2).ToArray();
+                    args[1] = kind == "file" ? file : tree;
+                    return RunProcess("/usr/bin/setpriv",
+                        ["--reuid=" + uid, "--regid=65534", "--clear-groups",
+                         "--bounding-set=-dac_override,-dac_read_search", "--", .. args]);
+                }
+            };
+            var plan = ValidPlan() with { Rules = cache.Rules };
+            void Scan() => Engine(fake, rulesFetcher: cache.Fetcher)
+                .Run(new StubScanner(plan), "scanner", plan, new ScanTarget("http://app.test"));
+            if (readable) Scan();
+            else Assert.Throws<WipException>(Scan);
+            Assert.Equal(readable, Ran(fake, "exec", "container-id", "zap-baseline"));
+            Assert.Contains(fake.Calls, argv => argv.Contains("-exec"));
+            Assert.DoesNotContain(fake.Calls, argv => argv.Contains("--user"));
+        }
+        finally
+        {
+            File.SetUnixFileMode(tree, (UnixFileMode)0x1C0);
+            Directory.Delete(tree, true);
+        }
+
+        static SandboxCommandResult RunProcess(string command, string[] arguments)
+        {
+            var start = new System.Diagnostics.ProcessStartInfo(command)
+            { RedirectStandardOutput = true, RedirectStandardError = true };
+            foreach (var argument in arguments) start.ArgumentList.Add(argument);
+            using var process = System.Diagnostics.Process.Start(start)!;
+            // Read one pipe while draining the other: find emits one "Permission denied" per
+            // entry, and a full stderr buffer would block the child while this blocks on stdout.
+            var errorText = process.StandardError.ReadToEndAsync();
+            var output = process.StandardOutput.ReadToEnd();
+            var error = errorText.GetAwaiter().GetResult();
+            process.WaitForExit();
+            return new(process.ExitCode, output + error);
+        }
+    }
+
+    // Mode 0004 is other-readable and unreadable to its own owner: Linux stops at the owner
+    // class and never falls back to other. The fast path therefore asks whether every class
+    // can read (-444 / -555), not whether other can -- asking about other would accept a rule
+    // file the scanner owns and cannot read, and skip the effective check that catches it.
+    [Fact]
+    public void OtherReadBitsAloneDoNotAcceptAnOwnerUnreadableRuleFile()
+    {
+        using var cache = new RulesCacheFixture();
+        cache.Fetcher.Fetch(cache.Rules);
+        var probes = new List<string[]>();
+        var fake = new Fake
+        {
+            // The all-classes probe reports the 0004 file, because it grants no owner read.
+            RulesUnreadableFile = true,
+            EffectivePermissionProbe = argv =>
+            {
+                probes.Add(argv);
+                return new(0, argv[3]);
+            }
+        };
+        var plan = ValidPlan() with { Rules = cache.Rules };
+        Assert.Throws<WipException>(() => Engine(fake, rulesFetcher: cache.Fetcher)
+            .Run(new StubScanner(plan), "scanner", plan, new ScanTarget("http://app.test")));
+        Assert.False(Ran(fake, "exec", "container-id", "zap-baseline"));
+        // Pin the whole argv, not just that "-exec" appears. A dropped ";" terminator or "{}"
+        // leaves every fallback probe exiting nonzero, which Failed() turns into a refusal of
+        // every scan whose rules tree misses the fast path -- and a Contains assertion against
+        // a fake that hard-codes the verdict would not notice.
+        Assert.Equal(new[] { "exec", "container-id", "find", "/opt/wip-rules", "-type", "f",
+            "!", "-exec", "test", "-r", "{}", ";", "-print", "-quit" }, Assert.Single(probes));
+    }
+
+    [Theory]
+    [InlineData("ancestor", 3, false, false)]
+    [InlineData("ancestor", 0, true, false)]
+    [InlineData("ancestor", 0, false, true)]
+    [InlineData("directory", 3, false, false)]
+    [InlineData("directory", 0, true, false)]
+    [InlineData("directory", 0, false, true)]
+    [InlineData("file", 3, false, false)]
+    [InlineData("file", 0, true, false)]
+    [InlineData("file", 0, false, true)]
+    public void FailedEffectiveAccessProbesRefuseTheScan(string kind, int code, bool timedOut, bool outputLimit)
+    {
+        using var cache = new RulesCacheFixture();
+        cache.Fetcher.Fetch(cache.Rules);
+        var fake = new Fake
+        {
+            RulesBlockedAncestor = kind == "ancestor" ? "/opt" : null,
+            RulesUnreadableDirectory = kind == "directory",
+            RulesUnreadableFile = kind == "file",
+            EffectivePermissionProbe = _ => new(code, "") { TimedOut = timedOut, OutputLimitExceeded = outputLimit }
+        };
+        var plan = ValidPlan() with { Rules = cache.Rules };
+        Assert.Throws<WipException>(() => Engine(fake, rulesFetcher: cache.Fetcher)
+            .Run(new StubScanner(plan), "scanner", plan, new ScanTarget("http://app.test")));
+        Assert.False(Ran(fake, "exec", "container-id", "zap-baseline"));
+        Assert.True(Ran(fake, "stop"));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void ReadableDirectoriesStillRequireEffectiveTraversal(bool ancestor)
+    {
+        using var cache = new RulesCacheFixture();
+        cache.Fetcher.Fetch(cache.Rules);
+        var fake = new Fake
+        {
+            RulesBlockedAncestor = ancestor ? "/opt" : null,
+            RulesUnreadableDirectory = !ancestor,
+            EffectivePermissionProbe = argv => new(0, argv.Contains("-x") ? argv[3] : "")
+        };
+        var plan = ValidPlan() with { Rules = cache.Rules };
+        Assert.Throws<WipException>(() => Engine(fake, rulesFetcher: cache.Fetcher)
+            .Run(new StubScanner(plan), "scanner", plan, new ScanTarget("http://app.test")));
+        // An ancestor is asked only for traversal; a directory in the tree is asked for both,
+        // because listing it needs read and descending into it needs execute.
+        Assert.Equal(!ancestor, fake.Calls.Any(argv => argv.Contains("-exec") && argv.Contains("-r")));
+        Assert.Contains(fake.Calls, argv => argv.Contains("-exec") && argv.Contains("-x"));
+        Assert.False(Ran(fake, "exec", "container-id", "zap-baseline"));
+    }
+
+    // The refusal cases alone would pass if PermissionsAllowed always returned false once the
+    // fast path missed -- and that regression refuses every tree staged under umask 027, which
+    // is the case the fallback exists for. Pin the accepting side against the fake too.
+    [Fact]
+    public void AnEffectiveProbeThatGrantsAccessLetsTheScanRun()
+    {
+        using var cache = new RulesCacheFixture();
+        cache.Fetcher.Fetch(cache.Rules);
+        var probes = new List<string[]>();
+        var fake = new Fake
+        {
+            // Every mode-bit probe reports a path, so each one falls through to the fallback.
+            RulesUnreadableFile = true,
+            RulesUnreadableDirectory = true,
+            RulesBlockedAncestor = "/opt",
+            EffectivePermissionProbe = argv => { probes.Add(argv); return new(0, ""); }
+        };
+        var plan = ValidPlan() with { Rules = cache.Rules };
+        var outcome = Engine(fake, rulesFetcher: cache.Fetcher)
+            .Run(new StubScanner(plan), "scanner", plan, new ScanTarget("http://app.test"));
+        Assert.Equal("completed", outcome.Result!.Status);
+        Assert.True(Ran(fake, "exec", "container-id", "zap-baseline"));
+        Assert.NotEmpty(probes);
     }
 
     [Fact]
