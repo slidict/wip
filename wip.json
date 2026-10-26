@@ -1,12 +1,12 @@
 {
-  "version": "2.12.1",
+  "version": "2.13.0",
   "description": "A developer-friendly CLI wrapper for Microsoft WSLC.",
   "homepage": "https://github.com/slidict/wip",
   "license": "MIT",
   "architecture": {
     "64bit": {
-      "url": "https://github.com/slidict/wip/releases/download/v2.12.1/wip-2.12.1-win-x64.zip",
-      "hash": "b7f27352f36250009115a2030a1ec67b6ab5fa55d4f79b3cf81fab8634181b28"
+      "url": "https://github.com/slidict/wip/releases/download/v2.13.0/wip-2.13.0-win-x64.zip",
+      "hash": "5f2a8b6a0dbcfbfddb2cbc3833591db57847007a3a1de9c95873c24127802502"
     }
   },
   "bin": "wip.exe",
