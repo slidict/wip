@@ -16,6 +16,7 @@ namespace Wip.Security;
 /// <param name="UnperformedChecks">Unmodified tool diagnostics and profile omissions, when requested.</param>
 /// <param name="UnperformedChecksError">Why requested diagnostics could not be collected.</param>
 /// <param name="PersistenceError">Why artifacts could not be saved, without replacing the scan result.</param>
+/// <param name="ResultDirectory">The published run directory, when artifacts were saved.</param>
 /// <remarks>
 /// A tool's non-zero status is not an error here: scanners use exit codes to report findings.
 /// Distinguishing "ran and found things" from "did not run" belongs to the result format that
@@ -34,19 +35,21 @@ internal sealed record ScanOutcome(
     string? UnperformedChecks = null,
     string? UnperformedChecksError = null,
     ScanResult? Result = null,
-    string? PersistenceError = null)
+    string? PersistenceError = null,
+    string? ResultDirectory = null)
 {
     /// <remarks>
-    /// An incomplete result outranks a failed save: a scan that did not finish is the more
-    /// serious of the two, and its reason is in the document either way. A scanner's own use
+    /// An incomplete result outranks a failed save when the document exists, since its reason
+    /// is there. When the save also failed there is no document, so 70 would send a consumer
+    /// to a result.json that is not there; that case gets its own code. A scanner's own use
     /// of a reserved code folds to 1 rather than claiming a condition that did not occur.
     /// </remarks>
     internal int ProcessExitCode => Result?.Status switch
     {
+        "incomplete" when PersistenceError is not null => ScanEngine.IncompleteUnsavedExitCode,
         "incomplete" => ScanEngine.IncompleteExitCode,
         "completed" when PersistenceError is not null => ScanEngine.PersistenceFailedExitCode,
-        "completed" when ExitCode == ScanEngine.IncompleteExitCode
-            || ExitCode == ScanEngine.PersistenceFailedExitCode => 1,
+        "completed" when ScanEngine.IsReservedExitCode(ExitCode) => 1,
         _ => ExitCode
     };
 }
@@ -119,6 +122,15 @@ internal sealed class ScanEngine(
     // would be the hole this result format exists to close -- asking for --output and getting
     // neither a file nor a nonzero status is "nothing happened" presented as success.
     internal const int PersistenceFailedExitCode = 74;
+
+    // EX_CANTCREAT (73), for an incomplete scan whose artifacts were not saved either. A third
+    // code rather than a stderr marker: the exit code is the contract consumers branch on, and
+    // 70 tells them to read result.json first. Here there is none, and the output path needs
+    // fixing before the rerun, or the rerun loses its result the same way.
+    internal const int IncompleteUnsavedExitCode = 73;
+
+    internal static bool IsReservedExitCode(int code) =>
+        code is IncompleteExitCode or PersistenceFailedExitCode or IncompleteUnsavedExitCode;
 
     private readonly RulesFetcher? stagedRules = rulesFetcher;
     private readonly Func<string, string>? mapStagedSource = mapRulesSource;
@@ -433,7 +445,7 @@ internal sealed class ScanEngine(
         var finished = outcome with { Result = result };
         if (outputDirectory is not null)
         {
-            try { new ScanResultStore(outputDirectory).Write(result, outcome.Report, outcome.UnperformedChecks); }
+            try { return finished with { ResultDirectory = new ScanResultStore(outputDirectory).Write(result, outcome.Report, outcome.UnperformedChecks) }; }
             catch (WipException error)
             {
                 // Preflight cannot prevent a later disk failure. Keep the primary report,

@@ -190,6 +190,8 @@ Persistence finishes before sandbox teardown, including for an incomplete timeou
 Each file is written to a temporary name and moved into place; `result.json` is published
 last. Consumers should begin with that document, not infer success from an artifact's presence.
 Omitting `--output` skips persistence. Stdout remains the raw report in both cases.
+After publishing, the CLI writes `<tool>: result saved to <dir>/<runId>` to stderr, so a
+retried run that leaves several run directories names the one it produced.
 
 The directory is checked and created before the scan starts, and before the image request, so
 an unusable path costs neither a pull nor a run. Persistence happens after the scan, so a path
@@ -217,8 +219,12 @@ Each finding has optional `ruleId`, `name`, `severity`, `confidence` and `eviden
 absent. ZAP severity codes map to `informational`, `low`, `medium` and `high`; confidence
 codes map to `false-positive`, `low`, `medium`, `high` and `confirmed`. Unknown codes remain
 strings rather than fabricated defaults. Location drops the deployment's scheme, host, port, query string and fragment so a
-finding remains comparable across deployment authorities. A blank or unusable instance URI omits
-only that instance's path; malformed report structure still makes the run incomplete. Locations
+finding remains comparable across deployment authorities. An absent, null, blank or unparseable
+instance URI omits only that instance's path. Any other present shape -- nested, array, boolean or
+numeric -- is malformed report structure and makes the run incomplete. `uri` is deliberately
+stricter than its sibling fields, which accept text or a number: it carries the location, so a
+template that changed its shape would otherwise cost every finding its location while the run still
+reported completed with a full list, and a number loses it exactly as a nested object does. Locations
 are not unique across origins within a multi-site report, so consumers must not merge different
 sites by location alone. Origins remain in the raw report; a stable logical-site mapping is not
 yet part of this format. Secret-shaped values in normalized
@@ -230,15 +236,17 @@ quotes or markup. The embedded coverage copy uses the same redaction as other re
 Check `status` before consuming `findings`. An incomplete result has a reason and no findings
 array, so it cannot appear as a clean empty scan. A completed result still has coverage:
 omitted active, authenticated or other checks are not evidence that those checks passed.
-The CLI reserves two exit codes, both nonzero through a WSL shell. `70` means the result is
-incomplete. `74` means the scan completed but its artifacts did not reach the requested
-directory, which can still happen after the preflight check — a full volume, or a directory
-removed mid-run. The two call for different responses: an incomplete scan has to be run again,
-while a completed one whose save failed has its report on stdout and needs the output path
-looked at. An incomplete result takes precedence when both apply, since its reason is in the
-document either way.
+The CLI reserves three exit codes, all nonzero through a WSL shell. `70` means the result is
+incomplete; with `--output` its reason is in `result.json`, and without it the reason is on
+stderr, since nothing is persisted either way. `74` means the scan completed but its artifacts
+did not reach the requested directory, which can still happen after the preflight check — a
+full volume, or a directory removed mid-run. `73` means both: the scan is incomplete and no
+`result.json` was published, so the reason is only on stderr. The responses differ: an
+incomplete scan has to be run again; a completed one whose save failed has its report on stdout
+and needs the output path looked at; and an incomplete unsaved one needs the output path fixed
+before the rerun, or the rerun loses its result the same way.
 
-A completed scanner that itself returns `70` or `74` maps to CLI exit `1`; its original status
+A completed scanner that itself returns `70`, `73` or `74` maps to CLI exit `1`; its original status
 remains in `scannerExitCode` and provenance. Other completed scanner statuses are forwarded
 unchanged. So each reserved code means only what the CLI uses it for, and a completed scan whose
 result was not saved never returns `0` — asking for `--output` and receiving neither a file nor

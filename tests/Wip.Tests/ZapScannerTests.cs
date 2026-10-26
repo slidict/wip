@@ -179,8 +179,8 @@ public class ZapScannerTests
             {"site":[{"alerts":[{"pluginid":"10020","name":"Header issue","riskcode":"2","confidence":"3",
             "instances":[{"uri":"http://app.test:8080/app","method":"get","param":"valid","evidence":"good evidence"},
                          {"uri":"","method":"post","param":"blank","evidence":"blank URI evidence"},
-                         {"uri":"not a URI","method":"put","param":"invalid","evidence":"invalid URI evidence"},
-                         {"uri":{},"method":"patch","param":"malformed","evidence":"malformed URI evidence"}]}]}]}
+                         {"uri":"   ","method":"put","param":"whitespace","evidence":"whitespace URI evidence"},
+                         {"uri":"not a URI","method":"patch","param":"invalid","evidence":"invalid URI evidence"}]}]}]}
             """;
 
         var findings = ScanEngine.Select("zap").ConvertReport(report);
@@ -188,9 +188,9 @@ public class ZapScannerTests
         Assert.Equal(4, findings.Count);
         Assert.Equal(new ScanLocation("/app", "GET", "valid"), findings[0].Location);
         Assert.Equal(new ScanLocation(null, "POST", "blank"), findings[1].Location);
-        Assert.Equal(new ScanLocation(null, "PUT", "invalid"), findings[2].Location);
-        Assert.Equal(new ScanLocation(null, "PATCH", "malformed"), findings[3].Location);
-        Assert.Equal(["good evidence", "blank URI evidence", "invalid URI evidence", "malformed URI evidence"], findings.Select(finding => finding.Evidence));
+        Assert.Equal(new ScanLocation(null, "PUT", "whitespace"), findings[2].Location);
+        Assert.Equal(new ScanLocation(null, "PATCH", "invalid"), findings[3].Location);
+        Assert.Equal(["good evidence", "blank URI evidence", "whitespace URI evidence", "invalid URI evidence"], findings.Select(finding => finding.Evidence));
         Assert.All(findings, finding =>
         {
             Assert.Equal("10020", finding.RuleId);
@@ -198,6 +198,39 @@ public class ZapScannerTests
             Assert.Equal("medium", finding.Severity);
             Assert.Equal("high", finding.Confidence);
         });
+    }
+
+    // A nested, array, boolean or numeric uri is a template shape change: tolerating any of
+    // them would drop every finding location while the run still reported completed with a
+    // full list. A number is refused even though the sibling readers accept one, because uri
+    // is the location and losing it silently is the failure this check exists for.
+    [Theory]
+    [InlineData("{\"value\":\"http://app.test/app\"}")]
+    [InlineData("[\"http://app.test/app\"]")]
+    [InlineData("true")]
+    [InlineData("42")]
+    public void StructurallyWrongInstanceUrisAreRejected(string uri)
+    {
+        var report = "{\"site\":[{\"alerts\":[{\"pluginid\":\"10020\",\"instances\":[{\"uri\":" + uri + "}]}]}]}";
+
+        Assert.Throws<FormatException>(() => ScanEngine.Select("zap").ConvertReport(report));
+    }
+
+    // A value that is merely unusable omits the path and keeps the finding: an absent or null
+    // field, a blank string, and a string that is not an http(s) URL.
+    [Theory]
+    [InlineData("null")]
+    [InlineData("\"\"")]
+    [InlineData("\"not a url\"")]
+    [InlineData("\"ftp://app.test/app\"")]
+    public void UnusableInstanceUrisOmitThePathAndKeepTheFinding(string uri)
+    {
+        var report = "{\"site\":[{\"alerts\":[{\"pluginid\":\"10020\",\"instances\":[{\"uri\":" + uri + "}]}]}]}";
+
+        var finding = Assert.Single(ScanEngine.Select("zap").ConvertReport(report));
+
+        Assert.Null(finding.Location.Path);
+        Assert.Equal("10020", finding.RuleId);
     }
 
     [Fact]

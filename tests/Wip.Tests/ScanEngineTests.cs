@@ -1652,6 +1652,8 @@ public class ScanEngineTests
     [Theory]
     [InlineData(2, 2)]
     [InlineData(70, 1)]
+    [InlineData(73, 1)]
+    [InlineData(74, 1)]
     [InlineData(124, 124)]
     public void ACompletedResultPreservesNormalizedFindingsAndTheToolStatus(int scannerCode, int processCode)
     {
@@ -1708,9 +1710,10 @@ public class ScanEngineTests
         var fake = new Fake { ExecTimedOut = timedOut, ExecCode = scannerCode };
         var plan = ValidPlan() with { UnperformedChecksPath = "/out/unperformed.txt" };
         var observed = false;
+        string? runDirectory = null;
         fake.BeforeStop = () =>
         {
-            var runDirectory = Assert.Single(Directory.GetDirectories(directory));
+            runDirectory = Assert.Single(Directory.GetDirectories(directory));
             Assert.True(File.Exists(Path.Combine(runDirectory, "result.json")));
             Assert.True(File.Exists(Path.Combine(runDirectory, "report.json")));
             Assert.True(File.Exists(Path.Combine(runDirectory, "unperformed-checks.txt")));
@@ -1727,6 +1730,7 @@ public class ScanEngineTests
             var outcome = Engine(fake).Run(new StubScanner(plan), "scanner", plan, new ScanTarget("http://app.test"), outputDirectory: directory);
             Assert.Equal(processCode, outcome.ProcessExitCode);
             Assert.True(observed);
+            Assert.Equal(runDirectory, outcome.ResultDirectory);
         }
         finally { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
     }
@@ -1740,6 +1744,7 @@ public class ScanEngineTests
     [InlineData(0, ScanEngine.PersistenceFailedExitCode)]
     [InlineData(7, ScanEngine.PersistenceFailedExitCode)]
     [InlineData(70, ScanEngine.PersistenceFailedExitCode)]
+    [InlineData(73, ScanEngine.PersistenceFailedExitCode)]
     [InlineData(74, ScanEngine.PersistenceFailedExitCode)]
     public void PersistenceFailureAfterPreflightPreservesTheCompletedScan(int scannerCode, int processCode)
     {
@@ -1770,6 +1775,86 @@ public class ScanEngineTests
             Assert.Equal(processCode, CliContext.WriteScanOutcome(outcome, ValidPlan().ReportPath, output, error, true, true));
             Assert.Equal(fake.Report, output.ToString());
             Assert.Contains($"exit={scannerCode}", error.ToString());
+            Assert.Contains("result persistence failed", error.ToString());
+        }
+        finally
+        {
+            if (File.Exists(directory)) File.Delete(directory);
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// A retried run leaves several run directories under --output, so the CLI names the one
+    /// it published rather than leaving the caller to sort result.json files by endedAt.
+    /// </summary>
+    [Fact]
+    public void ThePublishedRunDirectoryIsReportedOnStderr()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "wip-result-dir-" + Guid.NewGuid().ToString("N"));
+        var plan = ValidPlan() with { UnperformedChecksPath = "/out/unperformed.txt" };
+        try
+        {
+            var first = Engine(new Fake()).Run(new StubScanner(plan), "scanner", plan, new ScanTarget("http://app.test"), outputDirectory: directory);
+            var second = Engine(new Fake()).Run(new StubScanner(plan), "scanner", plan, new ScanTarget("http://app.test"), outputDirectory: directory);
+
+            Assert.Equal(2, Directory.GetDirectories(directory).Length);
+            Assert.NotEqual(first.ResultDirectory, second.ResultDirectory);
+            Assert.True(File.Exists(Path.Combine(second.ResultDirectory!, "result.json")));
+            using var output = new StringWriter();
+            using var error = new StringWriter();
+            CliContext.WriteScanOutcome(second, plan.ReportPath, output, error, true, true);
+            Assert.Contains($"result saved to {second.ResultDirectory}", error.ToString());
+            Assert.DoesNotContain(first.ResultDirectory!, error.ToString());
+            Assert.DoesNotContain(second.ResultDirectory!, output.ToString());
+        }
+        finally { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+    }
+
+    [Fact]
+    public void NoRunDirectoryIsReportedWithoutOutput()
+    {
+        var outcome = Engine(new Fake()).Run(new StubScanner(), "scanner", ValidPlan(), new ScanTarget("http://app.test"));
+
+        Assert.Null(outcome.ResultDirectory);
+        using var output = new StringWriter();
+        using var error = new StringWriter();
+        CliContext.WriteScanOutcome(outcome, ValidPlan().ReportPath, output, error, true, true);
+        Assert.DoesNotContain("result saved to", error.ToString());
+    }
+
+    /// <summary>
+    /// 70 sends a consumer to result.json. When the save failed too there is none, so the
+    /// incomplete-and-unsaved case returns its own code instead of 70 or 74.
+    /// </summary>
+    [Fact]
+    public void AnIncompleteScanWhoseSaveFailedIsDistinctFromASavedIncompleteScan()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "wip-result-unsaved-" + Guid.NewGuid().ToString("N"));
+        var fake = new Fake { ExecTimedOut = true, ExecCode = 124 };
+        fake.AfterExec = () =>
+        {
+            Directory.Delete(directory);
+            File.WriteAllText(directory, "the output location became a file after preflight");
+        };
+        try
+        {
+            var outcome = Engine(fake).Run(new StubScanner(), "scanner", ValidPlan(),
+                new ScanTarget("http://app.test"), outputDirectory: directory);
+
+            Assert.Equal("incomplete", outcome.Result!.Status);
+            Assert.Equal("timeout", outcome.Result.IncompleteReason);
+            Assert.NotNull(outcome.PersistenceError);
+            Assert.Null(outcome.ResultDirectory);
+            Assert.Equal(ScanEngine.IncompleteUnsavedExitCode, outcome.ProcessExitCode);
+            Assert.NotEqual(ScanEngine.IncompleteExitCode, outcome.ProcessExitCode);
+            Assert.NotEqual(ScanEngine.PersistenceFailedExitCode, outcome.ProcessExitCode);
+
+            using var output = new StringWriter();
+            using var error = new StringWriter();
+            Assert.Equal(ScanEngine.IncompleteUnsavedExitCode,
+                CliContext.WriteScanOutcome(outcome, ValidPlan().ReportPath, output, error, true, true));
+            Assert.Contains("scan result incomplete: timeout", error.ToString());
             Assert.Contains("result persistence failed", error.ToString());
         }
         finally

@@ -73,6 +73,16 @@ internal sealed partial class CliContext
             error.WriteLine($"{outcome.Tool}: the unperformed-check record came back empty; which checks were skipped is unknown");
         if (outcome.Result is { Status: "incomplete" } result)
             error.WriteLine($"{outcome.Tool}: scan result incomplete: {result.IncompleteReason}");
+        // A retried run leaves several run directories under --output; this names the one
+        // that belongs to this invocation without reading result.json to find its run id.
+        if (outcome.ResultDirectory is { } resultDirectory)
+        {
+            // The path is the caller's --output echoed back, so it goes through the same
+            // escaping as every other variable text here rather than reaching a terminal raw.
+            error.Write($"{outcome.Tool}: result saved to ");
+            WriteSecurityReport(error, resultDirectory, isErrorRedirected);
+            error.WriteLine();
+        }
         if (outcome.PersistenceError is { } persistenceError)
         {
             error.Write($"{outcome.Tool}: result persistence failed: ");
