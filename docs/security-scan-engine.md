@@ -228,9 +228,16 @@ cleanup also fails.
 
 Temporary staging keeps the publishable `entry/tree` and `entry/verified.json` separate from
 sibling `git-dir`, `hooks` and `git-config`. Only `entry` moves into the commit-keyed cache;
-git metadata remains in the scratch directory until publication finishes, then cleanup runs.
-Nothing is deleted from inside the subtree being published immediately before its move,
-avoiding the Windows race with handles retained on recently deleted git metadata.
+git metadata remains in scratch until publication finishes, then cleanup runs. External
+Windows antivirus or indexer handles can still temporarily deny the newly written entry's
+move, so metadata separation alone does not establish reliable publication.
+
+Only `IOException` and `UnauthorizedAccessException` from the publish move are retried:
+five attempts with 100, 200, 300 and 400 ms delays, totaling one second of waiting. Fetch and
+verification failures are not retried. If another preparation already published the pin,
+its destination is verified and reused immediately. Exhaustion fails closed with an explicit
+staging-publication error. Linux test passes do not verify this Windows handle behavior;
+Windows verification remains required.
 
 Verified trees are cached under `<config directory>/.wip/scanner-rules/<commit>/tree`. The
 commit names immutable content; published verification metadata and a tree fingerprint

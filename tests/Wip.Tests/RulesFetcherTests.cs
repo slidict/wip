@@ -312,6 +312,151 @@ public sealed class RulesFetcherTests : IDisposable
         });
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void TransientPublicationFailuresRetryOnlyTheMoveWithoutRefetching(bool accessDenied)
+    {
+        var fake = new FakeGit();
+        var attempts = 0;
+        var waits = new List<TimeSpan>();
+        var fetcher = new RulesFetcher(root, fake.Run, (source, destination) =>
+        {
+            attempts++;
+            if (attempts < 3) throw PublishError(accessDenied);
+            Directory.Move(source, destination);
+        }, waits.Add);
+
+        var staged = fetcher.Fetch(Rules);
+
+        Assert.Equal("pinned rule content", File.ReadAllText(Path.Combine(staged, "rules.yaml")));
+        Assert.Equal(3, attempts);
+        Assert.Equal(new[] { TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(200) }, waits);
+        Assert.Equal(4, fake.Commands.Count);
+        Assert.Empty(Directory.EnumerateDirectories(root, ".tmp-*"));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ExhaustedPublicationRetriesAreBoundedAndFailClosed(bool accessDenied)
+    {
+        var fake = new FakeGit();
+        var attempts = 0;
+        var waits = new List<TimeSpan>();
+        var error = PublishError(accessDenied);
+        var fetcher = new RulesFetcher(root, fake.Run, (_, _) => { attempts++; throw error; }, waits.Add);
+
+        var failure = Assert.Throws<WipException>(() => fetcher.Fetch(Rules));
+
+        Assert.Equal("Pinned rules staging could not be published after 5 attempts", failure.Message);
+        Assert.Same(error, failure.InnerException);
+        Assert.Equal(5, attempts);
+        Assert.Equal(new[] { 100d, 200d, 300d, 400d }, waits.Select(wait => wait.TotalMilliseconds));
+        Assert.Equal(TimeSpan.FromSeconds(1), TimeSpan.FromMilliseconds(waits.Sum(wait => wait.TotalMilliseconds)));
+        Assert.Equal(4, fake.Commands.Count);
+        Assert.False(Directory.Exists(Path.Combine(root, Commit)));
+        Assert.Empty(Directory.EnumerateFileSystemEntries(root));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AConcurrentVerifiedPublicationWinsWithoutRetryingOrWaiting(bool accessDenied)
+    {
+        var fake = new FakeGit();
+        var attempts = 0;
+        var waits = new List<TimeSpan>();
+        var fetcher = new RulesFetcher(root, fake.Run, (source, destination) =>
+        {
+            attempts++;
+            Directory.Move(source, destination);
+            throw PublishError(accessDenied);
+        }, waits.Add);
+
+        var staged = fetcher.Fetch(Rules);
+
+        Assert.Equal("pinned rule content", File.ReadAllText(Path.Combine(staged, "rules.yaml")));
+        Assert.Equal(1, attempts);
+        Assert.Empty(waits);
+        Assert.Equal(4, fake.Commands.Count);
+        Assert.Empty(Directory.EnumerateDirectories(root, ".tmp-*"));
+    }
+
+    [Fact]
+    public void AConcurrentDirectoryStillNeedsContentVerification()
+    {
+        var fake = new FakeGit();
+        var attempts = 0;
+        var waits = new List<TimeSpan>();
+        var fetcher = new RulesFetcher(root, fake.Run, (source, destination) =>
+        {
+            attempts++;
+            Directory.Move(source, destination);
+            File.WriteAllText(Path.Combine(destination, "tree", "rules.yaml"), "unverified content");
+            throw new IOException("another publisher won");
+        }, waits.Add);
+
+        var failure = Assert.Throws<WipException>(() => fetcher.Fetch(Rules));
+
+        Assert.Contains("verified content", failure.Message);
+        Assert.Equal(1, attempts);
+        Assert.Empty(waits);
+        Assert.Equal(4, fake.Commands.Count);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void GitFetchOrVerificationFailureNeverInvokesPublicationOrBackoff(bool fetchFails)
+    {
+        var fake = new FakeGit { FetchCode = fetchFails ? 9 : 0, ResolvedCommit = new string('f', 40) };
+        var attempts = 0;
+        var waits = new List<TimeSpan>();
+        var fetcher = new RulesFetcher(root, fake.Run, (_, _) => attempts++, waits.Add);
+        Assert.Throws<WipException>(() => fetcher.Fetch(Rules));
+        Assert.Equal(0, attempts);
+        Assert.Empty(waits);
+        Assert.Equal(fetchFails ? 2 : 3, fake.Commands.Count);
+    }
+
+    [Fact]
+    public void UnrelatedMoveFailuresAreNotRetried()
+    {
+        var fake = new FakeGit();
+        var attempts = 0;
+        var waits = new List<TimeSpan>();
+        var fetcher = new RulesFetcher(root, fake.Run, (_, _) =>
+        {
+            attempts++;
+            throw new InvalidOperationException("unrelated failure");
+        }, waits.Add);
+        Assert.Throws<InvalidOperationException>(() => fetcher.Fetch(Rules));
+        Assert.Equal(1, attempts);
+        Assert.Empty(waits);
+        Assert.Equal(4, fake.Commands.Count);
+    }
+
+    [Fact]
+    public void AnExceptionFromBackoffCannotRetryTheMoveAgain()
+    {
+        var fake = new FakeGit();
+        var attempts = 0;
+        var pauses = 0;
+        var fetcher = new RulesFetcher(root, fake.Run, (_, _) =>
+        {
+            attempts++;
+            throw new IOException("move is temporarily blocked");
+        }, _ => { pauses++; throw new IOException("backoff failed"); });
+        Assert.Throws<WipException>(() => fetcher.Fetch(Rules));
+        Assert.Equal(1, attempts);
+        Assert.Equal(1, pauses);
+        Assert.Equal(4, fake.Commands.Count);
+    }
+
+    private static Exception PublishError(bool accessDenied) => accessDenied
+        ? new UnauthorizedAccessException("external directory handle") : new IOException("external directory handle");
+
     private sealed class FakeGit
     {
         internal string ResolvedCommit { get; init; } = Commit;

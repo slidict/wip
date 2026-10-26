@@ -10,7 +10,9 @@ namespace Wip.Security;
 /// <summary>Fetches verified rules during preparation; run-time lookup never invokes git.</summary>
 internal sealed class RulesFetcher(
     string cacheDirectory,
-    Func<IReadOnlyList<string>, IReadOnlyDictionary<string, string>, TimeSpan, (int Code, string Output)>? run = null)
+    Func<IReadOnlyList<string>, IReadOnlyDictionary<string, string>, TimeSpan, (int Code, string Output)>? run = null,
+    Action<string, string>? moveDirectory = null,
+    Action<TimeSpan>? delay = null)
 {
     internal const string TreeDirectoryName = "tree";
     // Version 1 allowed host-native EOL conversion. Refuse those entries rather than
@@ -66,14 +68,8 @@ internal sealed class RulesFetcher(
                 writer.Flush();
                 stream.Flush(flushToDisk: true);
             }
-            // Publish only the checkout and its marker. Metadata stays in scratch, so
-            // Windows handles on git files or delayed metadata deletion cannot block this move.
-            try { Directory.Move(publication, destination); }
-            catch (IOException) when (Directory.Exists(destination))
-            {
-                // Another preparation may have published the same immutable pin first.
-                return RequireStaged(rules);
-            }
+            // Publish only the checkout and its marker; metadata stays in scratch.
+            Publish(publication, destination);
             return RequireStaged(rules);
         }
         catch (IOException error) { throw new WipException("Pinned rules could not be staged in the host cache", error); }
@@ -84,6 +80,29 @@ internal sealed class RulesFetcher(
             try { if (Directory.Exists(temporary)) DeleteOwnedTree(temporary); }
             catch (IOException) { }
             catch (UnauthorizedAccessException) { }
+        }
+    }
+
+    private void Publish(string publication, string destination)
+    {
+        // Windows virus scanners and indexers can briefly hold a newly written directory:
+        // four of eight full-suite runs failed there before retrying. The holder is external
+        // to this process, so this cannot be designed away; a bounded retry is the remedy.
+        Action<string, string> move = moveDirectory ?? Directory.Move;
+        Action<TimeSpan> pause = delay ?? Thread.Sleep;
+        // Five attempts, with 100/200/300/400 ms backoffs: one second total waiting.
+        for (var attempt = 1; attempt <= 5; attempt++)
+        {
+            Exception? failure = null;
+            try { move(publication, destination); }
+            catch (IOException error) { failure = error; }
+            catch (UnauthorizedAccessException error) { failure = error; }
+            // Another preparation may have won. Fetch still verifies its published tree.
+            if (failure is null || Directory.Exists(destination)) return;
+            if (attempt == 5)
+                throw new WipException("Pinned rules staging could not be published after 5 attempts", failure);
+            // Outside the move's try/catch: an error from waiting must not repeat the move.
+            pause(TimeSpan.FromMilliseconds(attempt * 100));
         }
     }
 
