@@ -179,8 +179,8 @@ public class ZapScannerTests
             {"site":[{"alerts":[{"pluginid":"10020","name":"Header issue","riskcode":"2","confidence":"3",
             "instances":[{"uri":"http://app.test:8080/app","method":"get","param":"valid","evidence":"good evidence"},
                          {"uri":"","method":"post","param":"blank","evidence":"blank URI evidence"},
-                         {"uri":"not a URI","method":"put","param":"invalid","evidence":"invalid URI evidence"},
-                         {"uri":{},"method":"patch","param":"malformed","evidence":"malformed URI evidence"}]}]}]}
+                         {"uri":"   ","method":"put","param":"whitespace","evidence":"whitespace URI evidence"},
+                         {"uri":"not a URI","method":"patch","param":"invalid","evidence":"invalid URI evidence"}]}]}]}
             """;
 
         var findings = ScanEngine.Select("zap").ConvertReport(report);
@@ -188,9 +188,9 @@ public class ZapScannerTests
         Assert.Equal(4, findings.Count);
         Assert.Equal(new ScanLocation("/app", "GET", "valid"), findings[0].Location);
         Assert.Equal(new ScanLocation(null, "POST", "blank"), findings[1].Location);
-        Assert.Equal(new ScanLocation(null, "PUT", "invalid"), findings[2].Location);
-        Assert.Equal(new ScanLocation(null, "PATCH", "malformed"), findings[3].Location);
-        Assert.Equal(["good evidence", "blank URI evidence", "invalid URI evidence", "malformed URI evidence"], findings.Select(finding => finding.Evidence));
+        Assert.Equal(new ScanLocation(null, "PUT", "whitespace"), findings[2].Location);
+        Assert.Equal(new ScanLocation(null, "PATCH", "invalid"), findings[3].Location);
+        Assert.Equal(["good evidence", "blank URI evidence", "whitespace URI evidence", "invalid URI evidence"], findings.Select(finding => finding.Evidence));
         Assert.All(findings, finding =>
         {
             Assert.Equal("10020", finding.RuleId);
@@ -198,6 +198,18 @@ public class ZapScannerTests
             Assert.Equal("medium", finding.Severity);
             Assert.Equal("high", finding.Confidence);
         });
+    }
+
+    [Theory]
+    [InlineData("{\"value\":\"http://app.test/app\"}")]
+    [InlineData("[\"http://app.test/app\"]")]
+    [InlineData("42")]
+    [InlineData("true")]
+    public void NonStringInstanceUrisAreRejected(string uri)
+    {
+        var report = "{\"site\":[{\"alerts\":[{\"pluginid\":\"10020\",\"instances\":[{\"uri\":" + uri + "}]}]}]}";
+
+        Assert.Throws<FormatException>(() => ScanEngine.Select("zap").ConvertReport(report));
     }
 
     [Fact]

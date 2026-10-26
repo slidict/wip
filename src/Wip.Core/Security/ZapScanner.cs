@@ -147,10 +147,12 @@ internal sealed class ZapScanner : ISecurityScanner
 
     private static string? ReportPathOnly(JsonElement instance)
     {
-        // A damaged URI field does not invalidate the rest of this instance or report.
-        // Root and collection structure are still validated separately above.
-        if (!instance.TryGetProperty("uri", out var value) || value.ValueKind != JsonValueKind.String)
+        // An unusable URI string does not invalidate the rest of this instance or report.
+        // A non-string uri is a template shape change, so it is rejected like the sibling fields.
+        if (!instance.TryGetProperty("uri", out var value) || value.ValueKind == JsonValueKind.Null)
             return null;
+        if (value.ValueKind != JsonValueKind.String)
+            throw new FormatException("ZAP uri must be text");
         if (!Uri.TryCreate(value.GetString(), UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https"))
             return null;
         // Query strings may carry credentials and are not part of a stable endpoint key.
