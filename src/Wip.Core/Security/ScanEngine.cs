@@ -328,13 +328,16 @@ internal sealed class ScanEngine(
         RequireCopyStep(["container", "cp", source, container + ":" + staging], RulesCopyTimeout);
         RequireCopyStep(["exec", container, "mv", "--", staging + "/" + RulesFetcher.TreeDirectoryName, rules.ContainerPath]);
         RequireCopyStep(["exec", container, "rmdir", "--", staging]);
-        // Other bits are a fast acceptance path with no per-entry processes. A mismatch
-        // needs kernel access checks: exec and the scanner share the image user's credentials,
-        // so owner/group access and root capabilities count too. Do not chmod image ancestors
-        // or add --user/extend ScanPlan. BusyBox 1.36.1 (Alpine 3.20) lacks -readable;
-        // portable -exec test handles both root and non-root without assuming a UID.
+        // A mode granting read to owner, group and other is a fast acceptance path with no
+        // per-entry processes: every class can read, so it holds whoever the scanner is. Other
+        // bits alone would not -- Linux applies the owner class first and never falls back to
+        // other, so mode 0004 is unreadable to its own owner. Any other mode falls through to
+        // kernel access checks, which exec evaluates under the image user's credentials, the
+        // same ones the scanner runs with, so owner/group access and root capabilities count.
+        // Do not chmod image ancestors or add --user/extend ScanPlan. BusyBox 1.36.1
+        // (Alpine 3.20) lacks -readable; portable -exec test handles root and non-root alike.
         foreach (var path in ancestors) RequireAncestor(path);
-        RequirePermissions("d", "-o+rx", "unreadable or untraversable directory");
+        RequirePermissions("d", "-555", "unreadable or untraversable directory");
         // NUL separates paths without miscounting names containing newlines. The count
         // preserves the empty-tree refusal and detects a successful but partial copy.
         var contents = backend(["exec", container, "find", rules.ContainerPath, "-type", "f", "-print0"],
@@ -350,13 +353,13 @@ internal sealed class ScanEngine(
             var problem = actualCount < staged.FileCount ? "is incomplete" : "contains extra files";
             throw new WipException($"Pinned rules copy {problem}: expected {staged.FileCount} files, found {actualCount}; no scan was started");
         }
-        RequirePermissions("f", "-o+r", "unreadable file");
+        RequirePermissions("f", "-444", "unreadable file");
 
         void RequireAncestor(string path)
         {
             // A trailing /. resolves a directory symlink instead of letting -type d skip it.
             var probePath = path.TrimEnd('/') + "/.";
-            if (!PermissionsAllowed(["exec", container, "find", probePath, "-maxdepth", "0", "-type", "d"], "-o+rx", true))
+            if (!PermissionsAllowed(["exec", container, "find", probePath, "-maxdepth", "0", "-type", "d"], "-555", true))
                 throw new WipException($"Pinned rules ancestor {path} is unreadable or untraversable, or its permissions could not be verified; no scan was started");
         }
 

@@ -230,7 +230,7 @@ public class ScanEngineTests
                     : RulesUnreadableDirectory || RulesUntraversableDirectory;
                 return new(0, denied ? argv[3] : "");
             }
-            if (argv is ["exec", _, "find", var ancestor, "-maxdepth", "0", "-type", "d", "!", "-perm", "-o+rx", "-print", "-quit"])
+            if (argv is ["exec", _, "find", var ancestor, "-maxdepth", "0", "-type", "d", "!", "-perm", "-555", "-print", "-quit"])
             {
                 var resolvedAncestor = ancestor.EndsWith("/.", StringComparison.Ordinal) ? ancestor[..^2] : ancestor;
                 if (resolvedAncestor.Length == 0) resolvedAncestor = "/";
@@ -239,11 +239,11 @@ public class ScanEngineTests
                 { TimedOut = resolvedAncestor == RulesFailedAncestor && RulesAncestorPermissionTimedOut };
             }
             if (argv is ["exec", _, "find", var directoryPath, "-type", "d", "!", "-perm", var permission, "-print", "-quit"] &&
-                permission is "-o+x" or "-o+rx")
+                permission is "-o+x" or "-555")
                 return new(RulesDirectoryPermissionCode,
-                    RulesUntraversableDirectory || (permission == "-o+rx" && RulesUnreadableDirectory) ? directoryPath + "/private" : "")
+                    RulesUntraversableDirectory || (permission == "-555" && RulesUnreadableDirectory) ? directoryPath + "/private" : "")
                 { TimedOut = RulesDirectoryPermissionTimedOut };
-            if (argv is ["exec", _, "find", var filePath, "-type", "f", "!", "-perm", "-o+r", "-print", "-quit"])
+            if (argv is ["exec", _, "find", var filePath, "-type", "f", "!", "-perm", "-444", "-print", "-quit"])
                 return new(RulesFilePermissionCode, RulesUnreadableFile ? filePath + "/private.yaml" : "")
                 { TimedOut = RulesFilePermissionTimedOut };
             if (argv is ["exec", _, "find", var countedPath, "-type", "f", "-print0"])
@@ -482,11 +482,11 @@ public class ScanEngineTests
         Assert.Equal("completed", outcome.Result!.Status);
         var probes = fake.Calls.Where(command => command is ["exec", _, "find", ..]).ToArray();
         Assert.Equal(5, probes.Length);
-        Assert.Equal(new[] { "exec", "container-id", "find", "/.", "-maxdepth", "0", "-type", "d", "!", "-perm", "-o+rx", "-print", "-quit" }, probes[0]);
-        Assert.Equal(new[] { "exec", "container-id", "find", "/opt/.", "-maxdepth", "0", "-type", "d", "!", "-perm", "-o+rx", "-print", "-quit" }, probes[1]);
-        Assert.Equal(new[] { "exec", "container-id", "find", "/opt/wip-rules", "-type", "d", "!", "-perm", "-o+rx", "-print", "-quit" }, probes[2]);
+        Assert.Equal(new[] { "exec", "container-id", "find", "/.", "-maxdepth", "0", "-type", "d", "!", "-perm", "-555", "-print", "-quit" }, probes[0]);
+        Assert.Equal(new[] { "exec", "container-id", "find", "/opt/.", "-maxdepth", "0", "-type", "d", "!", "-perm", "-555", "-print", "-quit" }, probes[1]);
+        Assert.Equal(new[] { "exec", "container-id", "find", "/opt/wip-rules", "-type", "d", "!", "-perm", "-555", "-print", "-quit" }, probes[2]);
         Assert.Equal(new[] { "exec", "container-id", "find", "/opt/wip-rules", "-type", "f", "-print0" }, probes[3]);
-        Assert.Equal(new[] { "exec", "container-id", "find", "/opt/wip-rules", "-type", "f", "!", "-perm", "-o+r", "-print", "-quit" }, probes[4]);
+        Assert.Equal(new[] { "exec", "container-id", "find", "/opt/wip-rules", "-type", "f", "!", "-perm", "-444", "-print", "-quit" }, probes[4]);
         Assert.DoesNotContain(fake.Calls, command => command.Contains("-readable"));
         Assert.EndsWith(";rules-commit:" + cache.Rules.Commit, outcome.RulesVersion);
         using var stream = new MemoryStream();
@@ -570,6 +570,33 @@ public class ScanEngineTests
             process.WaitForExit();
             return new(process.ExitCode, output + error);
         }
+    }
+
+    // Mode 0004 is other-readable and unreadable to its own owner: Linux stops at the owner
+    // class and never falls back to other. The fast path therefore asks whether every class
+    // can read (-444 / -555), not whether other can -- asking about other would accept a rule
+    // file the scanner owns and cannot read, and skip the effective check that catches it.
+    [Fact]
+    public void OtherReadBitsAloneDoNotAcceptAnOwnerUnreadableRuleFile()
+    {
+        using var cache = new RulesCacheFixture();
+        cache.Fetcher.Fetch(cache.Rules);
+        var probes = new List<string[]>();
+        var fake = new Fake
+        {
+            // The all-classes probe reports the 0004 file, because it grants no owner read.
+            RulesUnreadableFile = true,
+            EffectivePermissionProbe = argv =>
+            {
+                probes.Add(argv);
+                return new(0, argv[3]);
+            }
+        };
+        var plan = ValidPlan() with { Rules = cache.Rules };
+        Assert.Throws<WipException>(() => Engine(fake, rulesFetcher: cache.Fetcher)
+            .Run(new StubScanner(plan), "scanner", plan, new ScanTarget("http://app.test")));
+        Assert.False(Ran(fake, "exec", "container-id", "zap-baseline"));
+        Assert.Contains(probes, argv => argv.Contains("-exec") && argv.Contains("-r"));
     }
 
     [Theory]

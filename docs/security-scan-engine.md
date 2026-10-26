@@ -290,7 +290,7 @@ verified scanner image, with no separate mirror image or volume declaration.
 
 Before executing the scanner, the engine probes every ancestor from `/` down to the rules
 parent and every directory in the rules tree for read and traversal access by the scanner.
-Other-user permission bits provide a fast acceptance path.
+A mode that grants read to owner, group and other provides a fast acceptance path.
 It checks rather than chmods ancestors, preserving the image's existing access policy.
 Appending `/.` resolves an ancestor directory even when its path ends in a symlink, so the
 `-type d` predicate cannot silently skip it. Each probe is a separate backend invocation
@@ -307,6 +307,11 @@ The NUL-separated file list is counted against the exact number of regular files
 the verified host tree. An empty copy refuses the scan; a shortfall is reported as an
 incomplete copy and a surplus as extra files. Each refusal reports both expected and actual
 counts, so one copied file cannot stand in for the complete rule set.
+
+The fast path asks for `-perm -555` on directories and `-perm -444` on files: every class
+can read, so the answer holds whoever the scanner turns out to be. Other-user bits alone would
+not settle it -- Linux resolves the owner class first and never falls back to other, so mode
+`0004` is unreadable to its own owner while passing `-perm -o+r`.
 
 If a permission-bit probe reports a path, the engine falls back to kernel access checks
 under the image user's credentials, the same credentials used by the scanner (`exec`
