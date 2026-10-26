@@ -328,11 +328,11 @@ internal sealed class ScanEngine(
         RequireCopyStep(["container", "cp", source, container + ":" + staging], RulesCopyTimeout);
         RequireCopyStep(["exec", container, "mv", "--", staging + "/" + RulesFetcher.TreeDirectoryName, rules.ContainerPath]);
         RequireCopyStep(["exec", container, "rmdir", "--", staging]);
-        // Copies are owned by root while the scanner may use another UID. Directories
-        // need other-read for listing as well as other-execute for traversal; files need
-        // other-read. Alpine 3.20's BusyBox 1.36.1 rejects GNU find's -readable predicate.
-        // Probe existing ancestors instead of chmod: image directories are not ours to
-        // relax, and mkdir -p does not repair their permissions for the scanner.
+        // Other bits are a fast acceptance path with no per-entry processes. A mismatch
+        // needs kernel access checks: exec and the scanner share the image user's credentials,
+        // so owner/group access and root capabilities count too. Do not chmod image ancestors
+        // or add --user/extend ScanPlan. BusyBox 1.36.1 (Alpine 3.20) lacks -readable;
+        // portable -exec test handles both root and non-root without assuming a UID.
         foreach (var path in ancestors) RequireAncestor(path);
         RequirePermissions("d", "-o+rx", "unreadable or untraversable directory");
         // NUL separates paths without miscounting names containing newlines. The count
@@ -356,19 +356,30 @@ internal sealed class ScanEngine(
         {
             // A trailing /. resolves a directory symlink instead of letting -type d skip it.
             var probePath = path.TrimEnd('/') + "/.";
-            var result = backend(["exec", container, "find", probePath, "-maxdepth", "0", "-type", "d",
-                "!", "-perm", "-o+rx", "-print", "-quit"], limit, SandboxConsoleMode.Capture);
-            if (result.Code != 0 || result.TimedOut || result.OutputLimitExceeded || !string.IsNullOrWhiteSpace(result.Output))
+            if (!PermissionsAllowed(["exec", container, "find", probePath, "-maxdepth", "0", "-type", "d"], "-o+rx", true))
                 throw new WipException($"Pinned rules ancestor {path} is unreadable or untraversable, or its permissions could not be verified; no scan was started");
         }
 
         void RequirePermissions(string type, string permission, string failure)
         {
             var kind = type == "d" ? "directory" : "file";
-            var result = backend(["exec", container, "find", rules.ContainerPath, "-type", type,
-                "!", "-perm", permission, "-print", "-quit"], limit, SandboxConsoleMode.Capture);
-            if (result.Code != 0 || result.TimedOut || result.OutputLimitExceeded || !string.IsNullOrWhiteSpace(result.Output))
+            if (!PermissionsAllowed(["exec", container, "find", rules.ContainerPath, "-type", type], permission, type == "d"))
                 throw new WipException($"Pinned rules contain an {failure} or {kind} permissions could not be verified; no scan was started");
+        }
+
+        bool PermissionsAllowed(string[] prefix, string permission, bool directory)
+        {
+            var result = backend([.. prefix, "!", "-perm", permission, "-print", "-quit"], limit, SandboxConsoleMode.Capture);
+            if (Failed(result)) return false;
+            if (string.IsNullOrWhiteSpace(result.Output)) return true;
+            foreach (var access in directory ? new[] { "-r", "-x" } : new[] { "-r" })
+            {
+                result = backend([.. prefix, "!", "-exec", "test", access, "{}", ";", "-print", "-quit"], limit, SandboxConsoleMode.Capture);
+                if (Failed(result) || !string.IsNullOrWhiteSpace(result.Output)) return false;
+            }
+            return true;
+
+            static bool Failed(SandboxCommandResult result) => result.Code != 0 || result.TimedOut || result.OutputLimitExceeded;
         }
 
         void RequireCopyStep(IReadOnlyList<string> arguments, TimeSpan? timeout = null)

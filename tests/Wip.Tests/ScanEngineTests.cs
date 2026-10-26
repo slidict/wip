@@ -85,6 +85,7 @@ public class ScanEngineTests
         public int RulesCopyCode;
         public bool RulesEmpty;
         public int RulesReadCode;
+        public Func<string[], SandboxCommandResult>? EffectivePermissionProbe;
         public bool RulesUnreadableFile;
         public bool RulesUntraversableDirectory;
         public bool RulesUnreadableDirectory;
@@ -220,6 +221,15 @@ public class ScanEngineTests
             if (argv is ["exec", _, "rmdir", "--", var emptyDirectory])
                 return new(RulesDirectories.Remove(emptyDirectory) &&
                     !RulesDirectories.Any(path => path.StartsWith(emptyDirectory + "/", StringComparison.Ordinal)) ? 0 : 1, "");
+            if (argv is ["exec", _, "find", ..] && argv.Contains("-exec"))
+            {
+                if (EffectivePermissionProbe is not null) return EffectivePermissionProbe(argv.ToArray());
+                var ancestorProbe = argv.Contains("-maxdepth");
+                var denied = ancestorProbe ? RulesBlockedAncestor is not null
+                    : argv.Contains("f") ? RulesUnreadableFile
+                    : RulesUnreadableDirectory || RulesUntraversableDirectory;
+                return new(0, denied ? argv[3] : "");
+            }
             if (argv is ["exec", _, "find", var ancestor, "-maxdepth", "0", "-type", "d", "!", "-perm", "-o+rx", "-print", "-quit"])
             {
                 var resolvedAncestor = ancestor.EndsWith("/.", StringComparison.Ordinal) ? ancestor[..^2] : ancestor;
@@ -483,6 +493,132 @@ public class ScanEngineTests
         ScanResultWriter.Write(stream, outcome.Result);
         using var result = JsonDocument.Parse(stream.ToArray());
         Assert.Contains(cache.Rules.Commit, result.RootElement.GetProperty("run").GetProperty("rulesVersion").GetString());
+    }
+
+    // Linux integration: exercise the generated find argv with real credentials. Root
+    // without DAC bypass capabilities can be denied too (as on restricted filesystems).
+    [Theory]
+    [InlineData(0, true, "ancestor")]
+    [InlineData(0, false, "ancestor")]
+    [InlineData(65534, true, "ancestor")]
+    [InlineData(65534, false, "ancestor")]
+    [InlineData(0, true, "directory")]
+    [InlineData(0, false, "directory")]
+    [InlineData(65534, true, "directory")]
+    [InlineData(65534, false, "directory")]
+    [InlineData(0, true, "file")]
+    [InlineData(0, false, "file")]
+    [InlineData(65534, true, "file")]
+    [InlineData(65534, false, "file")]
+    public void RulesAccessUsesScannerCredentials(int uid, bool readable, string kind)
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            Assert.Skip("Credential switching requires Linux");
+            return;
+        }
+        Assert.SkipWhen(!File.Exists("/usr/bin/setpriv"), "Credential switching requires setpriv");
+        Assert.SkipWhen(RunProcess("id", ["-u"]).Output.Trim() != "0", "Credential switching requires root");
+        var tree = Path.Combine(Path.GetTempPath(), "wip-access-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tree);
+        var file = Path.Combine(tree, "rule.yaml");
+        File.WriteAllText(file, "rule");
+        try
+        {
+            Assert.Equal(0, RunProcess("chown", ["-R", "0:65534", tree]).Code);
+            File.SetUnixFileMode(tree, (UnixFileMode)(readable || kind == "file" ? 0x1E8 : 0)); // 0750, group access
+            File.SetUnixFileMode(file, (UnixFileMode)(readable ? 0x1A0 : 0)); // 0640
+            using var cache = new RulesCacheFixture();
+            cache.Fetcher.Fetch(cache.Rules);
+            var fake = new Fake
+            {
+                RulesBlockedAncestor = kind == "ancestor" ? "/opt" : null,
+                RulesUnreadableDirectory = kind == "directory",
+                RulesUnreadableFile = kind == "file",
+                EffectivePermissionProbe = argv =>
+                {
+                    var args = argv.Skip(2).ToArray();
+                    args[1] = kind == "file" ? file : tree;
+                    return RunProcess("/usr/bin/setpriv",
+                        ["--reuid=" + uid, "--regid=65534", "--clear-groups",
+                         "--bounding-set=-dac_override,-dac_read_search", "--", .. args]);
+                }
+            };
+            var plan = ValidPlan() with { Rules = cache.Rules };
+            void Scan() => Engine(fake, rulesFetcher: cache.Fetcher)
+                .Run(new StubScanner(plan), "scanner", plan, new ScanTarget("http://app.test"));
+            if (readable) Scan();
+            else Assert.Throws<WipException>(Scan);
+            Assert.Equal(readable, Ran(fake, "exec", "container-id", "zap-baseline"));
+            Assert.Contains(fake.Calls, argv => argv.Contains("-exec"));
+            Assert.DoesNotContain(fake.Calls, argv => argv.Contains("--user"));
+        }
+        finally
+        {
+            File.SetUnixFileMode(tree, (UnixFileMode)0x1C0);
+            Directory.Delete(tree, true);
+        }
+
+        static SandboxCommandResult RunProcess(string command, string[] arguments)
+        {
+            var start = new System.Diagnostics.ProcessStartInfo(command)
+            { RedirectStandardOutput = true, RedirectStandardError = true };
+            foreach (var argument in arguments) start.ArgumentList.Add(argument);
+            using var process = System.Diagnostics.Process.Start(start)!;
+            var output = process.StandardOutput.ReadToEnd();
+            var error = process.StandardError.ReadToEnd();
+            process.WaitForExit();
+            return new(process.ExitCode, output + error);
+        }
+    }
+
+    [Theory]
+    [InlineData("ancestor", 3, false, false)]
+    [InlineData("ancestor", 0, true, false)]
+    [InlineData("ancestor", 0, false, true)]
+    [InlineData("directory", 3, false, false)]
+    [InlineData("directory", 0, true, false)]
+    [InlineData("directory", 0, false, true)]
+    [InlineData("file", 3, false, false)]
+    [InlineData("file", 0, true, false)]
+    [InlineData("file", 0, false, true)]
+    public void FailedEffectiveAccessProbesRefuseTheScan(string kind, int code, bool timedOut, bool outputLimit)
+    {
+        using var cache = new RulesCacheFixture();
+        cache.Fetcher.Fetch(cache.Rules);
+        var fake = new Fake
+        {
+            RulesBlockedAncestor = kind == "ancestor" ? "/opt" : null,
+            RulesUnreadableDirectory = kind == "directory",
+            RulesUnreadableFile = kind == "file",
+            EffectivePermissionProbe = _ => new(code, "") { TimedOut = timedOut, OutputLimitExceeded = outputLimit }
+        };
+        var plan = ValidPlan() with { Rules = cache.Rules };
+        Assert.Throws<WipException>(() => Engine(fake, rulesFetcher: cache.Fetcher)
+            .Run(new StubScanner(plan), "scanner", plan, new ScanTarget("http://app.test")));
+        Assert.False(Ran(fake, "exec", "container-id", "zap-baseline"));
+        Assert.True(Ran(fake, "stop"));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void ReadableDirectoriesStillRequireEffectiveTraversal(bool ancestor)
+    {
+        using var cache = new RulesCacheFixture();
+        cache.Fetcher.Fetch(cache.Rules);
+        var fake = new Fake
+        {
+            RulesBlockedAncestor = ancestor ? "/opt" : null,
+            RulesUnreadableDirectory = !ancestor,
+            EffectivePermissionProbe = argv => new(0, argv.Contains("-x") ? argv[3] : "")
+        };
+        var plan = ValidPlan() with { Rules = cache.Rules };
+        Assert.Throws<WipException>(() => Engine(fake, rulesFetcher: cache.Fetcher)
+            .Run(new StubScanner(plan), "scanner", plan, new ScanTarget("http://app.test")));
+        Assert.Contains(fake.Calls, argv => argv.Contains("-exec") && argv.Contains("-r"));
+        Assert.Contains(fake.Calls, argv => argv.Contains("-exec") && argv.Contains("-x"));
+        Assert.False(Ran(fake, "exec", "container-id", "zap-baseline"));
     }
 
     [Fact]

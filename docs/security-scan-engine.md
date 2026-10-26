@@ -289,7 +289,8 @@ a missing path or an empty rules directory refuses execution. The copy uses the 
 verified scanner image, with no separate mirror image or volume declaration.
 
 Before executing the scanner, the engine probes every ancestor from `/` down to the rules
-path and every directory in the rules tree for other-user read and traversal permissions.
+parent and every directory in the rules tree for read and traversal access by the scanner.
+Other-user permission bits provide a fast acceptance path.
 It checks rather than chmods ancestors, preserving the image's existing access policy.
 Appending `/.` resolves an ancestor directory even when its path ends in a symlink, so the
 `-type d` predicate cannot silently skip it. Each probe is a separate backend invocation
@@ -307,13 +308,18 @@ the verified host tree. An empty copy refuses the scan; a shortfall is reported 
 incomplete copy and a surplus as extra files. Each refusal reports both expected and actual
 counts, so one copied file cannot stand in for the complete rule set.
 
-The copy is performed as root while the scanner may run as another user, so permission
-checks inspect the other-user bits rather than effective access. Directories need both
-`o+r` to list files and `o+x` to traverse them; files need `o+r`. BusyBox 1.36.1 in Alpine 3.20
-rejects `-readable`; these `-perm` predicates work there and with GNU findutils. Missing
-ancestor access, unreadable directories, an empty or partial tree, and unreadable files have
-distinct refusals. A nonzero exit or timeout from any probe also refuses the scan rather than
-assuming the rules are usable.
+If a permission-bit probe reports a path, the engine falls back to kernel access checks
+under the image user's credentials, the same credentials used by the scanner (`exec`
+without `--user`). Owner/group access and root capabilities therefore count. The fallback
+uses `find <path> -type d ! -exec test -r {} \; -print -quit` and a separate `test -x`
+probe for directories; files need only `test -r`. Ancestors use the same predicates with
+`-maxdepth 0`. No per-entry processes are added when the fast path passes.
+
+BusyBox 1.36.1 in Alpine 3.20 rejects GNU `-readable`; `-exec test` works on both.
+The engine neither changes image permissions nor adds a user to the scanner contract.
+Missing ancestor access, unreadable directories, an empty or partial tree, and unreadable
+files have distinct refusals. A nonzero exit, timeout or output limit from either stage
+also refuses the scan rather than assuming the rules are usable.
 
 Provenance appends `;rules-commit:<commit>` to the adapter's `RulesVersion` once, so both stderr
 and the result document identify the pin. The colon preserves the commit through normalized
