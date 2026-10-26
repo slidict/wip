@@ -147,9 +147,12 @@ Each finding has optional `ruleId`, `name`, `severity`, `confidence` and `eviden
 absent. ZAP severity codes map to `informational`, `low`, `medium` and `high`; confidence
 codes map to `false-positive`, `low`, `medium`, `high` and `confirmed`. Unknown codes remain
 strings rather than fabricated defaults. Location drops the deployment's scheme, host, port, query string and fragment so a
-finding remains comparable across deployment authorities. A blank or unparseable instance URI
-string omits only that instance's path. A non-string `uri`, like any other mistyped field, is
-malformed report structure and makes the run incomplete. Locations
+finding remains comparable across deployment authorities. An absent, null, blank or unparseable
+instance URI omits only that instance's path, as does a numeric one -- `uri` is read through the
+same rule as every sibling field, which accepts text or a number, and a number then fails to parse
+as a URL. A nested, array or boolean `uri` is a template shape change rather than an unusable
+value, so it is malformed report structure and makes the run incomplete: tolerating it would drop
+every finding's location while the run still reported completed with a full list. Locations
 are not unique across origins within a multi-site report, so consumers must not merge different
 sites by location alone. Origins remain in the raw report; a stable logical-site mapping is not
 yet part of this format. Secret-shaped values in normalized

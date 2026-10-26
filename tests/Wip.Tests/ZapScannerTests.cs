@@ -200,16 +200,36 @@ public class ZapScannerTests
         });
     }
 
+    // A nested or boolean uri is a template shape change: tolerating it would drop every
+    // finding location while the run still reported completed with a full list.
     [Theory]
     [InlineData("{\"value\":\"http://app.test/app\"}")]
     [InlineData("[\"http://app.test/app\"]")]
-    [InlineData("42")]
     [InlineData("true")]
-    public void NonStringInstanceUrisAreRejected(string uri)
+    public void StructurallyWrongInstanceUrisAreRejected(string uri)
     {
         var report = "{\"site\":[{\"alerts\":[{\"pluginid\":\"10020\",\"instances\":[{\"uri\":" + uri + "}]}]}]}";
 
         Assert.Throws<FormatException>(() => ScanEngine.Select("zap").ConvertReport(report));
+    }
+
+    // A value that is merely unusable omits the path and keeps the finding. A number is read
+    // the way every sibling field reads one, and then fails to parse as a URL; null and an
+    // unparseable string were always tolerated and stay that way.
+    [Theory]
+    [InlineData("42")]
+    [InlineData("null")]
+    [InlineData("\"\"")]
+    [InlineData("\"not a url\"")]
+    [InlineData("\"ftp://app.test/app\"")]
+    public void UnusableInstanceUrisOmitThePathAndKeepTheFinding(string uri)
+    {
+        var report = "{\"site\":[{\"alerts\":[{\"pluginid\":\"10020\",\"instances\":[{\"uri\":" + uri + "}]}]}]}";
+
+        var finding = Assert.Single(ScanEngine.Select("zap").ConvertReport(report));
+
+        Assert.Null(finding.Location.Path);
+        Assert.Equal("10020", finding.RuleId);
     }
 
     [Fact]
