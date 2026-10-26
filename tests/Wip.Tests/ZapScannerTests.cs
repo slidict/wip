@@ -200,12 +200,15 @@ public class ZapScannerTests
         });
     }
 
-    // A nested or boolean uri is a template shape change: tolerating it would drop every
-    // finding location while the run still reported completed with a full list.
+    // A nested, array, boolean or numeric uri is a template shape change: tolerating any of
+    // them would drop every finding location while the run still reported completed with a
+    // full list. A number is refused even though the sibling readers accept one, because uri
+    // is the location and losing it silently is the failure this check exists for.
     [Theory]
     [InlineData("{\"value\":\"http://app.test/app\"}")]
     [InlineData("[\"http://app.test/app\"]")]
     [InlineData("true")]
+    [InlineData("42")]
     public void StructurallyWrongInstanceUrisAreRejected(string uri)
     {
         var report = "{\"site\":[{\"alerts\":[{\"pluginid\":\"10020\",\"instances\":[{\"uri\":" + uri + "}]}]}]}";
@@ -213,11 +216,9 @@ public class ZapScannerTests
         Assert.Throws<FormatException>(() => ScanEngine.Select("zap").ConvertReport(report));
     }
 
-    // A value that is merely unusable omits the path and keeps the finding. A number is read
-    // the way every sibling field reads one, and then fails to parse as a URL; null and an
-    // unparseable string were always tolerated and stay that way.
+    // A value that is merely unusable omits the path and keeps the finding: an absent or null
+    // field, a blank string, and a string that is not an http(s) URL.
     [Theory]
-    [InlineData("42")]
     [InlineData("null")]
     [InlineData("\"\"")]
     [InlineData("\"not a url\"")]

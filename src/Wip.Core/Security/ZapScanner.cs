@@ -147,15 +147,18 @@ internal sealed class ZapScanner : ISecurityScanner
 
     private static string? ReportPathOnly(JsonElement instance)
     {
-        // An unusable URI does not invalidate the rest of this instance or report, so an
-        // absent, null or unparseable value omits this path and keeps the findings.
-        // A nested or boolean uri is a template shape change, though, and dropping every
-        // location silently is what the structural checks exist to prevent -- so it is read
-        // through the same rule as the sibling fields, which accept text or a number. A
-        // numeric uri is therefore tolerated and then fails Uri.TryCreate harmlessly, while
-        // an object, array or bool raises FormatException the way method and evidence do.
-        var text = ReportText(instance, "uri");
-        if (!Uri.TryCreate(text, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https"))
+        // An unusable URI string does not invalidate the rest of this instance or report, so a
+        // blank or unparseable one -- and an absent or null field -- omits only this path.
+        // Any other present shape is refused, including a number, which the sibling readers
+        // accept. uri is deliberately stricter than they are: it carries the location, so a
+        // template that changed its shape would silently cost every finding its location while
+        // the run still reported completed with a full list. That is the reading this check
+        // exists to prevent, and a number loses the location exactly as a nested object does.
+        if (!instance.TryGetProperty("uri", out var value) || value.ValueKind == JsonValueKind.Null)
+            return null;
+        if (value.ValueKind != JsonValueKind.String)
+            throw new FormatException("ZAP uri must be text; a non-string uri is a changed report shape, not an unusable value");
+        if (!Uri.TryCreate(value.GetString(), UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https"))
             return null;
         // Query strings may carry credentials and are not part of a stable endpoint key.
         return uri.AbsolutePath;
