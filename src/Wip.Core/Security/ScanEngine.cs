@@ -82,6 +82,10 @@ internal sealed class ScanEngine(
     /// </summary>
     private static readonly TimeSpan PullTimeout = TimeSpan.FromMinutes(20);
 
+    // Thousands of host files may take minutes to cross into the WSL VM. Give the whole
+    // rules copy a fetch-sized budget; cheap setup and probes retain their one-minute bound.
+    private static readonly TimeSpan RulesCopyTimeout = TimeSpan.FromMinutes(5);
+
     /// <summary>
     /// Long by the standards of the other deadlines in wip, because an active web scan is
     /// minutes to tens of minutes of work rather than a backend call that either answers or
@@ -147,6 +151,13 @@ internal sealed class ScanEngine(
         // than having an image fetched for it that nothing will use.
         RequirePinnedImage(definition, sandbox, plan);
         RequireRulesOutsideMounts(definition, plan.Rules);
+        if (plan.Rules is { } declaredRules)
+        {
+            // Refuse an unusable cache location before any fetch or cache writes. Run
+            // rechecks the same source guard before copying; the cache stays config-local.
+            var source = RequireRulesFetcher().StagingPath(declaredRules);
+            _ = mapStagedSource?.Invoke(source);
+        }
         // This registry request cannot replace the digest-pinned image with different
         // content. It does not prove the sandbox is running or that rules were installed.
         var pulled = backend(["pull", plan.Image.Reference], PullTimeout, SandboxConsoleMode.Stream);
@@ -314,7 +325,7 @@ internal sealed class ScanEngine(
         }
         RequireCopyStep(["exec", container, "rm", "-rf", "--", rules.ContainerPath, staging]);
         RequireCopyStep(["exec", container, "mkdir", "-p", "--", staging]);
-        RequireCopyStep(["container", "cp", source, container + ":" + staging]);
+        RequireCopyStep(["container", "cp", source, container + ":" + staging], RulesCopyTimeout);
         RequireCopyStep(["exec", container, "mv", "--", staging + "/" + RulesFetcher.TreeDirectoryName, rules.ContainerPath]);
         RequireCopyStep(["exec", container, "rmdir", "--", staging]);
         // Copies are owned by root while the scanner may use another UID. Directories
@@ -335,7 +346,10 @@ internal sealed class ScanEngine(
         if (actualCount == 0)
             throw new WipException($"Pinned rules are empty in the sandbox: expected {staged.FileCount} files, found 0; no scan was started");
         if (actualCount != staged.FileCount)
-            throw new WipException($"Pinned rules copy is incomplete: expected {staged.FileCount} files, found {actualCount}; no scan was started");
+        {
+            var problem = actualCount < staged.FileCount ? "is incomplete" : "contains extra files";
+            throw new WipException($"Pinned rules copy {problem}: expected {staged.FileCount} files, found {actualCount}; no scan was started");
+        }
         RequirePermissions("f", "-o+r", "unreadable file");
 
         void RequireAncestor(string path)
@@ -357,9 +371,9 @@ internal sealed class ScanEngine(
                 throw new WipException($"Pinned rules contain an {failure} or {kind} permissions could not be verified; no scan was started");
         }
 
-        void RequireCopyStep(IReadOnlyList<string> arguments)
+        void RequireCopyStep(IReadOnlyList<string> arguments, TimeSpan? timeout = null)
         {
-            var result = backend(arguments, limit, SandboxConsoleMode.Stream);
+            var result = backend(arguments, timeout ?? limit, SandboxConsoleMode.Stream);
             if (result.Code != 0 || result.TimedOut)
                 throw new WipException($"Pinned rules copy failed (exit {result.Code}); no scan was started");
         }

@@ -77,6 +77,12 @@ internal sealed class RulesFetcher(
         }
     }
 
+    internal string StagingPath(PinnedRules rules)
+    {
+        rules.Validate("rules");
+        return Path.Combine(Path.GetFullPath(cacheDirectory), rules.Commit, TreeDirectoryName);
+    }
+
     internal string RequireStaged(PinnedRules rules) => RequireStagedTree(rules).Path;
 
     internal (string Path, int FileCount) RequireStagedTree(PinnedRules rules)
@@ -87,8 +93,10 @@ internal sealed class RulesFetcher(
         var marker = Path.Combine(entry, "verified.json");
         try
         {
-            if (!Directory.Exists(entry) || !Directory.Exists(tree) || !File.Exists(marker))
+            if (!Directory.Exists(entry) && !File.Exists(entry))
                 throw new WipException("Pinned rules have not been verified and staged; run preparation before scanning");
+            if (!Directory.Exists(entry) || !Directory.Exists(tree) || !File.Exists(marker))
+                throw new WipException("Pinned rules cache entry is incomplete; remove the cache entry and prepare again");
             RejectLink(entry);
             RejectLink(marker);
             using var document = JsonDocument.Parse(File.ReadAllText(marker));
@@ -159,11 +167,15 @@ internal sealed class RulesFetcher(
         CollectFiles(tree, files);
         if (files.Count == 0) throw new WipException("Pinned rules checkout is empty; a scan with no rules is refused");
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-        foreach (var path in files.Order(StringComparer.Ordinal))
+        // Sort normalized relative names so fingerprints are reproducible across hosts,
+        // independent of root prefixes and native directory separators.
+        var ordered = files.Select(path => (Path: path,
+            Relative: Path.GetRelativePath(tree, path).Replace(Path.DirectorySeparatorChar, '/')))
+            .OrderBy(file => file.Relative, StringComparer.Ordinal);
+        foreach (var file in ordered)
         {
-            var relative = Path.GetRelativePath(tree, path).Replace(Path.DirectorySeparatorChar, '/');
-            hash.AppendData(Encoding.UTF8.GetBytes(relative + '\0'));
-            using var content = File.OpenRead(path);
+            hash.AppendData(Encoding.UTF8.GetBytes(file.Relative + '\0'));
+            using var content = File.OpenRead(file.Path);
             hash.AppendData(SHA256.HashData(content));
         }
         return (Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant(), files.Count);

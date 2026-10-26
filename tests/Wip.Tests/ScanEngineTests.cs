@@ -2,6 +2,7 @@ using System.Text.Json;
 using Wip.Cli;
 using Wip.Configuration;
 using Wip.Execution;
+using Wip.Platform;
 using Wip.Security;
 using Wip.Yaml;
 
@@ -72,6 +73,7 @@ public class ScanEngineTests
     private sealed class Fake
     {
         public readonly List<string[]> Calls = [];
+        public readonly List<TimeSpan> Timeouts = [];
         public bool ContainerExists = true;
         public string ContainerState = "running";
         public List<string> Attachments = [ScanNet];
@@ -124,6 +126,7 @@ public class ScanEngineTests
         public SandboxCommandResult Run(IReadOnlyList<string> argv, TimeSpan timeout, SandboxConsoleMode console)
         {
             Calls.Add(argv.ToArray());
+            Timeouts.Add(timeout);
             if (argv is ["pull", ..]) return new(PullCode, "");
             if (argv is ["network", "inspect", ..])
             {
@@ -332,6 +335,84 @@ public class ScanEngineTests
         Assert.Single(cache.GitCalls, command => command.Contains("fetch"));
         Assert.Equal(declared.RulesVersion + ";rules-commit:" + cache.Rules.Commit, prepared.RulesVersion);
         Assert.Equal(prepared.RulesVersion, second.RulesVersion);
+    }
+
+    [Fact]
+    public void UnsupportedRulesCacheLocationsAreRefusedBeforePreparationDoesAnyWork()
+    {
+        using var cache = new RulesCacheFixture();
+        var fake = new Fake();
+        var plan = ValidPlan() with { Rules = cache.Rules };
+        string? checkedSource = null;
+        var engine = Engine(fake, rulesFetcher: cache.Fetcher, mapRulesSource: source =>
+        {
+            checkedSource = source;
+            return WslPath.ForWslc(@"\\wsl.localhost\Ubuntu\home\u\proj\.wip\scanner-rules",
+                "the pinned scanner rules source", mode: null);
+        });
+
+        var error = Assert.Throws<ConfigException>(() =>
+            engine.Prepare(new StubScanner(plan), "scanner", new ScanTarget("http://app.test")));
+
+        Assert.Contains("the pinned scanner rules source is on the WSL filesystem", error.Message);
+        Assert.Equal(Path.Combine(cache.Root, "cache", cache.Rules.Commit, "tree"), checkedSource);
+        Assert.Empty(cache.GitCalls);
+        Assert.Empty(fake.Calls);
+        Assert.False(Directory.Exists(cache.Root));
+    }
+
+    [Fact]
+    public void RulesSourceValidationRunsBeforeFetchingAndAgainBeforeCopying()
+    {
+        using var cache = new RulesCacheFixture();
+        var fake = new Fake();
+        var checkedSources = new List<string>();
+        var plan = ValidPlan() with { Rules = cache.Rules };
+        var engine = Engine(fake, rulesFetcher: cache.Fetcher, mapRulesSource: source =>
+        {
+            if (checkedSources.Count == 0)
+            {
+                Assert.Empty(fake.Calls);
+                Assert.Empty(cache.GitCalls);
+                Assert.False(Directory.Exists(cache.Root));
+            }
+            else
+            {
+                Assert.True(Ran(fake, "network", "inspect"));
+                Assert.True(Directory.Exists(source));
+            }
+            checkedSources.Add(source);
+            return source;
+        });
+        var scanner = new StubScanner(plan);
+        var target = new ScanTarget("http://app.test");
+
+        var prepared = engine.Prepare(scanner, "scanner", target);
+        var outcome = engine.Run(scanner, "scanner", prepared, target);
+
+        Assert.Equal(2, checkedSources.Count);
+        Assert.Equal(checkedSources[0], checkedSources[1]);
+        Assert.Equal("completed", outcome.Result!.Status);
+    }
+
+    [Fact]
+    public void RulesCopyGetsFiveMinutesWhileSetupAndProbesKeepOneMinute()
+    {
+        using var cache = new RulesCacheFixture();
+        cache.Fetcher.Fetch(cache.Rules);
+        var fake = new Fake();
+        var plan = ValidPlan() with { Rules = cache.Rules };
+
+        Engine(fake, rulesFetcher: cache.Fetcher)
+            .Run(new StubScanner(plan), "scanner", plan, new ScanTarget("http://app.test"));
+
+        var copyIndex = fake.Calls.FindIndex(command => command is ["container", "cp", ..]);
+        Assert.True(copyIndex >= 0);
+        Assert.Equal(TimeSpan.FromMinutes(5), fake.Timeouts[copyIndex]);
+        var probes = fake.Calls.Select((command, index) => (command, index))
+            .Where(call => call.command is ["exec", _, "find" or "test" or "rm" or "mkdir" or "mv" or "rmdir", ..]).ToArray();
+        Assert.NotEmpty(probes);
+        Assert.All(probes, call => Assert.Equal(TimeSpan.FromMinutes(1), fake.Timeouts[call.index]));
     }
 
     [Fact]
@@ -551,6 +632,7 @@ public class ScanEngineTests
             .Run(new StubScanner(plan), "scanner", plan, new ScanTarget("http://app.test")));
 
         Assert.Contains($"expected 2 files, found {actualFiles}", error.Message);
+        Assert.Contains(actualFiles < 2 ? "incomplete" : "extra files", error.Message);
         Assert.False(Ran(fake, "exec", "container-id", "zap-baseline"));
         Assert.True(Ran(fake, "stop"));
     }

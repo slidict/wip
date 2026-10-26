@@ -210,27 +210,35 @@ and a canonical absolute Linux destination with at least two nonempty path segme
 `/opt/wip-rules` is accepted; `/etc`, `/usr` and `/rules` are refused so replacing rules cannot
 remove a top-level container directory. Branches, tags and short hashes are refused.
 
-After pulling the image, `Prepare` uses host-side git to fetch the pinned commit into a staging
-tree, verifies that `FETCH_HEAD` exactly equals the pin, and checks out that commit. Missing or
-unrunnable git, a failed fetch/checkout, a mismatched commit or an unusable rule tree stops
-preparation; there is no scan without the declared rules. Git uses `core.autocrlf=false` and
-`core.eol=lf`: disabling autocrlf alone leaves attribute-driven default line endings dependent
-on the host, which would also make cached fingerprints host-dependent. An explicit repository
-`eol=crlf` attribute still overrides this LF default. Failed temporary staging is cleaned up
-without replacing the original error if cleanup also fails.
+For declared rules, `Prepare` first validates the prospective cache-tree path through the
+same `mapRulesSource`/`WslPath.ForWslc` guard used by `Run`, before any image pull or git
+fetch. An unusable WSL-UNC source therefore refuses preparation before downloads; the
+cache remains beside the configuration rather than being relocated. After pulling the
+image, `Prepare` uses host-side git to fetch the pinned commit into a staging tree,
+verifies that `FETCH_HEAD` exactly equals the pin, and checks out that commit. Missing or
+unrunnable git, a failed fetch/checkout, a mismatched commit or an unusable rule tree
+stops preparation; there is no scan without the declared rules. Git uses
+`core.autocrlf=false` and `core.eol=lf`: disabling autocrlf alone leaves attribute-driven
+default line endings dependent on the host, which would also make cached fingerprints
+host-dependent. An explicit repository `eol=crlf` attribute still overrides this LF
+default. Failed temporary staging is cleaned up without replacing the original error if
+cleanup also fails.
 
-Verified trees are cached under `<config directory>/.wip/scanner-rules/<commit>/tree`.
-The commit names immutable content; published verification metadata and a tree fingerprint
-protect reuse against an incomplete or changed local entry. A second preparation of the same
-valid pin reuses the tree without fetching. Verification metadata stays outside the copied
-tree, and symlinks are refused. Version 2 cache markers reject older entries that may carry
-native line endings; remove a rejected entry and prepare again. There is no silent reuse or
-automatic migration. `Run` requires a valid staged entry and performs no git fetch.
-Host source paths pass through `WslPath.ForWslc` with a pinned-rules context label before
-`container cp`. Its default WSL-UNC refusal names the host-path cause rather than allowing an
-empty transfer to look like empty rules. Runtime state under any in-tree `.wip/` directory,
-including this cache, is ignored by git. The rules copy is covered by fake-backend tests;
-real WSLC execution is not verified locally.
+Verified trees are cached under `<config directory>/.wip/scanner-rules/<commit>/tree`. The
+commit names immutable content; published verification metadata and a tree fingerprint
+protect reuse against an incomplete or changed local entry. Fingerprinting sorts
+slash-normalized relative paths in ordinal order, making the digest independent of native
+separators and cache location. A second preparation of the same valid pin reuses the tree
+without fetching. Verification metadata stays outside the copied tree, and symlinks are
+refused. Version 2 cache markers reject older entries that may carry native line endings;
+remove a rejected entry and prepare again. The same recovery instruction applies when an
+existing commit directory is missing its tree or verification marker. Entries are not
+deleted or migrated automatically, and incomplete entries cannot be reused. `Run` requires
+a valid staged entry and performs no git fetch. It repeats the source-path guard with a
+pinned-rules context label before `container cp`. Its default WSL-UNC refusal names the
+host-path cause rather than allowing an empty transfer to look like empty rules. Runtime
+state under any in-tree `.wip/` directory, including this cache, is ignored by git. The
+rules copy is covered by fake-backend tests; real WSLC execution is not verified locally.
 
 Before fetching and again before running, the engine rejects overlap between either the
 rules path or its derived staging path and any referenced declared volume mount. The check
@@ -255,6 +263,9 @@ exec <container> mv -- <path>.staging/tree <path>
 exec <container> rmdir -- <path>.staging
 ```
 
+The whole-tree `container cp` step has a five-minute deadline for large Windows-to-WSL
+transfers. Setup, moves, cleanup and probes keep separate one-minute bounds.
+
 The nonempty `.staging` suffix cannot equal the validated rules path, and the adapter cannot
 choose a separate staging destination. Moving the known `tree` directory puts its contents
 directly at the declared path. Stdin-tar extraction also avoids nesting, but would require host
@@ -277,8 +288,9 @@ find <path> -type f ! -perm -o+r -print -quit
 ```
 
 The NUL-separated file list is counted against the exact number of regular files hashed in
-the verified host tree. An empty copy or count mismatch refuses the scan and reports both
-expected and actual counts; one copied file cannot stand in for the complete rule set.
+the verified host tree. An empty copy refuses the scan; a shortfall is reported as an
+incomplete copy and a surplus as extra files. Each refusal reports both expected and actual
+counts, so one copied file cannot stand in for the complete rule set.
 
 The copy is performed as root while the scanner may run as another user, so permission
 checks inspect the other-user bits rather than effective access. Directories need both

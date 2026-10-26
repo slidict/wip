@@ -196,12 +196,65 @@ public sealed class RulesFetcherTests : IDisposable
         Assert.Equal(4, fake.Commands.Count);
     }
 
+    [Fact]
+    public void FingerprintUsesExplicitNormalizedPathOrderAcrossRootsAndHostSeparators()
+    {
+        // The digest encodes a/b.yaml before a0.yaml. Native Windows absolute-path
+        // ordering reverses them because backslash sorts after '0', unlike '/'.
+        const string expected = "ffe0e019efa5fd39cd5218190da627eb7f4de4d8122f90daa54fa403304b9e3c";
+        foreach (var prefix in new[] { "short", "different-long-root-prefix" })
+        {
+            var cache = Path.Combine(root, prefix);
+            var fake = new FakeGit { PortablePaths = true };
+            var fetcher = new RulesFetcher(cache, fake.Run);
+            var tree = fetcher.Fetch(Rules);
+            using var marker = JsonDocument.Parse(File.ReadAllText(Path.Combine(cache, Commit, "verified.json")));
+            Assert.Equal(expected, marker.RootElement.GetProperty("treeSha256").GetString());
+            Assert.Equal("nested rule\n", File.ReadAllText(Path.Combine(tree, "a", "b.yaml")));
+            Assert.Equal("sibling rule\n", File.ReadAllText(Path.Combine(tree, "a0.yaml")));
+            Assert.Equal(2, fetcher.RequireStagedTree(Rules).FileCount);
+        }
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void IncompleteExistingEntriesGiveActionableRecoveryWithoutDeletingOrFetching(bool missingTree)
+    {
+        var fake = new FakeGit();
+        new RulesFetcher(root, fake.Run).Fetch(Rules);
+        var entry = Path.Combine(root, Commit);
+        var tree = Path.Combine(entry, RulesFetcher.TreeDirectoryName);
+        var marker = Path.Combine(entry, "verified.json");
+        if (missingTree) Directory.Delete(tree, recursive: true);
+        else File.Delete(marker);
+        var noGit = new RulesFetcher(root, (_, _) => throw new InvalidOperationException("must not fetch"));
+
+        var error = Assert.Throws<WipException>(() => noGit.Fetch(Rules));
+
+        Assert.Contains("remove the cache entry and prepare again", error.Message);
+        Assert.True(Directory.Exists(entry));
+        Assert.Equal(missingTree, File.Exists(marker));
+        Assert.Equal(!missingTree, Directory.Exists(tree));
+        if (!missingTree) Assert.Equal("pinned rule content", File.ReadAllText(Path.Combine(tree, "rules.yaml")));
+        Assert.Equal(4, fake.Commands.Count);
+    }
+
+    [Fact]
+    public void DerivedStagingPathRequiresNoDirectoryOrGitAccess()
+    {
+        var fetcher = new RulesFetcher(root, (_, _) => throw new InvalidOperationException("must not fetch"));
+        Assert.Equal(Path.Combine(Path.GetFullPath(root), Commit, RulesFetcher.TreeDirectoryName), fetcher.StagingPath(Rules));
+        Assert.False(Directory.Exists(root));
+    }
+
     private sealed class FakeGit
     {
         internal string ResolvedCommit { get; init; } = Commit;
         internal int FetchCode { get; init; }
         internal bool EmptyCheckout { get; init; }
         internal bool NestedFiles { get; init; }
+        internal bool PortablePaths { get; init; }
         internal string? LinkTarget { get; init; }
         internal List<IReadOnlyList<string>> Commands { get; } = [];
         internal List<string> Operations { get; } = [];
@@ -224,7 +277,13 @@ public sealed class RulesFetcherTests : IDisposable
                 case "fetch": return (FetchCode, "");
                 case "rev-parse": return (0, ResolvedCommit + "\n");
                 case "checkout":
-                    if (!EmptyCheckout) File.WriteAllText(Path.Combine(tree, "rules.yaml"), "pinned rule content");
+                    if (PortablePaths)
+                    {
+                        Directory.CreateDirectory(Path.Combine(tree, "a"));
+                        File.WriteAllText(Path.Combine(tree, "a", "b.yaml"), "nested rule\n");
+                        File.WriteAllText(Path.Combine(tree, "a0.yaml"), "sibling rule\n");
+                    }
+                    else if (!EmptyCheckout) File.WriteAllText(Path.Combine(tree, "rules.yaml"), "pinned rule content");
                     if (NestedFiles)
                     {
                         Directory.CreateDirectory(Path.Combine(tree, "nested"));
