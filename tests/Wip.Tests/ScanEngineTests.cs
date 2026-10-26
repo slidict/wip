@@ -2,6 +2,7 @@ using System.Text.Json;
 using Wip.Cli;
 using Wip.Configuration;
 using Wip.Execution;
+using Wip.Platform;
 using Wip.Security;
 using Wip.Yaml;
 
@@ -72,6 +73,7 @@ public class ScanEngineTests
     private sealed class Fake
     {
         public readonly List<string[]> Calls = [];
+        public readonly List<TimeSpan> Timeouts = [];
         public bool ContainerExists = true;
         public string ContainerState = "running";
         public List<string> Attachments = [ScanNet];
@@ -80,6 +82,27 @@ public class ScanEngineTests
         public int ExecCode;
         public bool ExecTimedOut;
         public bool ExecThrows;
+        public int RulesCopyCode;
+        public bool RulesEmpty;
+        public int RulesReadCode;
+        public bool RulesUnreadableFile;
+        public bool RulesUntraversableDirectory;
+        public bool RulesUnreadableDirectory;
+        public string? RulesBlockedAncestor;
+        public string? RulesFailedAncestor;
+        public string? RulesLinkedAncestor;
+        public int RulesAncestorLinkCode = 1;
+        public bool RulesAncestorLinkTimedOut;
+        public int RulesAncestorPermissionCode;
+        public bool RulesAncestorPermissionTimedOut;
+        public string[] RulesCopiedFiles = ["template.yaml"];
+        public readonly List<SandboxMount> Mounts = [];
+        public int RulesDirectoryPermissionCode;
+        public bool RulesDirectoryPermissionTimedOut;
+        public int RulesFilePermissionCode;
+        public bool RulesFilePermissionTimedOut;
+        public readonly HashSet<string> RulesDirectories = [];
+        public readonly HashSet<string> RulesFiles = [];
         public readonly List<TimeSpan> ReportTimeouts = [];
         public string Report = "{\"alerts\":[]}";
         public bool ReportMissing;
@@ -103,6 +126,7 @@ public class ScanEngineTests
         public SandboxCommandResult Run(IReadOnlyList<string> argv, TimeSpan timeout, SandboxConsoleMode console)
         {
             Calls.Add(argv.ToArray());
+            Timeouts.Add(timeout);
             if (argv is ["pull", ..]) return new(PullCode, "");
             if (argv is ["network", "inspect", ..])
             {
@@ -134,12 +158,93 @@ public class ScanEngineTests
                         Name = SandboxName,
                         State = ContainerState,
                         Labels = new Dictionary<string, string> { [SandboxLifecycle.OwnerLabel] = $"v1:{Namespace}:sandbox:scanner" },
-                        Mounts = Array.Empty<object>(),
+                        Mounts = Mounts.Select(mount => new { mount.Type, mount.Name, mount.Destination }).ToArray(),
                         Config = ContainerImage is null ? null : new { Image = ContainerImage },
                         NetworkSettings = new { Networks = Attachments.ToDictionary(n => n, _ => new { }) },
                     },
                 }));
             }
+            if (argv is ["exec", _, "test", "-L", var ancestorPath])
+                return new(ancestorPath == RulesLinkedAncestor ? 0 : RulesAncestorLinkCode, "")
+                { TimedOut = RulesAncestorLinkTimedOut };
+            // Model the measured WSLC behavior: destination must exist, and a directory
+            // source is nested by basename even if its contents were intended.
+            if (argv is ["container", "cp", var source, var target])
+            {
+                var destination = target[(target.IndexOf(':') + 1)..];
+                if (RulesCopyCode != 0) return new(RulesCopyCode, "");
+                if (!RulesDirectories.Contains(destination)) return new(1, "destination missing");
+                var nested = destination + "/" + Path.GetFileName(source);
+                RulesDirectories.Add(nested);
+                if (!RulesEmpty)
+                {
+                    foreach (var relative in RulesCopiedFiles)
+                    {
+                        RulesFiles.Add(nested + "/" + relative);
+                        var separator = relative.LastIndexOf('/');
+                        if (separator >= 0) RulesDirectories.Add(nested + "/" + relative[..separator]);
+                    }
+                }
+                return new(0, "");
+            }
+            if (argv is ["exec", _, "rm", "-rf", "--", ..])
+            {
+                foreach (var path in argv.Skip(5))
+                {
+                    RulesDirectories.RemoveWhere(entry => entry == path || entry.StartsWith(path + "/", StringComparison.Ordinal));
+                    RulesFiles.RemoveWhere(entry => entry.StartsWith(path + "/", StringComparison.Ordinal));
+                }
+                return new(0, "");
+            }
+            if (argv is ["exec", _, "mkdir", "-p", "--", var directory])
+            {
+                RulesDirectories.Add(directory);
+                return new(0, "");
+            }
+            if (argv is ["exec", _, "mv", "--", var from, var to])
+            {
+                if (!RulesDirectories.Remove(from) || RulesDirectories.Contains(to)) return new(1, "invalid move");
+                RulesDirectories.Add(to);
+                foreach (var copiedDirectory in RulesDirectories.Where(path => path.StartsWith(from + "/", StringComparison.Ordinal)).ToArray())
+                {
+                    RulesDirectories.Remove(copiedDirectory);
+                    RulesDirectories.Add(to + copiedDirectory[from.Length..]);
+                }
+                foreach (var file in RulesFiles.Where(file => file.StartsWith(from + "/", StringComparison.Ordinal)).ToArray())
+                {
+                    RulesFiles.Remove(file);
+                    RulesFiles.Add(to + file[from.Length..]);
+                }
+                return new(0, "");
+            }
+            if (argv is ["exec", _, "rmdir", "--", var emptyDirectory])
+                return new(RulesDirectories.Remove(emptyDirectory) &&
+                    !RulesDirectories.Any(path => path.StartsWith(emptyDirectory + "/", StringComparison.Ordinal)) ? 0 : 1, "");
+            if (argv is ["exec", _, "find", var ancestor, "-maxdepth", "0", "-type", "d", "!", "-perm", "-o+rx", "-print", "-quit"])
+            {
+                var resolvedAncestor = ancestor.EndsWith("/.", StringComparison.Ordinal) ? ancestor[..^2] : ancestor;
+                if (resolvedAncestor.Length == 0) resolvedAncestor = "/";
+                return new(resolvedAncestor == RulesFailedAncestor ? RulesAncestorPermissionCode : 0,
+                    resolvedAncestor == RulesBlockedAncestor ? resolvedAncestor : "")
+                { TimedOut = resolvedAncestor == RulesFailedAncestor && RulesAncestorPermissionTimedOut };
+            }
+            if (argv is ["exec", _, "find", var directoryPath, "-type", "d", "!", "-perm", var permission, "-print", "-quit"] &&
+                permission is "-o+x" or "-o+rx")
+                return new(RulesDirectoryPermissionCode,
+                    RulesUntraversableDirectory || (permission == "-o+rx" && RulesUnreadableDirectory) ? directoryPath + "/private" : "")
+                { TimedOut = RulesDirectoryPermissionTimedOut };
+            if (argv is ["exec", _, "find", var filePath, "-type", "f", "!", "-perm", "-o+r", "-print", "-quit"])
+                return new(RulesFilePermissionCode, RulesUnreadableFile ? filePath + "/private.yaml" : "")
+                { TimedOut = RulesFilePermissionTimedOut };
+            if (argv is ["exec", _, "find", var countedPath, "-type", "f", "-print0"])
+            {
+                var files = RulesFiles.Where(file => file.StartsWith(countedPath + "/", StringComparison.Ordinal)).ToArray();
+                return new(RulesReadCode, files.Length == 0 ? "" : string.Join('\0', files) + "\0");
+            }
+            if (argv is ["exec", _, "find", var rulesPath, "-type", "f", "-print", "-quit"])
+                return new(RulesReadCode, string.Join('\n', RulesFiles.Where(file => file.StartsWith(rulesPath + "/", StringComparison.Ordinal))));
+            if (argv is ["exec", _, "find", ..])
+                throw new InvalidOperationException("Unexpected pinned-rules find arguments");
             if (argv is ["exec", _, "cat", ..])
             {
                 if (argv[^1] == "/out/unperformed.txt")
@@ -169,15 +274,549 @@ public class ScanEngineTests
         }
     }
 
-    private static ScanEngine Engine(Fake fake, SandboxSettings? settings = null)
+    private static ScanEngine Engine(Fake fake, SandboxSettings? settings = null,
+        RulesFetcher? rulesFetcher = null, Func<string, string>? mapRulesSource = null)
     {
         var resolved = settings ?? Isolated();
         return new(resolved, new SandboxLifecycle(resolved, fake.Run, null, new NetworkLifecycle(resolved, fake.Run)),
-            new NetworkLifecycle(resolved, fake.Run), fake.Run);
+            new NetworkLifecycle(resolved, fake.Run), fake.Run, rulesFetcher, mapRulesSource);
     }
 
     private static bool Ran(Fake fake, params string[] prefix) =>
         fake.Calls.Any(c => c.Length >= prefix.Length && c.Take(prefix.Length).SequenceEqual(prefix));
+
+    private sealed class RulesCacheFixture : IDisposable
+    {
+        public readonly string Root = Path.Combine(Path.GetTempPath(), "wip-rules-engine-" + Guid.NewGuid().ToString("N"));
+        public readonly PinnedRules Rules = new("https://example.invalid/rules.git", new string('a', 40), "/opt/wip-rules");
+        public readonly List<string[]> GitCalls = [];
+        public Action? BeforeGit;
+        public bool WrongCommit;
+        public bool SecondFile;
+        public RulesFetcher Fetcher => new(Path.Combine(Root, "cache"), Git);
+        private (int Code, string Output) Git(IReadOnlyList<string> argv,
+            IReadOnlyDictionary<string, string> environment, TimeSpan timeout)
+        {
+            BeforeGit?.Invoke();
+            GitCalls.Add(argv.ToArray());
+            var directory = argv[argv.ToList().IndexOf("-C") + 1];
+            var gitDirectory = environment["GIT_DIR"];
+            Assert.False(gitDirectory.StartsWith(directory + Path.DirectorySeparatorChar, StringComparison.Ordinal));
+            Assert.Equal(directory, environment["GIT_WORK_TREE"]);
+            if (argv.Contains("init")) Directory.CreateDirectory(gitDirectory);
+            if (argv.Contains("rev-parse")) return (0, (WrongCommit ? new string('b', 40) : Rules.Commit) + "\n");
+            if (argv.Contains("checkout"))
+            {
+                File.WriteAllText(Path.Combine(directory, "template.yaml"), "id: verified-rule\n");
+                if (SecondFile)
+                {
+                    Directory.CreateDirectory(Path.Combine(directory, "nested"));
+                    File.WriteAllText(Path.Combine(directory, "nested", "second.yaml"), "id: second-rule\n");
+                }
+            }
+            return (0, "");
+        }
+        public void Dispose() { if (Directory.Exists(Root)) Directory.Delete(Root, recursive: true); }
+    }
+
+    [Fact]
+    public void PreparationFetchesRulesAfterTheImageAndReusesTheVerifiedPin()
+    {
+        using var cache = new RulesCacheFixture();
+        var fake = new Fake();
+        cache.BeforeGit = () => Assert.True(Ran(fake, "pull"));
+        var declared = ValidPlan() with { Rules = cache.Rules };
+        var engine = Engine(fake, rulesFetcher: cache.Fetcher);
+        var scanner = new StubScanner(declared);
+        var target = new ScanTarget("http://app.test");
+
+        var prepared = engine.Prepare(scanner, "scanner", target);
+        Assert.True(File.Exists(Path.Combine(cache.Fetcher.RequireStaged(cache.Rules), "template.yaml")));
+        var commands = cache.GitCalls.Count;
+        var second = engine.Prepare(new StubScanner(prepared), "scanner", target);
+
+        Assert.Equal(commands, cache.GitCalls.Count);
+        Assert.Single(cache.GitCalls, command => command.Contains("fetch"));
+        Assert.Equal(declared.RulesVersion + ";rules-commit:" + cache.Rules.Commit, prepared.RulesVersion);
+        Assert.Equal(prepared.RulesVersion, second.RulesVersion);
+    }
+
+    [Fact]
+    public void UnsupportedRulesCacheLocationsAreRefusedBeforePreparationDoesAnyWork()
+    {
+        using var cache = new RulesCacheFixture();
+        var fake = new Fake();
+        var plan = ValidPlan() with { Rules = cache.Rules };
+        string? checkedSource = null;
+        var engine = Engine(fake, rulesFetcher: cache.Fetcher, mapRulesSource: source =>
+        {
+            checkedSource = source;
+            return WslPath.ForWslc(@"\\wsl.localhost\Ubuntu\home\u\proj\.wip\scanner-rules",
+                "the pinned scanner rules source", mode: null);
+        });
+
+        var error = Assert.Throws<ConfigException>(() =>
+            engine.Prepare(new StubScanner(plan), "scanner", new ScanTarget("http://app.test")));
+
+        Assert.Contains("the pinned scanner rules source is on the WSL filesystem", error.Message);
+        Assert.Equal(Path.Combine(cache.Root, "cache", cache.Rules.Commit, "tree"), checkedSource);
+        Assert.Empty(cache.GitCalls);
+        Assert.Empty(fake.Calls);
+        Assert.False(Directory.Exists(cache.Root));
+    }
+
+    [Fact]
+    public void RulesSourceValidationRunsBeforeFetchingAndAgainBeforeCopying()
+    {
+        using var cache = new RulesCacheFixture();
+        var fake = new Fake();
+        var checkedSources = new List<string>();
+        var plan = ValidPlan() with { Rules = cache.Rules };
+        var engine = Engine(fake, rulesFetcher: cache.Fetcher, mapRulesSource: source =>
+        {
+            if (checkedSources.Count == 0)
+            {
+                Assert.Empty(fake.Calls);
+                Assert.Empty(cache.GitCalls);
+                Assert.False(Directory.Exists(cache.Root));
+            }
+            else
+            {
+                Assert.True(Ran(fake, "network", "inspect"));
+                Assert.True(Directory.Exists(source));
+            }
+            checkedSources.Add(source);
+            return source;
+        });
+        var scanner = new StubScanner(plan);
+        var target = new ScanTarget("http://app.test");
+
+        var prepared = engine.Prepare(scanner, "scanner", target);
+        var outcome = engine.Run(scanner, "scanner", prepared, target);
+
+        Assert.Equal(2, checkedSources.Count);
+        Assert.Equal(checkedSources[0], checkedSources[1]);
+        Assert.Equal("completed", outcome.Result!.Status);
+    }
+
+    [Fact]
+    public void RulesCopyGetsFiveMinutesWhileSetupAndProbesKeepOneMinute()
+    {
+        using var cache = new RulesCacheFixture();
+        cache.Fetcher.Fetch(cache.Rules);
+        var fake = new Fake();
+        var plan = ValidPlan() with { Rules = cache.Rules };
+
+        Engine(fake, rulesFetcher: cache.Fetcher)
+            .Run(new StubScanner(plan), "scanner", plan, new ScanTarget("http://app.test"));
+
+        var copyIndex = fake.Calls.FindIndex(command => command is ["container", "cp", ..]);
+        Assert.True(copyIndex >= 0);
+        Assert.Equal(TimeSpan.FromMinutes(5), fake.Timeouts[copyIndex]);
+        var probes = fake.Calls.Select((command, index) => (command, index))
+            .Where(call => call.command is ["exec", _, "find" or "test" or "rm" or "mkdir" or "mv" or "rmdir", ..]).ToArray();
+        Assert.NotEmpty(probes);
+        Assert.All(probes, call => Assert.Equal(TimeSpan.FromMinutes(1), fake.Timeouts[call.index]));
+    }
+
+    [Fact]
+    public void AFailedRulesPinVerificationCannotPrepareAScan()
+    {
+        using var cache = new RulesCacheFixture { WrongCommit = true };
+        var fake = new Fake();
+        var plan = ValidPlan() with { Rules = cache.Rules };
+
+        Assert.Throws<WipException>(() => Engine(fake, rulesFetcher: cache.Fetcher)
+            .Prepare(new StubScanner(plan), "scanner", new ScanTarget("http://app.test")));
+
+        Assert.False(Ran(fake, "exec"));
+        Assert.False(Ran(fake, "container", "cp"));
+    }
+
+    [Fact]
+    public void RunCopiesVerifiedRulesWithoutAShellBeforeScanningAndRecordsThePin()
+    {
+        using var cache = new RulesCacheFixture();
+        cache.Fetcher.Fetch(cache.Rules);
+        var gitCalls = cache.GitCalls.Count;
+        var fake = new Fake();
+        fake.RulesDirectories.UnionWith(["/opt/wip-rules", "/opt/wip-rules.staging", "/opt/wip-rules.staging/old"]);
+        fake.RulesFiles.UnionWith(["/opt/wip-rules/old.yaml", "/opt/wip-rules.staging/old/stale.yaml"]);
+        var plan = ValidPlan() with { Rules = cache.Rules };
+        string? mapped = null;
+        var engine = Engine(fake, rulesFetcher: cache.Fetcher, mapRulesSource: source =>
+        {
+            mapped = source;
+            return "/mapped staging/tree";
+        });
+
+        var outcome = engine.Run(new StubScanner(plan), "scanner", plan, new ScanTarget("http://app.test"));
+
+        Assert.Equal(cache.Fetcher.RequireStaged(cache.Rules), mapped);
+        var copy = Assert.Single(fake.Calls, command => command is ["container", "cp", ..]);
+        Assert.Equal(new[] { "container", "cp", "/mapped staging/tree", "container-id:/opt/wip-rules.staging" }, copy);
+        var copyIndex = fake.Calls.IndexOf(copy);
+        Assert.Contains(fake.Calls.Take(copyIndex), command => command.SequenceEqual(new[] { "exec", "container-id", "rm", "-rf", "--", "/opt/wip-rules", "/opt/wip-rules.staging" }));
+        Assert.Contains(fake.Calls.Take(copyIndex), command => command.SequenceEqual(new[] { "exec", "container-id", "mkdir", "-p", "--", "/opt/wip-rules.staging" }));
+        var moveIndex = fake.Calls.FindIndex(command => command.SequenceEqual(new[] { "exec", "container-id", "mv", "--", "/opt/wip-rules.staging/tree", "/opt/wip-rules" }));
+        var cleanupIndex = fake.Calls.FindIndex(command => command.SequenceEqual(new[] { "exec", "container-id", "rmdir", "--", "/opt/wip-rules.staging" }));
+        Assert.True(copyIndex < moveIndex && moveIndex < cleanupIndex);
+        Assert.True(cleanupIndex < fake.Calls.FindIndex(command => command is ["exec", _, "find", ..]));
+        Assert.Equal(["/opt/wip-rules/template.yaml"], fake.RulesFiles);
+        Assert.DoesNotContain("/opt/wip-rules.staging", fake.RulesDirectories);
+        Assert.True(copyIndex < fake.Calls.FindIndex(command => command is ["exec", _, "find", ..]));
+        Assert.True(fake.Calls.FindIndex(command => command is ["exec", _, "find", ..]) <
+                    fake.Calls.FindIndex(command => command is ["exec", _, "zap-baseline", ..]));
+        Assert.DoesNotContain(fake.Calls, command => command.Contains("sh"));
+        Assert.Equal(gitCalls, cache.GitCalls.Count);
+        Assert.Equal("completed", outcome.Result!.Status);
+        var probes = fake.Calls.Where(command => command is ["exec", _, "find", ..]).ToArray();
+        Assert.Equal(5, probes.Length);
+        Assert.Equal(new[] { "exec", "container-id", "find", "/.", "-maxdepth", "0", "-type", "d", "!", "-perm", "-o+rx", "-print", "-quit" }, probes[0]);
+        Assert.Equal(new[] { "exec", "container-id", "find", "/opt/.", "-maxdepth", "0", "-type", "d", "!", "-perm", "-o+rx", "-print", "-quit" }, probes[1]);
+        Assert.Equal(new[] { "exec", "container-id", "find", "/opt/wip-rules", "-type", "d", "!", "-perm", "-o+rx", "-print", "-quit" }, probes[2]);
+        Assert.Equal(new[] { "exec", "container-id", "find", "/opt/wip-rules", "-type", "f", "-print0" }, probes[3]);
+        Assert.Equal(new[] { "exec", "container-id", "find", "/opt/wip-rules", "-type", "f", "!", "-perm", "-o+r", "-print", "-quit" }, probes[4]);
+        Assert.DoesNotContain(fake.Calls, command => command.Contains("-readable"));
+        Assert.EndsWith(";rules-commit:" + cache.Rules.Commit, outcome.RulesVersion);
+        using var stream = new MemoryStream();
+        ScanResultWriter.Write(stream, outcome.Result);
+        using var result = JsonDocument.Parse(stream.ToArray());
+        Assert.Contains(cache.Rules.Commit, result.RootElement.GetProperty("run").GetProperty("rulesVersion").GetString());
+    }
+
+    [Fact]
+    public void ACopyFailureStopsTheSandboxWithoutExecutingTheScanner()
+    {
+        using var cache = new RulesCacheFixture();
+        cache.Fetcher.Fetch(cache.Rules);
+        var fake = new Fake { RulesCopyCode = 9 };
+        var plan = ValidPlan() with { Rules = cache.Rules };
+
+        var error = Assert.Throws<WipException>(() => Engine(fake, rulesFetcher: cache.Fetcher)
+            .Run(new StubScanner(plan), "scanner", plan, new ScanTarget("http://app.test")));
+
+        Assert.Contains("copy", error.Message);
+        Assert.False(Ran(fake, "exec", "container-id", "zap-baseline"));
+        Assert.True(Ran(fake, "stop"));
+    }
+
+    [Theory]
+    [InlineData(true, 0)]
+    [InlineData(false, 3)]
+    public void EmptyOrUnreadableContainerRulesRefuseTheScan(bool empty, int code)
+    {
+        using var cache = new RulesCacheFixture();
+        cache.Fetcher.Fetch(cache.Rules);
+        var fake = new Fake { RulesEmpty = empty, RulesReadCode = code };
+        var plan = ValidPlan() with { Rules = cache.Rules };
+
+        var error = Assert.Throws<WipException>(() => Engine(fake, rulesFetcher: cache.Fetcher)
+            .Run(new StubScanner(plan), "scanner", plan, new ScanTarget("http://app.test")));
+
+        Assert.Contains(empty ? "empty" : "presence", error.Message);
+        Assert.False(Ran(fake, "exec", "container-id", "zap-baseline"));
+        Assert.True(Ran(fake, "stop"));
+    }
+
+    [Theory]
+    [InlineData(false, "unreadable file")]
+    [InlineData(true, "untraversable directory")]
+    public void InaccessibleRulesRefuseExecutionWithTheSpecificCause(bool directory, string reason)
+    {
+        using var cache = new RulesCacheFixture();
+        cache.Fetcher.Fetch(cache.Rules);
+        var fake = new Fake { RulesUntraversableDirectory = directory, RulesUnreadableFile = !directory };
+        var plan = ValidPlan() with { Rules = cache.Rules };
+
+        var error = Assert.Throws<WipException>(() => Engine(fake, rulesFetcher: cache.Fetcher)
+            .Run(new StubScanner(plan), "scanner", plan, new ScanTarget("http://app.test")));
+
+        Assert.Contains(reason, error.Message);
+        Assert.False(Ran(fake, "exec", "container-id", "zap-baseline"));
+        Assert.True(Ran(fake, "stop"));
+        if (directory)
+            Assert.DoesNotContain(fake.Calls, command => command is ["exec", _, "find", _, "-type", "f", ..]);
+    }
+
+    [Theory]
+    [InlineData(true, 3, false, "directory permissions")]
+    [InlineData(true, 0, true, "directory permissions")]
+    [InlineData(false, 3, false, "file permissions")]
+    [InlineData(false, 0, true, "file permissions")]
+    public void FailedOrTimedOutRulesPermissionProbesFailClosed(bool directory, int code, bool timedOut, string reason)
+    {
+        using var cache = new RulesCacheFixture();
+        cache.Fetcher.Fetch(cache.Rules);
+        var fake = new Fake
+        {
+            RulesDirectoryPermissionCode = directory ? code : 0,
+            RulesDirectoryPermissionTimedOut = directory && timedOut,
+            RulesFilePermissionCode = directory ? 0 : code,
+            RulesFilePermissionTimedOut = !directory && timedOut
+        };
+        var plan = ValidPlan() with { Rules = cache.Rules };
+
+        var error = Assert.Throws<WipException>(() => Engine(fake, rulesFetcher: cache.Fetcher)
+            .Run(new StubScanner(plan), "scanner", plan, new ScanTarget("http://app.test")));
+
+        Assert.Contains(reason, error.Message);
+        Assert.False(Ran(fake, "exec", "container-id", "zap-baseline"));
+        Assert.True(Ran(fake, "stop"));
+    }
+
+    [Fact]
+    public void DirectoriesMissingOtherReadCannotSilentlyHideTheRules()
+    {
+        using var cache = new RulesCacheFixture();
+        cache.Fetcher.Fetch(cache.Rules);
+        var fake = new Fake { RulesUnreadableDirectory = true };
+        var plan = ValidPlan() with { Rules = cache.Rules };
+
+        var error = Assert.Throws<WipException>(() => Engine(fake, rulesFetcher: cache.Fetcher)
+            .Run(new StubScanner(plan), "scanner", plan, new ScanTarget("http://app.test")));
+
+        Assert.Contains("directory", error.Message);
+        Assert.False(Ran(fake, "exec", "container-id", "zap-baseline"));
+        Assert.True(Ran(fake, "stop"));
+    }
+
+    [Theory]
+    [InlineData("/")]
+    [InlineData("/opt")]
+    public void InaccessibleAncestorsRefuseRulesBeforeTheScannerRuns(string ancestor)
+    {
+        using var cache = new RulesCacheFixture();
+        cache.Fetcher.Fetch(cache.Rules);
+        var fake = new Fake { RulesBlockedAncestor = ancestor };
+        var plan = ValidPlan() with { Rules = cache.Rules };
+
+        var error = Assert.Throws<WipException>(() => Engine(fake, rulesFetcher: cache.Fetcher)
+            .Run(new StubScanner(plan), "scanner", plan, new ScanTarget("http://app.test")));
+
+        Assert.Contains("ancestor", error.Message);
+        Assert.False(Ran(fake, "exec", "container-id", "zap-baseline"));
+        Assert.True(Ran(fake, "stop"));
+    }
+
+    [Theory]
+    [InlineData("/", 3, false)]
+    [InlineData("/opt", 3, false)]
+    [InlineData("/", 0, true)]
+    [InlineData("/opt", 0, true)]
+    public void FailedOrTimedOutAncestorProbesFailClosed(string ancestor, int code, bool timedOut)
+    {
+        using var cache = new RulesCacheFixture();
+        cache.Fetcher.Fetch(cache.Rules);
+        var fake = new Fake { RulesFailedAncestor = ancestor, RulesAncestorPermissionCode = code, RulesAncestorPermissionTimedOut = timedOut };
+        var plan = ValidPlan() with { Rules = cache.Rules };
+
+        var error = Assert.Throws<WipException>(() => Engine(fake, rulesFetcher: cache.Fetcher)
+            .Run(new StubScanner(plan), "scanner", plan, new ScanTarget("http://app.test")));
+
+        Assert.Contains("ancestor", error.Message);
+        Assert.False(Ran(fake, "exec", "container-id", "zap-baseline"));
+        Assert.True(Ran(fake, "stop"));
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(3)]
+    public void CopiedRulesMustMatchTheVerifiedHostFileCount(int actualFiles)
+    {
+        using var cache = new RulesCacheFixture { SecondFile = true };
+        cache.Fetcher.Fetch(cache.Rules);
+        var fake = new Fake
+        {
+            RulesCopiedFiles = actualFiles == 1 ? ["template.yaml"] : ["template.yaml", "nested/second.yaml", "extra.yaml"]
+        };
+        var plan = ValidPlan() with { Rules = cache.Rules };
+
+        var error = Assert.Throws<WipException>(() => Engine(fake, rulesFetcher: cache.Fetcher)
+            .Run(new StubScanner(plan), "scanner", plan, new ScanTarget("http://app.test")));
+
+        Assert.Contains($"expected 2 files, found {actualFiles}", error.Message);
+        Assert.Contains(actualFiles < 2 ? "incomplete" : "extra files", error.Message);
+        Assert.False(Ran(fake, "exec", "container-id", "zap-baseline"));
+        Assert.True(Ran(fake, "stop"));
+    }
+
+    [Fact]
+    public void EveryVerifiedNestedFileCanBeCopiedAndCountedWithoutAShell()
+    {
+        using var cache = new RulesCacheFixture { SecondFile = true };
+        cache.Fetcher.Fetch(cache.Rules);
+        var fake = new Fake { RulesCopiedFiles = ["template.yaml", "nested/second.yaml"] };
+        var plan = ValidPlan() with { Rules = cache.Rules };
+
+        var outcome = Engine(fake, rulesFetcher: cache.Fetcher)
+            .Run(new StubScanner(plan), "scanner", plan, new ScanTarget("http://app.test"));
+
+        Assert.Equal("completed", outcome.Result!.Status);
+        Assert.Equal(2, fake.RulesFiles.Count);
+        Assert.Contains(fake.Calls, command => command.SequenceEqual(new[] { "exec", "container-id", "find", "/opt/wip-rules", "-type", "f", "-print0" }));
+        Assert.DoesNotContain(fake.Calls, command => command.Contains("sh"));
+    }
+
+    private static SandboxSettings IsolatedWithMount(string mount) => Settings($"""
+
+        networks:
+          - name: scan
+            internal: true
+        volumes:
+          - name: project
+            persistent: true
+            mount: {mount}
+        sandboxes:
+          - name: scanner
+            image: {Pinned}
+            network: scan
+            volumes: [project]
+        """);
+
+    [Theory]
+    [InlineData("/work")]
+    [InlineData("/work/rules")]
+    [InlineData("/work/rules/nested")]
+    [InlineData("/work/rules.staging")]
+    [InlineData("/work/rules.staging/nested")]
+    [InlineData("/")]
+    public void RulesOrStagingOverlappingDeclaredMountsFailBeforeAnyBackendCall(string mount)
+    {
+        using var cache = new RulesCacheFixture();
+        var fake = new Fake();
+        var rules = cache.Rules with { ContainerPath = "/work/rules" };
+        var plan = ValidPlan() with { Rules = rules };
+        var engine = Engine(fake, IsolatedWithMount(mount), cache.Fetcher);
+        var scanner = new StubScanner(plan);
+        var target = new ScanTarget("http://app.test");
+
+        var prepareError = Assert.ThrowsAny<WipException>(() => engine.Prepare(scanner, "scanner", target));
+        Assert.Contains("mount", prepareError.Message);
+        Assert.Empty(fake.Calls);
+        Assert.Empty(cache.GitCalls);
+        var runError = Assert.ThrowsAny<WipException>(() => engine.Run(scanner, "scanner", plan, target));
+        Assert.Contains("mount", runError.Message);
+        Assert.Empty(fake.Calls);
+        Assert.Empty(cache.GitCalls);
+    }
+
+    [Fact]
+    public void MountPrefixWithoutAPathBoundaryDoesNotBlockRules()
+    {
+        using var cache = new RulesCacheFixture();
+        var fake = new Fake();
+        var plan = ValidPlan() with { Rules = cache.Rules with { ContainerPath = "/work/rules" } };
+        var engine = Engine(fake, IsolatedWithMount("/workspace"), cache.Fetcher);
+
+        var prepared = engine.Prepare(new StubScanner(plan), "scanner", new ScanTarget("http://app.test"));
+        var outcome = engine.Run(new StubScanner(prepared), "scanner", prepared, new ScanTarget("http://app.test"));
+
+        Assert.Equal("completed", outcome.Result!.Status);
+    }
+
+    [Fact]
+    public void AnUnstatedRuntimeBindMountCannotBeTargetedByRulesCleanup()
+    {
+        using var cache = new RulesCacheFixture();
+        var fake = new Fake();
+        fake.Mounts.Add(new SandboxMount("bind", "host-project", "/work"));
+        var rules = cache.Rules with { ContainerPath = "/work/rules" };
+        cache.Fetcher.Fetch(rules);
+        var plan = ValidPlan() with { Rules = rules };
+
+        var error = Assert.ThrowsAny<WipException>(() => Engine(fake, rulesFetcher: cache.Fetcher)
+            .Run(new StubScanner(plan), "scanner", plan, new ScanTarget("http://app.test")));
+
+        Assert.Contains("mount", error.Message);
+        Assert.DoesNotContain(fake.Calls, command => command is ["exec", _, "rm", ..] or ["container", "cp", ..] or ["exec", _, "zap-baseline", ..]);
+        Assert.True(Ran(fake, "stop"));
+    }
+
+    [Fact]
+    public void ALinkedRulesAncestorCannotAliasAMountedHostDirectory()
+    {
+        using var cache = new RulesCacheFixture();
+        var fake = new Fake { RulesLinkedAncestor = "/opt" };
+        fake.Mounts.Add(new SandboxMount("bind", "host-project", "/work"));
+        cache.Fetcher.Fetch(cache.Rules);
+        var plan = ValidPlan() with { Rules = cache.Rules };
+
+        var error = Assert.ThrowsAny<WipException>(() => Engine(fake, rulesFetcher: cache.Fetcher)
+            .Run(new StubScanner(plan), "scanner", plan, new ScanTarget("http://app.test")));
+
+        Assert.Contains("ancestor", error.Message);
+        Assert.Contains(fake.Calls, command => command.SequenceEqual(new[] { "exec", "container-id", "test", "-L", "/opt" }));
+        Assert.DoesNotContain(fake.Calls, command => command is ["exec", _, "rm", ..] or ["container", "cp", ..] or ["exec", _, "zap-baseline", ..]);
+        Assert.True(Ran(fake, "stop"));
+    }
+
+    [Theory]
+    [InlineData(3, false)]
+    [InlineData(1, true)]
+    public void AnUnverifiableRulesAncestorRefusesCleanup(int code, bool timedOut)
+    {
+        using var cache = new RulesCacheFixture();
+        var fake = new Fake { RulesAncestorLinkCode = code, RulesAncestorLinkTimedOut = timedOut };
+        cache.Fetcher.Fetch(cache.Rules);
+        var plan = ValidPlan() with { Rules = cache.Rules };
+
+        var error = Assert.ThrowsAny<WipException>(() => Engine(fake, rulesFetcher: cache.Fetcher)
+            .Run(new StubScanner(plan), "scanner", plan, new ScanTarget("http://app.test")));
+
+        Assert.Contains("ancestor", error.Message);
+        Assert.DoesNotContain(fake.Calls, command => command is ["exec", _, "rm", ..] or ["container", "cp", ..] or ["exec", _, "zap-baseline", ..]);
+        Assert.True(Ran(fake, "stop"));
+    }
+
+    [Fact]
+    public void NoRulesPlansDoNotApplyRulesMountRestrictions()
+    {
+        var fake = new Fake();
+        fake.Mounts.Add(new SandboxMount("bind", "host-project", "/work"));
+        var plan = ValidPlan();
+        var engine = Engine(fake, IsolatedWithMount("/work"));
+
+        var prepared = engine.Prepare(new StubScanner(plan), "scanner", new ScanTarget("http://app.test"));
+        var outcome = engine.Run(new StubScanner(prepared), "scanner", prepared, new ScanTarget("http://app.test"));
+
+        Assert.Equal("completed", outcome.Result!.Status);
+        Assert.False(Ran(fake, "container", "cp"));
+    }
+
+    [Fact]
+    public void RunCannotFetchMissingRulesOrContinueWithoutThem()
+    {
+        using var cache = new RulesCacheFixture();
+        var fake = new Fake();
+        var plan = ValidPlan() with { Rules = cache.Rules };
+
+        Assert.Throws<WipException>(() => Engine(fake, rulesFetcher: cache.Fetcher)
+            .Run(new StubScanner(plan), "scanner", plan, new ScanTarget("http://app.test")));
+
+        Assert.Empty(cache.GitCalls);
+        Assert.False(Ran(fake, "container", "cp"));
+        Assert.False(Ran(fake, "exec", "container-id", "zap-baseline"));
+    }
+
+    [Fact]
+    public void AnAdapterWithoutRulesDoesNotUseGitCacheOrCopyOperations()
+    {
+        using var cache = new RulesCacheFixture();
+        cache.BeforeGit = () => throw new InvalidOperationException("legacy scan must not invoke git");
+        var fake = new Fake();
+        var plan = ValidPlan();
+        var engine = Engine(fake, rulesFetcher: cache.Fetcher, mapRulesSource: _ => throw new InvalidOperationException("no copy"));
+        var prepared = engine.Prepare(new StubScanner(plan), "scanner", new ScanTarget("http://app.test"));
+        var outcome = engine.Run(new StubScanner(plan), "scanner", prepared, new ScanTarget("http://app.test"));
+
+        Assert.Equal(plan.RulesVersion, prepared.RulesVersion);
+        Assert.Equal(plan.RulesVersion, outcome.RulesVersion);
+        Assert.Empty(cache.GitCalls);
+        Assert.False(Directory.Exists(cache.Root));
+        Assert.False(Ran(fake, "container", "cp"));
+        Assert.DoesNotContain(fake.Calls, command => command is ["exec", _, "rm" or "mkdir" or "mv" or "rmdir" or "find" or "test", ..]);
+    }
 
     // ----------------------------------------------------------------- one tool, from the table
 

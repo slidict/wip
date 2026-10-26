@@ -6,4 +6,6 @@ dist/
 publish/
 .vs/
 *.user
-**/.wip/volume-usage/
+
+# Runtime journals and scanner caches beside any in-tree configuration.
+**/.wip/

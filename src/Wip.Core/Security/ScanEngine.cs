@@ -72,13 +72,19 @@ internal sealed class ScanEngine(
     SandboxSettings settings,
     SandboxLifecycle sandboxes,
     INetworkLifecycle networks,
-    SandboxBackend backend)
+    SandboxBackend backend,
+    RulesFetcher? rulesFetcher = null,
+    Func<string, string>? mapRulesSource = null)
 {
     /// <summary>
     /// Allows a host-side registry request to finish. An existing runnable sandbox already
     /// has this immutable image locally; a pull need not download new layers.
     /// </summary>
     private static readonly TimeSpan PullTimeout = TimeSpan.FromMinutes(20);
+
+    // Thousands of host files may take minutes to cross into the WSL VM. Give the whole
+    // rules copy a fetch-sized budget; cheap setup and probes retain their one-minute bound.
+    private static readonly TimeSpan RulesCopyTimeout = TimeSpan.FromMinutes(5);
 
     /// <summary>
     /// Long by the standards of the other deadlines in wip, because an active web scan is
@@ -106,6 +112,9 @@ internal sealed class ScanEngine(
     // would be the hole this result format exists to close -- asking for --output and getting
     // neither a file nor a nonzero status is "nothing happened" presented as success.
     internal const int PersistenceFailedExitCode = 74;
+
+    private readonly RulesFetcher? stagedRules = rulesFetcher;
+    private readonly Func<string, string>? mapStagedSource = mapRulesSource;
 
     private SandboxDefinition Definition(string sandbox) =>
         settings.Sandboxes.SingleOrDefault(s => s.Name == sandbox)
@@ -141,6 +150,14 @@ internal sealed class ScanEngine(
         // Before the pull, so a sandbox that would run a different image is refused rather
         // than having an image fetched for it that nothing will use.
         RequirePinnedImage(definition, sandbox, plan);
+        RequireRulesOutsideMounts(definition, plan.Rules);
+        if (plan.Rules is { } declaredRules)
+        {
+            // Refuse an unusable cache location before any fetch or cache writes. Run
+            // rechecks the same source guard before copying; the cache stays config-local.
+            var source = RequireRulesFetcher().StagingPath(declaredRules);
+            _ = mapStagedSource?.Invoke(source);
+        }
         // This registry request cannot replace the digest-pinned image with different
         // content. It does not prove the sandbox is running or that rules were installed.
         var pulled = backend(["pull", plan.Image.Reference], PullTimeout, SandboxConsoleMode.Stream);
@@ -148,6 +165,11 @@ internal sealed class ScanEngine(
             throw new WipException(
                 $"Scanner {scanner.Name}: pulling {plan.Image.Reference} failed (exit {pulled.Code}); " +
                 "no scan was started, because an isolated sandbox cannot fetch it later");
+        if (plan.Rules is { } rules)
+        {
+            RequireRulesFetcher().Fetch(rules);
+            plan = plan with { RulesVersion = VersionWithPin(plan) };
+        }
         return plan;
     }
 
@@ -172,6 +194,7 @@ internal sealed class ScanEngine(
         // Re-checked here for the reason the plan is re-validated: a caller can reach Run with
         // a plan it built itself, so neither the plan nor the pairing is taken on trust.
         RequirePinnedImage(definition, sandbox, plan);
+        RequireRulesOutsideMounts(definition, plan.Rules);
 
         var deadline = timeout ?? DefaultScanTimeout;
         // Both bounds here, not just the lower one: the upper is what Exec enforces, and
@@ -209,6 +232,13 @@ internal sealed class ScanEngine(
 
         try
         {
+            if (plan.Rules is { } rules)
+            {
+                foreach (var mount in status.Mounts)
+                    RequireRulesOutsideMount(rules, mount.Destination);
+                CopyRules(status.Id, rules);
+            }
+            plan = plan with { RulesVersion = VersionWithPin(plan) };
             var execution = sandboxes.ExecWithResult(sandbox, plan.Argv, deadline);
             var code = execution.Code;
             if (execution.TimedOut)
@@ -231,6 +261,121 @@ internal sealed class ScanEngine(
             // The container stop includes the tool's children. Removal remains sandbox
             // destroy's responsibility, so failed runs leave the container inspectable.
             Stop(sandbox);
+        }
+    }
+
+    private RulesFetcher RequireRulesFetcher() => stagedRules
+        ?? throw new WipException("Pinned rules require a host staging cache; no scan was started");
+
+    private static string VersionWithPin(ScanPlan plan)
+    {
+        if (plan.Rules is not { } rules) return plan.RulesVersion;
+        var suffix = ";rules-commit:" + rules.Commit;
+        return plan.RulesVersion.EndsWith(suffix, StringComparison.Ordinal)
+            ? plan.RulesVersion : plan.RulesVersion + suffix;
+    }
+
+    private void RequireRulesOutsideMounts(SandboxDefinition definition, PinnedRules? rules)
+    {
+        if (rules is null) return;
+        // Mount knowledge belongs to the engine, not declaration validation. Neither rules
+        // nor their derived staging path may delete through a declared or running mount.
+        foreach (var name in definition.Volumes)
+            RequireRulesOutsideMount(rules, settings.Volumes.Single(volume => volume.Name == name).Mount);
+    }
+
+    private static void RequireRulesOutsideMount(PinnedRules rules, string mount)
+    {
+        if (string.IsNullOrEmpty(mount) || !mount.StartsWith('/') || mount.Any(char.IsControl) ||
+            (mount != "/" && mount[1..].Split('/').Any(part => part is "" or "." or "..")))
+            throw new WipException("Pinned rules cannot be copied because a sandbox mount path is unverified");
+        foreach (var path in new[] { rules.ContainerPath, rules.ContainerPath + ".staging" })
+        {
+            if (mount == "/" || path == mount || path.StartsWith(mount + "/", StringComparison.Ordinal) ||
+                mount.StartsWith(path + "/", StringComparison.Ordinal))
+                throw new ConfigException($"Pinned rules path {path} overlaps sandbox mount {mount}; no rules may be replaced through a mount");
+        }
+    }
+
+    private void CopyRules(string container, PinnedRules rules)
+    {
+        var staged = RequireRulesFetcher().RequireStagedTree(rules);
+        var source = mapStagedSource is null ? Path.GetFullPath(staged.Path) : mapStagedSource(staged.Path);
+        var limit = TimeSpan.FromMinutes(1);
+        // WSLC requires an existing destination and nests the source directory even when
+        // the source ends in /.; stdin tar extracts contents directly but needs backend
+        // stdin plumbing and host tar. Nest then move; the cache names the copied directory.
+        // Appending to the final canonical segment makes staging a distinct sibling of
+        // the rules path, never the rules path itself or one of its ancestors.
+        var staging = rules.ContainerPath + ".staging";
+        var ancestors = new List<string> { "/" };
+        foreach (var segment in rules.ContainerPath[1..].Split('/').SkipLast(1))
+        {
+            var parent = ancestors[^1];
+            ancestors.Add(parent == "/" ? parent + segment : parent + "/" + segment);
+        }
+        // A symlink ancestor could alias a mounted path and bypass lexical mount checks.
+        // Refuse before removal; test returns 1 for a plain or absent ancestor, which mkdir
+        // may create. Resolving a destination that does not yet exist is not reliable here.
+        foreach (var path in ancestors)
+        {
+            var link = backend(["exec", container, "test", "-L", path], limit, SandboxConsoleMode.Capture);
+            if (link.Code != 1 || link.TimedOut || link.OutputLimitExceeded)
+                throw new WipException($"Pinned rules ancestor {path} is a symbolic link or its link status could not be verified; no scan was started");
+        }
+        RequireCopyStep(["exec", container, "rm", "-rf", "--", rules.ContainerPath, staging]);
+        RequireCopyStep(["exec", container, "mkdir", "-p", "--", staging]);
+        RequireCopyStep(["container", "cp", source, container + ":" + staging], RulesCopyTimeout);
+        RequireCopyStep(["exec", container, "mv", "--", staging + "/" + RulesFetcher.TreeDirectoryName, rules.ContainerPath]);
+        RequireCopyStep(["exec", container, "rmdir", "--", staging]);
+        // Copies are owned by root while the scanner may use another UID. Directories
+        // need other-read for listing as well as other-execute for traversal; files need
+        // other-read. Alpine 3.20's BusyBox 1.36.1 rejects GNU find's -readable predicate.
+        // Probe existing ancestors instead of chmod: image directories are not ours to
+        // relax, and mkdir -p does not repair their permissions for the scanner.
+        foreach (var path in ancestors) RequireAncestor(path);
+        RequirePermissions("d", "-o+rx", "unreadable or untraversable directory");
+        // NUL separates paths without miscounting names containing newlines. The count
+        // preserves the empty-tree refusal and detects a successful but partial copy.
+        var contents = backend(["exec", container, "find", rules.ContainerPath, "-type", "f", "-print0"],
+            limit, SandboxConsoleMode.Capture);
+        if (contents.Code != 0 || contents.TimedOut || contents.OutputLimitExceeded ||
+            (contents.Output.Length > 0 && contents.Output[^1] != '\0'))
+            throw new WipException("Pinned rules presence could not be verified; no scan was started");
+        var actualCount = contents.Output.Count(character => character == '\0');
+        if (actualCount == 0)
+            throw new WipException($"Pinned rules are empty in the sandbox: expected {staged.FileCount} files, found 0; no scan was started");
+        if (actualCount != staged.FileCount)
+        {
+            var problem = actualCount < staged.FileCount ? "is incomplete" : "contains extra files";
+            throw new WipException($"Pinned rules copy {problem}: expected {staged.FileCount} files, found {actualCount}; no scan was started");
+        }
+        RequirePermissions("f", "-o+r", "unreadable file");
+
+        void RequireAncestor(string path)
+        {
+            // A trailing /. resolves a directory symlink instead of letting -type d skip it.
+            var probePath = path.TrimEnd('/') + "/.";
+            var result = backend(["exec", container, "find", probePath, "-maxdepth", "0", "-type", "d",
+                "!", "-perm", "-o+rx", "-print", "-quit"], limit, SandboxConsoleMode.Capture);
+            if (result.Code != 0 || result.TimedOut || result.OutputLimitExceeded || !string.IsNullOrWhiteSpace(result.Output))
+                throw new WipException($"Pinned rules ancestor {path} is unreadable or untraversable, or its permissions could not be verified; no scan was started");
+        }
+
+        void RequirePermissions(string type, string permission, string failure)
+        {
+            var kind = type == "d" ? "directory" : "file";
+            var result = backend(["exec", container, "find", rules.ContainerPath, "-type", type,
+                "!", "-perm", permission, "-print", "-quit"], limit, SandboxConsoleMode.Capture);
+            if (result.Code != 0 || result.TimedOut || result.OutputLimitExceeded || !string.IsNullOrWhiteSpace(result.Output))
+                throw new WipException($"Pinned rules contain an {failure} or {kind} permissions could not be verified; no scan was started");
+        }
+
+        void RequireCopyStep(IReadOnlyList<string> arguments, TimeSpan? timeout = null)
+        {
+            var result = backend(arguments, timeout ?? limit, SandboxConsoleMode.Stream);
+            if (result.Code != 0 || result.TimedOut)
+                throw new WipException($"Pinned rules copy failed (exit {result.Code}); no scan was started");
         }
     }
 

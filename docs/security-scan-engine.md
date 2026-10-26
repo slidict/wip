@@ -188,6 +188,7 @@ An adapter supplies a `ScanPlan`:
 | `ReportPath` | Canonical absolute path of the report inside the container |
 | `RulesVersion` | Version or digest of the applied rule, template or add-on set |
 | `UnperformedChecksPath` | Required canonical absolute path for raw omitted-check information; missing paths are rejected before execution |
+| `Rules` | Optional `PinnedRules(RepositoryUrl, Commit, ContainerPath)` declaration |
 
 Every adapter must declare a coverage record so an empty finding list cannot imply that
 unreported checks ran. Plan validation rejects missing coverage paths before backend calls;
@@ -199,17 +200,138 @@ appears after the container ID and can only become the scanner command's argumen
 engine and sandbox declaration control isolation. One scanner per invocation follows from
 `Prepare` and `Run` each accepting one adapter.
 
+## Pinned rules staging
+
+An adapter whose rules are not bundled in its image declares `ScanPlan.Rules` with a source
+`RepositoryUrl`, immutable `Commit` and destination `ContainerPath`. This data cannot select a
+mount, volume, network, helper image or backend option. Validation requires an absolute HTTPS
+URL without userinfo or control characters, exactly 40 lowercase hexadecimal commit characters,
+and a canonical absolute Linux destination with at least two nonempty path segments.
+`/opt/wip-rules` is accepted; `/etc`, `/usr` and `/rules` are refused so replacing rules cannot
+remove a top-level container directory. Branches, tags and short hashes are refused.
+
+For declared rules, `Prepare` first validates the prospective cache-tree path through the
+same `mapRulesSource`/`WslPath.ForWslc` guard used by `Run`, before any image pull or git
+fetch. An unusable WSL-UNC source therefore refuses preparation before downloads; the
+cache remains beside the configuration rather than being relocated. After pulling the
+image, `Prepare` uses host-side git to fetch the pinned commit into a staging tree,
+verifies that `FETCH_HEAD` exactly equals the pin, and checks out that commit. Fetch and
+checkout each have a five-minute budget because their work scales with the tree; metadata-only
+init and ref resolution keep a 30-second bound. Missing or unrunnable git, a failed
+fetch/checkout, a mismatched commit or an unusable rule tree stops preparation; there is no
+scan without the declared rules. Git uses
+`core.autocrlf=false` and `core.eol=lf`: disabling autocrlf alone leaves attribute-driven
+default line endings dependent on the host, which would also make cached fingerprints
+host-dependent. An explicit repository `eol=crlf` attribute still overrides this LF
+default. Failed temporary staging is cleaned up without replacing the original error if
+cleanup also fails.
+
+Temporary staging keeps the publishable `entry/tree` and `entry/verified.json` separate from
+sibling `git-dir`, `hooks` and `git-config`. Only `entry` moves into the commit-keyed cache;
+git metadata remains in scratch until publication finishes, then cleanup runs. External
+Windows antivirus or indexer handles can still temporarily deny the newly written entry's
+move, so metadata separation alone does not establish reliable publication.
+
+Only `IOException` and `UnauthorizedAccessException` from the publish move are retried:
+five attempts with 100, 200, 300 and 400 ms delays, totaling one second of waiting. Fetch and
+verification failures are not retried. If another preparation already published the pin,
+its destination is verified and reused immediately. Exhaustion fails closed with an explicit
+staging-publication error. Linux test passes do not verify this Windows handle behavior;
+Windows verification remains required.
+
+Verified trees are cached under `<config directory>/.wip/scanner-rules/<commit>/tree`. The
+commit names immutable content; published verification metadata and a tree fingerprint
+protect reuse against an incomplete or changed local entry. Fingerprinting sorts
+slash-normalized relative paths in ordinal order, making the digest independent of native
+separators and cache location. A second preparation of the same valid pin reuses the tree
+without fetching. Verification metadata stays outside the copied tree, and symlinks are
+refused. Version 2 cache markers reject older entries that may carry native line endings;
+remove a rejected entry and prepare again. The same recovery instruction applies when an
+existing commit directory is missing its tree or verification marker. Entries are not
+deleted or migrated automatically, and incomplete entries cannot be reused. `Run` requires
+a valid staged entry and performs no git fetch. It repeats the source-path guard with a
+pinned-rules context label before `container cp`. Its default WSL-UNC refusal names the
+host-path cause rather than allowing an empty transfer to look like empty rules. Runtime
+state under any in-tree `.wip/` directory, including this cache, is ignored by git. The
+rules copy is covered by fake-backend tests; real WSLC execution is not verified locally.
+
+Before fetching and again before running, the engine rejects overlap between either the
+rules path or its derived staging path and any referenced declared volume mount. The check
+covers both directions, including a mount nested inside either path, so replacement cannot
+remove mounted data. This belongs to the engine because only it has the sandbox declaration.
+Before copying, `Run` also checks the running container's reported mounts, including stale
+or implicit mounts absent from that declaration. Before removing either destination, separate
+`exec <container> test -L <ancestor>` calls reject symlinked ancestors or an unverifiable
+probe. Rejecting aliases keeps a path from resolving into a mount that its written spelling
+does not overlap; missing ancestors can still be created normally.
+
+After image and network verification, the engine uses a derived `<path>.staging` directory.
+WSLC requires the copy destination to exist and nests the source directory inside it; even a
+source ending in `/.` does not copy only its contents. The host cache's source basename is
+always `tree`, so the engine uses separate backend argv calls, never a shell:
+
+```text
+exec <container> rm -rf -- <path> <path>.staging
+exec <container> mkdir -p -- <path>.staging
+container cp <source> <container>:<path>.staging
+exec <container> mv -- <path>.staging/tree <path>
+exec <container> rmdir -- <path>.staging
+```
+
+The whole-tree `container cp` step has a five-minute deadline for large Windows-to-WSL
+transfers. Setup, moves, cleanup and probes keep separate one-minute bounds.
+
+The nonempty `.staging` suffix cannot equal the validated rules path, and the adapter cannot
+choose a separate staging destination. Moving the known `tree` directory puts its contents
+directly at the declared path. Stdin-tar extraction also avoids nesting, but would require host
+tar and backend stdin plumbing; this sequence needs neither. A failed copy, move or cleanup,
+a missing path or an empty rules directory refuses execution. The copy uses the already
+verified scanner image, with no separate mirror image or volume declaration.
+
+Before executing the scanner, the engine probes every ancestor from `/` down to the rules
+path and every directory in the rules tree for other-user read and traversal permissions.
+It checks rather than chmods ancestors, preserving the image's existing access policy.
+Appending `/.` resolves an ancestor directory even when its path ends in a symlink, so the
+`-type d` predicate cannot silently skip it. Each probe is a separate backend invocation
+without a shell:
+
+```text
+find <ancestor>/. -maxdepth 0 -type d ! -perm -o+rx -print -quit
+find <path> -type d ! -perm -o+rx -print -quit
+find <path> -type f -print0
+find <path> -type f ! -perm -o+r -print -quit
+```
+
+The NUL-separated file list is counted against the exact number of regular files hashed in
+the verified host tree. An empty copy refuses the scan; a shortfall is reported as an
+incomplete copy and a surplus as extra files. Each refusal reports both expected and actual
+counts, so one copied file cannot stand in for the complete rule set.
+
+The copy is performed as root while the scanner may run as another user, so permission
+checks inspect the other-user bits rather than effective access. Directories need both
+`o+r` to list files and `o+x` to traverse them; files need `o+r`. BusyBox 1.36.1 in Alpine 3.20
+rejects `-readable`; these `-perm` predicates work there and with GNU findutils. Missing
+ancestor access, unreadable directories, an empty or partial tree, and unreadable files have
+distinct refusals. A nonzero exit or timeout from any probe also refuses the scan rather than
+assuming the rules are usable.
+
+Provenance appends `;rules-commit:<commit>` to the adapter's `RulesVersion` once, so both stderr
+and the result document identify the pin. The colon preserves the commit through normalized
+metadata redaction. Adapters without `Rules`, including ZAP, retain their existing calls:
+no rules cache access, git invocation, copy or extra pre-run check is added.
+
 ## Phases and output
 
 | Phase | Behavior |
 | --- | --- |
-| Prepare | Validate the plan and request an immutable-image pull outside the isolated sandbox |
-| Run | Revalidate the plan, running image and boundary, then execute the tool |
+| Prepare | Validate the plan, pull the immutable image and fetch/verify any declared rules host-side |
+| Run | Verify the image and boundary, copy/check any staged rules, then execute the tool |
 | Collect | Read the report under a separate short deadline and bounded capture limit |
 | Cleanup | Stop the owned container, including on execution failure |
 
-The CLI calls `Prepare` before `Run`, but `Run` has no preparation token or history check:
-it accepts a valid plan and independently verifies the running sandbox. Callers must create
+The CLI calls `Prepare` before `Run`, but `Run` has no per-invocation preparation token:
+it independently verifies the running sandbox and, for rule plans, requires a valid staged
+cache entry that can be reused across runs. Callers must create
 and start that sandbox before scanning. Consequently its pinned image is already available
 locally when a scan can run; the preparation pull may check registry metadata but is not a
 guaranteed first image fetch. It does not create, start or reorder sandbox creation. Preparing
