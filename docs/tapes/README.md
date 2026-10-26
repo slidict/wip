@@ -1,6 +1,6 @@
 # Wiki terminal recordings
 
-These seven VHS tapes record real commands with a shared fixture on Windows,
+These eight VHS tapes record real commands with a shared fixture on Windows,
 wip's shipping target. The tape shell is PowerShell. GIF rendering runs on the
 recording host; these revised tapes have not been rendered in this environment.
 
@@ -78,12 +78,14 @@ bash docs/tapes/prepare.sh wip-sync
 vhs docs/tapes/wip-sync.tape
 bash docs/tapes/prepare.sh wip-sandbox
 vhs docs/tapes/wip-sandbox.tape
+bash docs/tapes/prepare.sh wip-security-scan
+vhs docs/tapes/wip-security-scan.tape
 ```
 
-Or generate all seven sequentially, stopping on failure:
+Or generate all eight sequentially, stopping on failure:
 
 ```bash
-for slug in getting-started wip-up wip-build wip-shell wip-logs wip-sync wip-sandbox; do
+for slug in getting-started wip-up wip-build wip-shell wip-logs wip-sync wip-sandbox wip-security-scan; do
   bash docs/tapes/prepare.sh "$slug" || break
   vhs "docs/tapes/$slug.tape" || break
 done
@@ -93,6 +95,10 @@ The getting-started take begins without `wip.yml`. After showing `wip init`,
 it installs `recording.yml` while hidden: the generated starter contains a
 placeholder image and must be customized before use. Other tapes start with
 the fixture installed; shell, logs, and sync start with the app already running.
+The security-scan take appends an internal `scan` network plus `target` and
+`scanner` sandboxes using the digest-pinned ZAP image, warms the image by
+creating `target` (which serves `/tmp/index.html` over HTTP on port 8080), and
+writes `target`'s internal IPv4 URL to `.target-url` before recording.
 The sync take uses PowerShell `Start-Job` with absolute file paths because jobs
 use a separate working directory. A hidden readiness marker confirms startup
 before a second marker starts the three-second edit countdown; a 12-second
@@ -101,18 +107,20 @@ runs for eight seconds while the job edits the file, then the tape
 reads `/app/message.txt` inside the container after Ctrl-C to show the result.
 
 Outputs are `docs/tapes/<slug>.gif` in the recording directory. After inspecting
-them, copy all seven GIFs into the checkout's `docs/tapes/` and commit them with
+them, copy all eight GIFs into the checkout's `docs/tapes/` and commit them with
 any changed source assets. Wiki pages reference the committed GIFs through
 `raw.githubusercontent.com`; after the commit reaches main, use:
 
 `![wip up demo](https://raw.githubusercontent.com/slidict/wip/main/docs/tapes/wip-up.gif)`
 
-After recording, run `wip down` and `wip sandbox destroy demo` with the fixture
-installed. Remove the unused `wip-tapes-src` volume with the backend's volume
-management commands once all fixture containers have been removed.
+After recording, run `wip down` and `wip sandbox destroy demo` (and
+`wip sandbox destroy scanner` / `wip sandbox destroy target` after the security
+scan take) with the fixture installed. Remove the unused `wip-tapes-src` volume
+with the backend's volume management commands once all fixture containers have
+been removed.
 
 `wip down` leaves networks behind. Warmup now reuses one network, but each take
-still adds one: seven takes leave eight networks on a clean host. Remove unused
+still adds one: eight takes leave nine networks on a clean host. Remove unused
 fixture networks after each batch and before retrying if older batches remain.
 Accumulated networks exhaust the default IPv4 address pools: startup fails with
 "could not find an available, non-overlapping IPv4 address pool".
@@ -136,12 +144,14 @@ unrelated networks. The command follows the
 | wip-logs | wip logs | live heartbeats with -f, Ctrl-C |
 | wip-sync | wip sync | --watch, host edit, mirrored content, Ctrl-C |
 | wip-sandbox | wip sandbox | create, status, list, exec --interactive, stop, destroy |
+| wip-security-scan | wip security scan | security tools, sandbox create, security scan --tool zap --output, status, destroy |
 
 When a command or output changes, edit the corresponding tape in this table.
 Check flags in `src/Wip.Cli/Program.cs` and behavior in
-`src/Wip.Cli/CliContext.cs` or `CliContext.Sandbox.cs`. Update the shared fixture
+`src/Wip.Cli/CliContext.cs`, `CliContext.Sandbox.cs`, or
+`CliContext.Security.cs`. Update the shared fixture
 and preparation script if inputs change, then regenerate every affected tape
-using its prepare/render pair above. Keep the seven visual settings aligned
+using its prepare/render pair above. Keep the six visual settings aligned
 with `docs/demo.tape`, except for the required PowerShell shell.
 Inspect each retake, copy the regenerated GIF back into `docs/tapes/`, and
 commit the updated GIF with its tape or fixture changes. Keep the same slug so
