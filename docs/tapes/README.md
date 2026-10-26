@@ -7,8 +7,9 @@ recording host; these revised tapes have not been rendered in this environment.
 ## Tools
 
 The host-tested versions are VHS 0.12.1, ttyd 1.7.7, and FFmpeg 9.0.2,
-on Windows 11 with wip 2.12.0 and WSLC 3.0.3.0. The security-scan take needs
-wip 2.12.1 or newer, because it declares `command:` on its sandboxes. Install them from the
+on Windows 11 with WSLC 3.0.3.0. The first seven takes were recorded with
+wip 2.12.0; the security-scan take needs wip 2.12.1 or newer, because it
+declares `command:` on its sandboxes, which 2.12.0 rejects as an unsupported key. Install them from the
 [VHS instructions](https://github.com/charmbracelet/vhs#installation),
 [ttyd releases](https://github.com/tsl0922/ttyd/releases), and
 [FFmpeg downloads](https://ffmpeg.org/download.html).

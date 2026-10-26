@@ -305,7 +305,7 @@ on the same isolated network.
 **"Unperformed" is reported separately from "no findings."** Every scan records which checks
 and crawl scope were omitted (printed to stderr under `Unperformed checks (raw):` and written to
 `unperformed-checks.txt` and `result.json`'s `coverage` field when `--output` is given;
-incomplete runs omit `findings` altogether and exit `70`). A completed `zap` scan with zero
+incomplete runs omit `findings` altogether and exit nonzero). A completed `zap` scan with zero
 findings only reflects the unauthenticated passive scope that ran — a clean report is not proof
 that active or authenticated checks passed, or that the target is safe.
 
@@ -350,8 +350,7 @@ wip sandbox destroy target
 The engine stops the scanner container when the scan finishes (or times out); `sandbox destroy`
 removes it. For the CLI workflow, see
 [wip security scan](https://github.com/slidict/wip/wiki/wip-security-scan) on the wiki; for
-engine internals, adapter contracts, result schema, exit codes (`70` incomplete, `74`
-persistence failure), and pinned rules staging, see
+engine internals, adapter contracts, result schema, exit codes, and pinned rules staging, see
 [the security scan engine](docs/security-scan-engine.md).
 
 ## Development

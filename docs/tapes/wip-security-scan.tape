@@ -27,8 +27,10 @@ Sleep 3s
 
 Type "wip security scan scanner --tool zap --target $target --output scan-out"
 Enter
-# The bounded spider and passive scan take about 35s against the fixture; leave room
-# for the scan to finish on a slower host so the recording shows its result.
+# Measured at about 35s against the fixture; 75s leaves margin on a slower host so the
+# take cannot end mid-scan, which the first recording did at 25s.
+# Wait+Screen /Automation plan succeeded!/ would remove the guess, but VHS 0.12.1 ends the
+# recording with "recording failed" on this tape, so the margin stays explicit.
 Sleep 75s
 
 Type "wip sandbox status scanner"
