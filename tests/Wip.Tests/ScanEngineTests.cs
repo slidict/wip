@@ -238,10 +238,11 @@ public class ScanEngineTests
                     resolvedAncestor == RulesBlockedAncestor ? resolvedAncestor : "")
                 { TimedOut = resolvedAncestor == RulesFailedAncestor && RulesAncestorPermissionTimedOut };
             }
-            if (argv is ["exec", _, "find", var directoryPath, "-type", "d", "!", "-perm", var permission, "-print", "-quit"] &&
-                permission is "-o+x" or "-555")
+            if (argv is ["exec", _, "find", var directoryPath, "-type", "d", "!", "-perm", "-555", "-print", "-quit"])
+                // -555 is read and execute for every class, so one predicate now reports both an
+                // unreadable and an untraversable directory; the effective probe tells them apart.
                 return new(RulesDirectoryPermissionCode,
-                    RulesUntraversableDirectory || (permission == "-555" && RulesUnreadableDirectory) ? directoryPath + "/private" : "")
+                    RulesUntraversableDirectory || RulesUnreadableDirectory ? directoryPath + "/private" : "")
                 { TimedOut = RulesDirectoryPermissionTimedOut };
             if (argv is ["exec", _, "find", var filePath, "-type", "f", "!", "-perm", "-444", "-print", "-quit"])
                 return new(RulesFilePermissionCode, RulesUnreadableFile ? filePath + "/private.yaml" : "")
@@ -565,8 +566,11 @@ public class ScanEngineTests
             { RedirectStandardOutput = true, RedirectStandardError = true };
             foreach (var argument in arguments) start.ArgumentList.Add(argument);
             using var process = System.Diagnostics.Process.Start(start)!;
+            // Read one pipe while draining the other: find emits one "Permission denied" per
+            // entry, and a full stderr buffer would block the child while this blocks on stdout.
+            var errorText = process.StandardError.ReadToEndAsync();
             var output = process.StandardOutput.ReadToEnd();
-            var error = process.StandardError.ReadToEnd();
+            var error = errorText.GetAwaiter().GetResult();
             process.WaitForExit();
             return new(process.ExitCode, output + error);
         }
@@ -596,7 +600,12 @@ public class ScanEngineTests
         Assert.Throws<WipException>(() => Engine(fake, rulesFetcher: cache.Fetcher)
             .Run(new StubScanner(plan), "scanner", plan, new ScanTarget("http://app.test")));
         Assert.False(Ran(fake, "exec", "container-id", "zap-baseline"));
-        Assert.Contains(probes, argv => argv.Contains("-exec") && argv.Contains("-r"));
+        // Pin the whole argv, not just that "-exec" appears. A dropped ";" terminator or "{}"
+        // leaves every fallback probe exiting nonzero, which Failed() turns into a refusal of
+        // every scan whose rules tree misses the fast path -- and a Contains assertion against
+        // a fake that hard-codes the verdict would not notice.
+        Assert.Equal(new[] { "exec", "container-id", "find", "/opt/wip-rules", "-type", "f",
+            "!", "-exec", "test", "-r", "{}", ";", "-print", "-quit" }, Assert.Single(probes));
     }
 
     [Theory]

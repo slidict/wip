@@ -328,8 +328,9 @@ internal sealed class ScanEngine(
         RequireCopyStep(["container", "cp", source, container + ":" + staging], RulesCopyTimeout);
         RequireCopyStep(["exec", container, "mv", "--", staging + "/" + RulesFetcher.TreeDirectoryName, rules.ContainerPath]);
         RequireCopyStep(["exec", container, "rmdir", "--", staging]);
-        // A mode granting read to owner, group and other is a fast acceptance path with no
-        // per-entry processes: every class can read, so it holds whoever the scanner is. Other
+        // A mode that grants every class what the entry needs -- read and traverse for a
+        // directory (-555), read for a file (-444) -- is a fast acceptance path with no
+        // per-entry processes: the answer holds whoever the scanner is. Other
         // bits alone would not -- Linux applies the owner class first and never falls back to
         // other, so mode 0004 is unreadable to its own owner. Any other mode falls through to
         // kernel access checks, which exec evaluates under the image user's credentials, the
