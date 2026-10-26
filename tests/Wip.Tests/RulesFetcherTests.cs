@@ -330,9 +330,12 @@ public sealed class RulesFetcherTests : IDisposable
         var staged = fetcher.Fetch(Rules);
 
         Assert.Equal("pinned rule content", File.ReadAllText(Path.Combine(staged, "rules.yaml")));
-        Assert.Equal(3, attempts);
-        Assert.Equal(new[] { TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(200) }, waits);
+        // The real move may encounter an additional host-held handle after our two
+        // injected failures; keep the cap and git sequence strict instead of host timing.
+        Assert.InRange(attempts, 3, 5);
+        Assert.Equal(Enumerable.Range(1, attempts - 1).Select(attempt => TimeSpan.FromMilliseconds(attempt * 100)), waits);
         Assert.Equal(4, fake.Commands.Count);
+        Assert.Equal(new[] { "init", "fetch", "rev-parse", "checkout" }, fake.Operations);
         Assert.Empty(Directory.EnumerateDirectories(root, ".tmp-*"));
     }
 
@@ -366,20 +369,29 @@ public sealed class RulesFetcherTests : IDisposable
     {
         var fake = new FakeGit();
         var attempts = 0;
+        var publishedAtAttempt = 0;
+        var waitsAtPublication = -1;
         var waits = new List<TimeSpan>();
         var fetcher = new RulesFetcher(root, fake.Run, (source, destination) =>
         {
             attempts++;
             Directory.Move(source, destination);
+            publishedAtAttempt = attempts;
+            waitsAtPublication = waits.Count;
             throw PublishError(accessDenied);
         }, waits.Add);
 
         var staged = fetcher.Fetch(Rules);
 
         Assert.Equal("pinned rule content", File.ReadAllText(Path.Combine(staged, "rules.yaml")));
-        Assert.Equal(1, attempts);
-        Assert.Empty(waits);
+        // Earlier real moves may fail transiently, but publication must end retries and
+        // backoff immediately, including after our injected concurrent-publisher error.
+        Assert.InRange(attempts, 1, 5);
+        Assert.Equal(publishedAtAttempt, attempts);
+        Assert.Equal(waitsAtPublication, waits.Count);
+        Assert.Equal(Enumerable.Range(1, attempts - 1).Select(attempt => TimeSpan.FromMilliseconds(attempt * 100)), waits);
         Assert.Equal(4, fake.Commands.Count);
+        Assert.Equal(new[] { "init", "fetch", "rev-parse", "checkout" }, fake.Operations);
         Assert.Empty(Directory.EnumerateDirectories(root, ".tmp-*"));
     }
 
