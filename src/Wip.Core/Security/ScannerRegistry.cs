@@ -14,7 +14,7 @@ namespace Wip.Security;
 /// </remarks>
 internal static class ScannerRegistry
 {
-    private static readonly ISecurityScanner[] Registered = [new ZapScanner()];
+    private static readonly ISecurityScanner[] Registered = [new ZapScanner(), new NucleiScanner()];
 
     /// <summary>Registered names in declaration order, for a message that lists the choices.</summary>
     internal static IReadOnlyList<string> Names => Registered.Select(s => s.Name).ToArray();

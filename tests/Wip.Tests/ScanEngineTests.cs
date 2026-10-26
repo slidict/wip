@@ -31,17 +31,17 @@ public class ScanEngineTests
         resource_namespace: test
         """ + body, allowAliases: false)).SandboxResources;
 
-    private static SandboxSettings Isolated() => Settings($"""
+    private static SandboxSettings Isolated(string image = Pinned) => Settings($"""
 
         networks:
           - name: scan
             internal: true
         sandboxes:
           - name: scanner
-            image: {Pinned}
+            image: {image}
             network: scan
           - name: unisolated
-            image: {Pinned}
+            image: {image}
         """);
 
     /// <summary>A plan that passes validation, so a test can vary one thing at a time.</summary>
@@ -285,10 +285,10 @@ public class ScanEngineTests
     private static bool Ran(Fake fake, params string[] prefix) =>
         fake.Calls.Any(c => c.Length >= prefix.Length && c.Take(prefix.Length).SequenceEqual(prefix));
 
-    private sealed class RulesCacheFixture : IDisposable
+    private sealed class RulesCacheFixture(PinnedRules? rules = null) : IDisposable
     {
         public readonly string Root = Path.Combine(Path.GetTempPath(), "wip-rules-engine-" + Guid.NewGuid().ToString("N"));
-        public readonly PinnedRules Rules = new("https://example.invalid/rules.git", new string('a', 40), "/opt/wip-rules");
+        public readonly PinnedRules Rules = rules ?? new("https://example.invalid/rules.git", new string('a', 40), "/opt/wip-rules");
         public readonly List<string[]> GitCalls = [];
         public Action? BeforeGit;
         public bool WrongCommit;
@@ -823,7 +823,8 @@ public class ScanEngineTests
     [Fact]
     public void ZapIsRegisteredInTheReviewedBuiltInTable()
     {
-        Assert.Equal(["zap"], ScanEngine.Tools);
+        Assert.Equal(["zap", "nuclei"], ScanEngine.Tools);
+        Assert.IsType<NucleiScanner>(ScanEngine.Select("nuclei"));
         Assert.IsType<ZapScanner>(ScanEngine.Select("zap"));
     }
 
@@ -832,7 +833,8 @@ public class ScanEngineTests
     [InlineData("  ")]
     [InlineData("Zap")]
     [InlineData("ZAP")]
-    [InlineData("nuclei")]
+    [InlineData("zap,nuclei")]
+    [InlineData("nuclei zap")]
     public void SelectingAnUnregisteredToolFails(string tool)
     {
         var error = Assert.Throws<ConfigException>(() => ScanEngine.Select(tool));
@@ -845,6 +847,35 @@ public class ScanEngineTests
         Assert.False(typeof(PinnedImage).IsPublic);
         Assert.False(typeof(ScanPlan).IsPublic);
         Assert.False(typeof(ScanTarget).IsPublic);
+    }
+
+    [Theory]
+    [InlineData("zap")]
+    [InlineData("nuclei")]
+    public void BuiltInAdaptersConformToTheUnchangedEngineAndIsolationBoundary(string tool)
+    {
+        var scanner = ScanEngine.Select(tool);
+        var target = new ScanTarget("http://app.test:8080/");
+        var plan = scanner.Plan(target);
+        plan.Validate(tool);
+        Assert.False(scanner.GetType().IsPublic);
+        Assert.False(typeof(ISecurityScanner).IsPublic);
+        using var cache = new RulesCacheFixture(plan.Rules);
+        var fake = new Fake { ContainerImage = plan.Image.Reference,
+            Report = tool == "zap" ? "{\"site\":[]}" : NucleiScanner.Completion };
+        var engine = Engine(fake, Isolated(plan.Image.Reference), cache.Fetcher);
+        var prepared = engine.Prepare(scanner, "scanner", target);
+        var outcome = engine.Run(scanner, "scanner", prepared, target);
+        Assert.Equal("completed", outcome.Result!.Status);
+        Assert.Empty(outcome.Result.Findings!);
+        Assert.True(outcome.Result.Run.NetworkVerifiedInternal);
+        Assert.True(Ran(fake, "stop"));
+        Assert.DoesNotContain(fake.Calls, argv => argv.Contains("--network") || argv.Contains("--mount") || argv.Contains("--user"));
+        fake.Attachments.Add("foreign-network");
+        fake.ContainerState = "running";
+        fake.Calls.Clear();
+        Assert.Throws<WipException>(() => engine.Run(scanner, "scanner", prepared, target));
+        Assert.DoesNotContain(fake.Calls, argv => argv is ["exec", _, "sh" or "python3", ..]);
     }
 
     // ----------------------------------------------------------------- preparation

@@ -16,6 +16,66 @@ public class SandboxLifecycleTests
         """ + suffix, allowAliases: false)).SandboxResources;
 
     [Fact]
+    public void EntrypointPrecedesImageAndCommandSuppliesItsArguments()
+    {
+        var fake = new Fake();
+        var lifecycle = new SandboxLifecycle(Settings("\n    entrypoint: sleep\n    command: [infinity]"), fake.Run);
+        Assert.Equal(0, lifecycle.Create("first"));
+        var run = Assert.Single(fake.Calls, argv => argv[0] == "run");
+        Assert.Equal(new[] { "--entrypoint", "sleep", "fixture:latest", "infinity" }, run.TakeLast(4));
+        Assert.Equal(new[] { "sleep" }, lifecycle.Status("first").Entrypoint);
+    }
+
+    [Theory]
+    [InlineData("running")]
+    [InlineData("exited")]
+    public void EntrypointDriftRefusesReuseOrStart(string state)
+    {
+        var fake = new Fake { Exists = true, State = state, Entrypoint = ["nuclei"] };
+        var error = Assert.Throws<WipException>(() => new SandboxLifecycle(Settings("\n    entrypoint: sleep"), fake.Run).Create("first"));
+        Assert.Contains("entrypoint differs", error.Message);
+        Assert.Contains("destroy", error.Message);
+        Assert.DoesNotContain(fake.Calls, argv => argv[0] is "start" or "run");
+    }
+
+    [Theory]
+    [InlineData("null")]
+    [InlineData("\"sleep\"")]
+    [InlineData("{}")]
+    [InlineData("[123]")]
+    public void UnreadableEntrypointFailsWithoutRecreateAdvice(string value)
+    {
+        var fake = new Fake { Exists = true };
+        fake.InspectOutput = JsonSerializer.Serialize(new[] { new {
+            fake.Id, fake.Name, fake.State,
+            Labels = new Dictionary<string, string> { [SandboxLifecycle.OwnerLabel] = fake.Owner },
+            Config = new { Entrypoint = JsonSerializer.Deserialize<JsonElement>(value) }
+        }});
+        var error = Assert.Throws<WipException>(() => new SandboxLifecycle(Settings("\n    entrypoint: sleep"), fake.Run).Create("first"));
+        Assert.Contains("cannot be verified", error.Message);
+        Assert.DoesNotContain("then sandbox create", error.Message);
+    }
+
+    [Fact]
+    public void EntrypointDriftRefusesExecAndFreshBackendMismatchIsNotRecreateAdvice()
+    {
+        var fake = new Fake { Exists = true, Entrypoint = ["nuclei"] };
+        var settings = Settings("\n    entrypoint: sleep");
+        Assert.Throws<WipException>(() => new SandboxLifecycle(settings, fake.Run).Exec("first", ["scanner"], TimeSpan.FromSeconds(1)));
+        Assert.DoesNotContain(fake.Calls, argv => argv[0] == "exec");
+        fake.Exists = false;
+        SandboxCommandResult Backend(IReadOnlyList<string> argv, TimeSpan timeout, SandboxConsoleMode console)
+        {
+            var result = fake.Run(argv, timeout, console);
+            if (argv[0] == "run") fake.EntrypointsByContainer[fake.Name] = ["nuclei"];
+            return result;
+        }
+        var error = Assert.Throws<WipException>(() => new SandboxLifecycle(settings, Backend).Create("first"));
+        Assert.Contains("backend recorded a different entrypoint", error.Message);
+        Assert.DoesNotContain("then sandbox create", error.Message);
+    }
+
+    [Fact]
     public void CreatePlacesTheDeclaredCommandAfterTheImageWithoutShellInterpretation()
     {
         var fake = new Fake();
@@ -171,6 +231,8 @@ public class SandboxLifecycleTests
         public readonly Dictionary<string, (string Id, string Owner, string State, List<SandboxMount> Mounts)> Containers = [];
         public List<SandboxMount> Mounts = [];
         public string[]? Command;
+        public string[]? Entrypoint;
+        public readonly Dictionary<string, string[]?> EntrypointsByContainer = [];
 
         /// <summary>
         /// Per container, the way <c>Mounts</c> is. A single shared <c>Command</c> would report
@@ -224,10 +286,10 @@ public class SandboxLifecycleTests
                     var cName = Containers.First(kv => kv.Value == match).Key;
                     var mountsObj = match.Mounts.Select(m => new { Type = m.Type, Name = m.Name, Destination = m.Destination }).ToArray();
                     var cCommand = CommandsByContainer.TryGetValue(cName, out var recorded) ? recorded : Command;
-                    return new(ProbeCode, JsonSerializer.Serialize(new[] { new { Id = inspectId, Name = cName, match.State, Labels = new Dictionary<string, string> { [SandboxLifecycle.OwnerLabel] = match.Owner }, Config = new { Cmd = cCommand }, Mounts = mountsObj } }));
+                    return new(ProbeCode, JsonSerializer.Serialize(new[] { new { Id = inspectId, Name = cName, match.State, Labels = new Dictionary<string, string> { [SandboxLifecycle.OwnerLabel] = match.Owner }, Config = new { Cmd = cCommand, Entrypoint = EntrypointsByContainer.GetValueOrDefault(cName, Entrypoint) }, Mounts = mountsObj } }));
                 }
                 var defaultMounts = Mounts.Select(m => new { Type = m.Type, Name = m.Name, Destination = m.Destination }).ToArray();
-                return new(ProbeCode, JsonSerializer.Serialize(new[] { new { Id, Name, State, Labels = new Dictionary<string, string> { [SandboxLifecycle.OwnerLabel] = Owner }, Config = new { Cmd = Command }, Mounts = defaultMounts } }));
+                return new(ProbeCode, JsonSerializer.Serialize(new[] { new { Id, Name, State, Labels = new Dictionary<string, string> { [SandboxLifecycle.OwnerLabel] = Owner }, Config = new { Cmd = Command, Entrypoint }, Mounts = defaultMounts } }));
             }
             Assert.NotEqual(SandboxConsoleMode.Capture, console);
             if (argv[0] is "exec" or "attach") { ExecTimeout = timeout; ExecConsole = console; return new(ExecCode, ""); }
@@ -238,6 +300,8 @@ public class SandboxLifecycleTests
                 State = "running";
                 var imageIndex = argv.ToList().IndexOf("fixture:latest");
                 if (imageIndex >= 0) Command = argv.Skip(imageIndex + 1).ToArray();
+                var entrypointIndex = argv.ToList().IndexOf("--entrypoint");
+                if (entrypointIndex >= 0) Entrypoint = [argv[entrypointIndex + 1]];
                 var nameIdx = argv.ToList().IndexOf("--name");
                 var labelIdx = argv.ToList().IndexOf("--label");
                 var cName = nameIdx >= 0 && nameIdx + 1 < argv.Count ? argv[nameIdx + 1] : Name;
@@ -259,6 +323,7 @@ public class SandboxLifecycleTests
                 Mounts = mounts;
                 Containers[cName] = (cId, cOwner, "running", mounts);
                 CommandsByContainer[cName] = Command;
+                EntrypointsByContainer[cName] = Entrypoint;
             }
             if (argv[0] == "start" && MutationCode == 0) State = "running";
             if (argv[0] == "stop" && MutationCode == 0 && !LeaveResidue) State = "exited";

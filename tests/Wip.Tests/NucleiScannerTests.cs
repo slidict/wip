@@ -1,0 +1,163 @@
+using System.Diagnostics;
+using System.Text.Json;
+using Wip.Security;
+
+namespace Wip.Tests;
+
+public class NucleiScannerTests
+{
+    private static ScanPlan Plan(string target = "http://app.test:8080/app") =>
+        ScanEngine.Select("nuclei").Plan(new ScanTarget(target));
+
+    [Fact]
+    public void ProfilePinsImageAndExternalTemplatesWithoutBackendOptions()
+    {
+        var plan = Plan();
+        plan.Validate("nuclei");
+        Assert.Equal(NucleiScanner.ImageReference, plan.Image.Reference);
+        Assert.Equal(new PinnedRules("https://github.com/projectdiscovery/nuclei-templates.git",
+            "2603fc1f23f2ef219ea4834128a163113c6b5168", "/opt/wip-nuclei-templates"), plan.Rules);
+        Assert.Equal(new[] {
+            "nuclei", "-u", "http://app.test:8080/app", "-t", "/opt/wip-nuclei-templates/http/misconfiguration",
+            "-duc", "-ni", "-no-stdin", "-nh", "-dr", "-dut", "-pt", "http",
+            "-etags", "dos,fuzz,bruteforce", "-rl", "10", "-c", "2", "-timeout", "5", "-retries", "0",
+            "-nc", "-jsonl", "-omit-raw", "-omit-template", "-o", "/tmp/wip-nuclei-native.jsonl",
+            "-elog", "/tmp/wip-nuclei-errors.jsonl"
+        }, plan.Argv.Skip(9));
+        Assert.All(plan.Argv, argument => Assert.DoesNotContain(argument, char.IsControl));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("app.test")]
+    [InlineData("ftp://app.test/")]
+    [InlineData("http://user:secret@app.test/")]
+    [InlineData("http://app.test/#fragment")]
+    [InlineData("http://app.test/a,http://other.test/")]
+    public void InvalidOrMultipleTargetsFailBeforeExecution(string target) =>
+        Assert.Throws<ConfigException>(() => Plan(target));
+
+    [Fact]
+    public void JsonlFindingsPreserveRulesSeverityAndEvidenceButDropUrlSecrets()
+    {
+        var findings = new NucleiScanner().ConvertReport("""
+            {"template-id":"headers","info":{"name":"Missing headers","severity":"info"},"matched-at":"http://app.test/path?token=secret","extracted-results":["one","two"],"matcher-status":true}
+            {"template-id":"issue","info":{"name":"Issue","severity":"critical"},"matched-at":"invalid URI","matcher-name":"matched"}
+            """ + "\n" + NucleiScanner.Completion);
+        Assert.Equal(2, findings.Count);
+        Assert.Equal("headers", findings[0].RuleId);
+        Assert.Equal("Missing headers", findings[0].Name);
+        Assert.Equal("informational", findings[0].Severity);
+        Assert.Equal(new ScanLocation("/path", null, null), findings[0].Location);
+        Assert.Null(findings[0].Confidence);
+        Assert.Equal("one\ntwo", findings[0].Evidence);
+        Assert.Equal("critical", findings[1].Severity);
+        Assert.Null(findings[1].Location.Path);
+        Assert.Equal("matched", findings[1].Evidence);
+    }
+
+    [Fact]
+    public void OptionalMetadataStaysAbsentAndSuccessfulEmptyReportHasNoFindings()
+    {
+        var scanner = new NucleiScanner();
+        Assert.Empty(scanner.ConvertReport(NucleiScanner.Completion));
+        var finding = Assert.Single(scanner.ConvertReport("""{"template-id":"rule","info":{}}"""));
+        Assert.Null(finding.Name);
+        Assert.Null(finding.Severity);
+        Assert.Null(finding.Evidence);
+    }
+
+    [Theory]
+    [InlineData("{}")]
+    [InlineData("[]")]
+    [InlineData("null")]
+    [InlineData("{\"template-id\":\"rule\"}")]
+    [InlineData("{\"template-id\":\"\",\"info\":{}}")]
+    [InlineData("{\"template-id\":1,\"info\":{}}")]
+    [InlineData("{\"template-id\":\"rule\",\"info\":[]}")]
+    [InlineData("{\"template-id\":\"rule\",\"info\":{\"severity\":{}}}")]
+    [InlineData("{\"template-id\":\"rule\",\"info\":{},\"extracted-results\":[1]}")]
+    [InlineData("{\"template-id\":\"rule\",\"info\":{},\"extracted-results\":{}}")]
+    [InlineData("{\"template-id\":\"rule\",\"info\":{},\"matched-at\":{}}")]
+    [InlineData("{\"template-id\":\"rule\",\"info\":{},\"matcher-status\":false}")]
+    [InlineData("{\"wip-nuclei-completed\":\"unknown\"}")]
+    [InlineData("{\"wip-nuclei-completed\":\"http-misconfiguration-v1\",\"other\":1}")]
+    public void InvalidStructuresAreNotSilentlyLost(string report) =>
+        Assert.Throws<FormatException>(() => new NucleiScanner().ConvertReport(report));
+
+    [Fact]
+    public void SyntaxErrorsAfterValidFindingsInvalidateTheWholeReport()
+    {
+        Assert.ThrowsAny<JsonException>(() => new NucleiScanner().ConvertReport("{\"template-id\":\"rule\",\"info\":{}}\n{"));
+        Assert.Throws<FormatException>(() => new NucleiScanner().ConvertReport(NucleiScanner.Completion + "\n" + NucleiScanner.Completion));
+    }
+
+    [Theory]
+    [InlineData("empty", 0, 0)]
+    [InlineData("finding", 0, 1)]
+    [InlineData("failure", 7, 0)]
+    [InlineData("missing", 0, 0)]
+    public void WrapperPreservesNativeLogsAndCannotFabricateMissingOutput(string scenario, int exitCode, int findings)
+    {
+        if (OperatingSystem.IsWindows()) { Assert.Skip("Wrapper uses Alpine-compatible sh"); return; }
+        var root = Path.Combine(Path.GetTempPath(), "wip-nuclei-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var stub = Path.Combine(root, "nuclei");
+            File.WriteAllText(stub, """
+                #!/bin/sh
+                while [ "$#" -gt 0 ]; do
+                  case "$1" in
+                    -o) output=$2; shift;;
+                    -elog) errors=$2; shift;;
+                    -u) printf '%s' "$2" > "$WIP_CAPTURE"; shift;;
+                  esac
+                  shift
+                done
+                printf 'native skipped template\n'
+                printf 'native request failure\n' > "$errors"
+                case "$WIP_SCENARIO" in
+                  missing) exit 0;;
+                  failure) : > "$output"; exit 7;;
+                  finding) printf '%s\n' '{"template-id":"rule","info":{"name":"Issue","severity":"low"}}' > "$output";;
+                  empty) : > "$output";;
+                esac
+                """);
+            File.SetUnixFileMode(stub, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            var capture = Path.Combine(root, "target");
+            const string target = "http://app.test/path?q=$(touch%20marker);literal";
+            var plan = Plan(target);
+            var args = plan.Argv.Select(argument => argument.StartsWith("/tmp/wip-nuclei-", StringComparison.Ordinal)
+                ? Path.Combine(root, Path.GetFileName(argument)) : argument == "nuclei" ? stub : argument).ToArray();
+            var report = Path.Combine(root, Path.GetFileName(plan.ReportPath));
+            // A previous run must never turn a missing/failed output into success.
+            File.WriteAllText(report, NucleiScanner.Completion);
+            File.WriteAllText(Path.Combine(root, "wip-nuclei-native.jsonl"), NucleiScanner.Completion);
+            var start = new ProcessStartInfo(args[0]) { RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = root };
+            foreach (var argument in args.Skip(1)) start.ArgumentList.Add(argument);
+            start.Environment["WIP_SCENARIO"] = scenario;
+            start.Environment["WIP_CAPTURE"] = capture;
+            using var process = Process.Start(start)!;
+            Assert.True(process.WaitForExit(10_000));
+            Assert.Equal(exitCode, process.ExitCode);
+            Assert.Equal("", process.StandardOutput.ReadToEnd());
+            Assert.Equal("", process.StandardError.ReadToEnd());
+            Assert.Equal(new Uri(target).AbsoluteUri, File.ReadAllText(capture));
+            var diagnostics = File.ReadAllText(Path.Combine(root, Path.GetFileName(plan.UnperformedChecksPath)));
+            Assert.Contains("Checks not performed", diagnostics);
+            Assert.Contains("native skipped template", diagnostics);
+            Assert.Contains("native request failure", diagnostics);
+            if (scenario == "missing") Assert.False(File.Exists(report));
+            else if (exitCode != 0) Assert.DoesNotContain(NucleiScanner.Completion, File.ReadAllText(report));
+            else
+            {
+                var raw = File.ReadAllText(report);
+                Assert.EndsWith(NucleiScanner.Completion + "\n", raw);
+                Assert.Equal(findings, new NucleiScanner().ConvertReport(raw).Count);
+            }
+            Assert.False(File.Exists(Path.Combine(root, "marker")));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+}

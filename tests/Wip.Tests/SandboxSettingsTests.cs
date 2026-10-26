@@ -55,6 +55,33 @@ public class SandboxSettingsTests
     }
 
     [Theory]
+    [InlineData("sleep")]
+    [InlineData("/bin/sleep")]
+    public void EntrypointRoundTripsAsOneExecutable(string executable)
+    {
+        var settings = Load("resource_namespace: example\nsandboxes: [{name: box, image: tool, entrypoint: " + executable + ", command: [infinity]}]").SandboxResources;
+        Assert.Equal(executable, settings.Sandboxes[0].Entrypoint);
+        Assert.Equal(executable, Load(YamlWriter.Dump(settings.ToMapping())).SandboxResources.Sandboxes[0].Entrypoint);
+    }
+
+    [Theory]
+    [InlineData("null")]
+    [InlineData("[]")]
+    [InlineData("[sleep]")]
+    [InlineData("{}")]
+    [InlineData("true")]
+    [InlineData("123")]
+    [InlineData("''")]
+    [InlineData("'sleep infinity'")]
+    [InlineData("'-sleep'")]
+    [InlineData("\"sleep\\nbreak\"")]
+    public void InvalidEntrypointsFailDuringLoading(string entrypoint)
+    {
+        var error = Assert.Throws<ConfigException>(() => Load("resource_namespace: example\nsandboxes: [{name: box, image: tool, entrypoint: " + entrypoint + "}]"));
+        Assert.Contains("sandboxes.box.entrypoint", error.Message);
+    }
+
+    [Theory]
     [InlineData("volumes: [{name: data, persistent: true, mount: /a}, {name: data, persistent: false, mount: /b}]")]
     [InlineData("sandboxes: [{name: box, image: tool}, {name: box, image: tool}]")]
     [InlineData("sandboxes: [{name: box, image: tool, volumes: [missing]}]")]

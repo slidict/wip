@@ -205,6 +205,7 @@ at the **[Configuration Reference](https://github.com/slidict/wip/wiki/Configura
 | `wip build` / `wip up [-d]` / `wip down` | Build the image / start the stack / stop and remove it |
 | `wip exec` / `wip run` | Run a command in the existing container / a new ephemeral one |
 | `wip shell` | Open the configured shell |
+| `wip security scan <sandbox> --tool nuclei --target <url>` | Run the pinned Nuclei HTTP misconfiguration profile |
 | `wip logs [-f]` | Follow logs |
 | `wip NAME ARGS...` | Run `interaction.NAME`, appending any extra arguments |
 
@@ -242,10 +243,11 @@ wip sandbox destroy agent                    # remove it; persistent volumes sur
 ```
 
 The optional `command` list replaces the image CMD without shell splitting; omitting it
-preserves image defaults. It does not replace ENTRYPOINT, so choose a command compatible
-with the image. Flags and arguments containing spaces remain separate list elements, such
+preserves the image CMD. The optional `entrypoint` executable replaces ENTRYPOINT; its
+arguments belong in `command`. For Nuclei, use `entrypoint: sleep` with `command: [infinity]`.
+Flags and arguments containing spaces remain separate list elements, such
 as `[nginx, -g, 'daemon off;']`; the first list element must not contain whitespace.
-Changing a declared command requires destroying and recreating the sandbox.
+Changing a declared command or entrypoint requires destroying and recreating the sandbox.
 
 `create` / `list` / `status` / `exec` / `attach` / `stop` / `destroy` are the whole set. `exec`
 runs non-interactively with a 300-second deadline unless you pass `--interactive`, which has no

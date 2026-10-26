@@ -15,6 +15,14 @@ public sealed class ConsoleEncodingCollection;
 public sealed class SecurityOutputTests
 {
     [Fact]
+    public void RepeatedToolSelectionIsRejected()
+    {
+        var parsed = Program.Parse(Program.BuildRoot(),
+            ["security", "scan", "scanner", "--tool", "zap", "--tool", "nuclei", "--target", "http://app/"]);
+        Assert.NotEmpty(parsed.Errors);
+    }
+
+    [Fact]
     public void SecurityScanParsesOutputDirectoryAndCommitWithoutChangingTarget()
     {
         var parsed = Program.Parse(Program.BuildRoot(),
