@@ -628,8 +628,13 @@ public sealed class SandboxLifecycle(
     {
         if (definition.Entrypoint is { } entrypoint)
         {
+            // A container created before the declaration existed has no entrypoint recorded,
+            // and destroy-then-create does fix that. Only a freshly created one proves the
+            // backend will not report it.
             if (status.Entrypoint is null)
-                throw Failure(name, "the declared entrypoint cannot be verified because the backend does not report Config.Entrypoint as an argv list; recreating will not change that");
+                throw Failure(name, freshlyCreated
+                    ? "the declared entrypoint cannot be verified because the backend does not report Config.Entrypoint as an argv list; recreating will not change that"
+                    : "the declared entrypoint is not recorded in Config.Entrypoint; run sandbox destroy, confirm absence, then sandbox create");
             if (!status.Entrypoint.SequenceEqual(new[] { entrypoint }, StringComparer.Ordinal))
                 throw Failure(name, freshlyCreated
                     ? "the backend recorded a different entrypoint from the executable wip passed; recreating will not change that"

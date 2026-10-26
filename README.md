@@ -205,7 +205,7 @@ at the **[Configuration Reference](https://github.com/slidict/wip/wiki/Configura
 | `wip build` / `wip up [-d]` / `wip down` | Build the image / start the stack / stop and remove it |
 | `wip exec` / `wip run` | Run a command in the existing container / a new ephemeral one |
 | `wip shell` | Open the configured shell |
-| `wip security scan <sandbox> --tool <zap|nuclei> --target <url>` | Run one pinned scanner against a target on its isolated network |
+| `wip security scan <sandbox> --tool <zap\|nuclei> --target <url>` | Run one pinned scanner against a target on its isolated network |
 | `wip logs [-f]` | Follow logs |
 | `wip NAME ARGS...` | Run `interaction.NAME`, appending any extra arguments |
 

@@ -139,7 +139,8 @@ public class NucleiScannerTests
                   esac
                   shift
                 done
-                printf 'native skipped template\n'
+                printf 'native skipped template\n' >&2
+                printf '{"template-id":"stdout-duplicate","info":{}}\n'
                 printf 'native request failure\n' > "$errors"
                 case "$WIP_SCENARIO" in
                   missing) exit 0;;
@@ -170,8 +171,13 @@ public class NucleiScannerTests
             Assert.Equal(new Uri(target).AbsoluteUri, File.ReadAllText(capture));
             var diagnostics = File.ReadAllText(Path.Combine(root, Path.GetFileName(plan.UnperformedChecksPath)));
             Assert.Contains("Checks not performed", diagnostics);
+            // nuclei logs to stderr, which the sidecar keeps. Its stdout duplicates every
+            // finding already written through -o, and that duplicate must not reach the sidecar:
+            // on a noisy target it would pass the engine 1 MiB cap and cost the whole coverage
+            // record for a scan that actually succeeded.
             Assert.Contains("native skipped template", diagnostics);
             Assert.Contains("native request failure", diagnostics);
+            Assert.DoesNotContain("stdout-duplicate", diagnostics);
             if (scenario == "missing") Assert.False(File.Exists(report));
             else if (exitCode != 0) Assert.DoesNotContain(NucleiScanner.Completion, File.ReadAllText(report));
             else

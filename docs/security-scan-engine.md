@@ -108,8 +108,10 @@ of ten requests/second; the engine supplies the total deadline. The internal net
 the egress boundary. Targets must be unauthenticated HTTP(S) URLs without fragments or commas
 (the latter would turn one `-u` value into multiple targets).
 
-`/tmp/wip-nuclei-unperformed.txt` records these omissions and bounds, unmodified native
-stdout/stderr, and the request error log. Runtime failures or skipped templates are evidence
+`/tmp/wip-nuclei-unperformed.txt` records these omissions and bounds, nuclei's unmodified
+stderr log, and the request error log. Its stdout is discarded: with `-o` nuclei writes every
+finding to both, and the duplicate would pass the engine's 1 MiB collection cap on a noisy
+target, costing the whole coverage record for a scan that succeeded. Runtime failures or skipped templates are evidence
 of incomplete coverage, not passed checks. A missing sidecar remains an incomplete result
 under the shared engine's existing rules.
 

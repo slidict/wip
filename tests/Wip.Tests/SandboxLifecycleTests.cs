@@ -43,7 +43,7 @@ public class SandboxLifecycleTests
     [InlineData("\"sleep\"")]
     [InlineData("{}")]
     [InlineData("[123]")]
-    public void UnreadableEntrypointFailsWithoutRecreateAdvice(string value)
+    public void UnreadableEntrypointOnReuseAdvisesRecreating(string value)
     {
         var fake = new Fake { Exists = true };
         fake.InspectOutput = JsonSerializer.Serialize(new[] { new {
@@ -52,8 +52,13 @@ public class SandboxLifecycleTests
             Config = new { Entrypoint = JsonSerializer.Deserialize<JsonElement>(value) }
         }});
         var error = Assert.Throws<WipException>(() => new SandboxLifecycle(Settings("\n    entrypoint: sleep"), fake.Run).Create("first"));
-        Assert.Contains("cannot be verified", error.Message);
-        Assert.DoesNotContain("then sandbox create", error.Message);
+        // An absent entrypoint and an unreadable one both arrive here as null, so this path
+        // cannot tell them apart -- and a container that predates the declaration is the
+        // likelier of the two, which destroy-then-create does fix. Advise it. Only a container
+        // wip just created proves the backend will not report Config.Entrypoint as an argv
+        // list, and that case keeps the no-recreate wording.
+        Assert.Contains("not recorded in Config.Entrypoint", error.Message);
+        Assert.Contains("then sandbox create", error.Message);
     }
 
     [Fact]
@@ -73,6 +78,7 @@ public class SandboxLifecycleTests
         var error = Assert.Throws<WipException>(() => new SandboxLifecycle(settings, Backend).Create("first"));
         Assert.Contains("backend recorded a different entrypoint", error.Message);
         Assert.DoesNotContain("then sandbox create", error.Message);
+
     }
 
     [Fact]
