@@ -86,6 +86,13 @@ internal sealed class ScanEngine(
     // rules copy a fetch-sized budget; cheap setup and probes retain their one-minute bound.
     private static readonly TimeSpan RulesCopyTimeout = TimeSpan.FromMinutes(5);
 
+    // The fast path is one find per tree; the effective-access fallback forks a test per entry,
+    // twice for a directory. A tree staged under umask 027 misses the fast path on its first
+    // entry, so a template set of thousands of files pays that cost in full -- and a timeout
+    // would refuse a scan whose rules were readable all along. Give the fallback the copy's
+    // budget rather than the single-probe minute.
+    private static readonly TimeSpan RulesAccessProbeTimeout = TimeSpan.FromMinutes(5);
+
     /// <summary>
     /// Long by the standards of the other deadlines in wip, because an active web scan is
     /// minutes to tens of minutes of work rather than a backend call that either answers or
@@ -378,7 +385,8 @@ internal sealed class ScanEngine(
             if (string.IsNullOrWhiteSpace(result.Output)) return true;
             foreach (var access in directory ? new[] { "-r", "-x" } : new[] { "-r" })
             {
-                result = backend([.. prefix, "!", "-exec", "test", access, "{}", ";", "-print", "-quit"], limit, SandboxConsoleMode.Capture);
+                result = backend([.. prefix, "!", "-exec", "test", access, "{}", ";", "-print", "-quit"],
+                    RulesAccessProbeTimeout, SandboxConsoleMode.Capture);
                 if (Failed(result) || !string.IsNullOrWhiteSpace(result.Output)) return false;
             }
             return true;

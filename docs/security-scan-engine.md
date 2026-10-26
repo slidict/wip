@@ -322,6 +322,10 @@ uses `find <path> -type d ! -exec test -r {} \; -print -quit` and a separate `te
 probe for directories; files need only `test -r`. Ancestors use the same predicates with
 `-maxdepth 0`. No per-entry processes are added when the fast path passes.
 
+The fallback runs under the rules copy's five-minute budget rather than the single-probe
+minute, because it forks one `test` per entry and a large template set staged under a restrictive
+umask misses the fast path on its first entry.
+
 BusyBox 1.36.1 in Alpine 3.20 rejects GNU `-readable`; `-exec test` works on both.
 The engine neither changes image permissions nor adds a user to the scanner contract.
 Missing ancestor access, unreadable directories, an empty or partial tree, and unreadable
