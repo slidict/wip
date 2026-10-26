@@ -27,7 +27,9 @@ Sleep 3s
 
 Type "wip security scan scanner --tool zap --target $target --output scan-out"
 Enter
-Sleep 25s
+# The bounded spider and passive scan take about 35s against the fixture; leave room
+# for the scan to finish on a slower host so the recording shows its result.
+Sleep 75s
 
 Type "wip sandbox status scanner"
 Enter
