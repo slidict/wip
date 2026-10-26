@@ -13,7 +13,7 @@ public sealed class RulesFetcherTests : IDisposable
     [Fact]
     public void ConstructionDoesNotTouchDiskOrRequireGitForAdaptersWithoutRules()
     {
-        _ = new RulesFetcher(root, (_, _) => throw new InvalidOperationException("git must not run"));
+        _ = new RulesFetcher(root, (_, _, _) => throw new InvalidOperationException("git must not run"));
         Assert.False(Directory.Exists(root));
     }
 
@@ -38,12 +38,29 @@ public sealed class RulesFetcherTests : IDisposable
         Assert.Empty(Directory.EnumerateDirectories(root, ".tmp-*"));
     }
 
+    /// <summary>
+    /// The checkout writes every file of the tree, so it costs what the fetch costs rather than
+    /// what the metadata calls cost. It had the thirty-second budget, which a templates
+    /// repository of thousands of files would exceed on a host that scans each write.
+    /// </summary>
+    [Fact]
+    public void TheCheckoutGetsTheSameBudgetAsTheFetch()
+    {
+        var fake = new FakeGit();
+        new RulesFetcher(root, fake.Run).Fetch(Rules);
+
+        var budgets = fake.Operations.Zip(fake.Timeouts).ToDictionary(pair => pair.First, pair => pair.Second);
+        Assert.Equal(budgets["fetch"], budgets["checkout"]);
+        Assert.True(budgets["checkout"] > budgets["init"], "writing the tree must not share the metadata budget");
+        Assert.Equal(budgets["init"], budgets["rev-parse"]);
+    }
+
     [Fact]
     public void AnExactPinCacheHitRequiresNoGitAndSurvivesPreparation()
     {
         var fake = new FakeGit();
         var first = new RulesFetcher(root, fake.Run).Fetch(Rules);
-        var noGit = new RulesFetcher(root, (_, _) => throw new InvalidOperationException("cache hit must not use git"));
+        var noGit = new RulesFetcher(root, (_, _, _) => throw new InvalidOperationException("cache hit must not use git"));
         Assert.Equal(first, noGit.Fetch(Rules));
         Assert.Equal(first, noGit.RequireStaged(Rules));
         Assert.Equal(4, fake.Commands.Count);
@@ -75,7 +92,7 @@ public sealed class RulesFetcherTests : IDisposable
     [InlineData(true)]
     public void MissingOrUnrunnableGitExplainsWhyGitIsRequired(bool throws)
     {
-        var fetcher = new RulesFetcher(root, (_, _) => throws ? throw new Win32Exception(2) : (127, ""));
+        var fetcher = new RulesFetcher(root, (_, _, _) => throws ? throw new Win32Exception(2) : (127, ""));
         var failure = Assert.Throws<WipException>(() => fetcher.Fetch(Rules));
         Assert.Contains("git", failure.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("pinned rules", failure.Message, StringComparison.OrdinalIgnoreCase);
@@ -96,7 +113,7 @@ public sealed class RulesFetcherTests : IDisposable
     {
         Directory.CreateDirectory(Path.Combine(root, Commit, "tree"));
         File.WriteAllText(Path.Combine(root, Commit, "tree", "rules.yaml"), "unverified");
-        var fetcher = new RulesFetcher(root, (_, _) => throw new InvalidOperationException("must not fetch in Run"));
+        var fetcher = new RulesFetcher(root, (_, _, _) => throw new InvalidOperationException("must not fetch in Run"));
         Assert.Throws<WipException>(() => fetcher.RequireStaged(Rules));
         Assert.Throws<WipException>(() => fetcher.Fetch(Rules));
     }
@@ -107,7 +124,7 @@ public sealed class RulesFetcherTests : IDisposable
         var fake = new FakeGit();
         var path = new RulesFetcher(root, fake.Run).Fetch(Rules);
         File.WriteAllText(Path.Combine(path, "rules.yaml"), "modified content");
-        var fetcher = new RulesFetcher(root, (_, _) => throw new InvalidOperationException("must not fetch"));
+        var fetcher = new RulesFetcher(root, (_, _, _) => throw new InvalidOperationException("must not fetch"));
         Assert.Throws<WipException>(() => fetcher.RequireStaged(Rules));
         Assert.Throws<WipException>(() => fetcher.Fetch(Rules));
     }
@@ -115,7 +132,7 @@ public sealed class RulesFetcherTests : IDisposable
     [Fact]
     public void RunCannotFetchRulesThatWereNeverPrepared()
     {
-        var fetcher = new RulesFetcher(root, (_, _) => throw new InvalidOperationException("must not fetch"));
+        var fetcher = new RulesFetcher(root, (_, _, _) => throw new InvalidOperationException("must not fetch"));
         Assert.Throws<WipException>(() => fetcher.RequireStaged(Rules));
         Assert.False(Directory.Exists(root));
     }
@@ -140,7 +157,7 @@ public sealed class RulesFetcherTests : IDisposable
         var fake = new FakeGit();
         new RulesFetcher(root, fake.Run).Fetch(Rules);
         File.WriteAllText(Path.Combine(root, Commit, "verified.json"), "{\"version\":\"1\"}");
-        var noGit = new RulesFetcher(root, (_, _) => throw new InvalidOperationException("must not fetch"));
+        var noGit = new RulesFetcher(root, (_, _, _) => throw new InvalidOperationException("must not fetch"));
         Assert.Throws<WipException>(() => noGit.RequireStaged(Rules));
     }
 
@@ -189,7 +206,7 @@ public sealed class RulesFetcherTests : IDisposable
             writer.WriteString("treeSha256", fingerprint);
             writer.WriteEndObject();
         }
-        var noGit = new RulesFetcher(root, (_, _) => throw new InvalidOperationException("legacy entries must not silently fetch"));
+        var noGit = new RulesFetcher(root, (_, _, _) => throw new InvalidOperationException("legacy entries must not silently fetch"));
         var failure = Assert.Throws<WipException>(() => noGit.Fetch(Rules));
         Assert.Contains("prepare again", failure.Message);
         Assert.Throws<WipException>(() => noGit.RequireStagedTree(Rules));
@@ -228,7 +245,7 @@ public sealed class RulesFetcherTests : IDisposable
         var marker = Path.Combine(entry, "verified.json");
         if (missingTree) Directory.Delete(tree, recursive: true);
         else File.Delete(marker);
-        var noGit = new RulesFetcher(root, (_, _) => throw new InvalidOperationException("must not fetch"));
+        var noGit = new RulesFetcher(root, (_, _, _) => throw new InvalidOperationException("must not fetch"));
 
         var error = Assert.Throws<WipException>(() => noGit.Fetch(Rules));
 
@@ -243,9 +260,56 @@ public sealed class RulesFetcherTests : IDisposable
     [Fact]
     public void DerivedStagingPathRequiresNoDirectoryOrGitAccess()
     {
-        var fetcher = new RulesFetcher(root, (_, _) => throw new InvalidOperationException("must not fetch"));
+        var fetcher = new RulesFetcher(root, (_, _, _) => throw new InvalidOperationException("must not fetch"));
         Assert.Equal(Path.Combine(Path.GetFullPath(root), Commit, RulesFetcher.TreeDirectoryName), fetcher.StagingPath(Rules));
         Assert.False(Directory.Exists(root));
+    }
+
+    [Fact]
+    public void PublicationNeverMovesOrDeletesOpenGitMetadataBeforePublishingTheRules()
+    {
+        var fake = new FakeGit { HoldMetadataOpen = true };
+        try
+        {
+            var staged = new RulesFetcher(root, fake.Run).Fetch(Rules);
+            Assert.Equal("pinned rule content", File.ReadAllText(Path.Combine(staged, "rules.yaml")));
+            var published = Path.GetDirectoryName(staged)!;
+            Assert.Equal(new[] { "tree", "verified.json" }, Directory.EnumerateFileSystemEntries(published)
+                .Select(Path.GetFileName).Order(StringComparer.Ordinal));
+            Assert.False(Directory.Exists(Path.Combine(staged, ".git")));
+            Assert.All(fake.OpenMetadata, stream => Assert.Equal((int)'g', stream.ReadByte()));
+            Assert.All(fake.Environments, environment =>
+            {
+                var publication = Path.GetDirectoryName(environment["GIT_WORK_TREE"])!;
+                Assert.False(environment["GIT_DIR"].StartsWith(publication + Path.DirectorySeparatorChar, StringComparison.Ordinal));
+            });
+        }
+        finally { foreach (var stream in fake.OpenMetadata) stream.Dispose(); }
+    }
+
+    [Fact]
+    public void InjectedGitReceivesTheSameIsolatedEnvironmentAsTheRealRunner()
+    {
+        var fake = new FakeGit();
+        new RulesFetcher(root, fake.Run).Fetch(Rules);
+        Assert.Equal(4, fake.Environments.Count);
+        var first = fake.Environments[0];
+        Assert.All(fake.Environments, environment =>
+        {
+            Assert.Equal(first.OrderBy(pair => pair.Key), environment.OrderBy(pair => pair.Key));
+            Assert.Equal("1", environment["GIT_CONFIG_NOSYSTEM"]);
+            Assert.Equal("0", environment["GIT_CONFIG_COUNT"]);
+            Assert.Equal(environment["GIT_DIR"], environment["GIT_COMMON_DIR"]);
+            Assert.Equal(Path.Combine(environment["GIT_DIR"], "index"), environment["GIT_INDEX_FILE"]);
+            Assert.Equal(Path.Combine(environment["GIT_DIR"], "objects"), environment["GIT_OBJECT_DIRECTORY"]);
+            var publication = Path.GetDirectoryName(environment["GIT_WORK_TREE"])!;
+            Assert.False(environment["GIT_DIR"].StartsWith(publication + Path.DirectorySeparatorChar, StringComparison.Ordinal));
+        });
+        Assert.All(fake.Commands.Zip(fake.Environments), pair =>
+        {
+            var arguments = pair.First.ToList();
+            Assert.Equal(pair.Second["GIT_WORK_TREE"], arguments[arguments.IndexOf("-C") + 1]);
+        });
     }
 
     private sealed class FakeGit
@@ -259,24 +323,32 @@ public sealed class RulesFetcherTests : IDisposable
         internal List<IReadOnlyList<string>> Commands { get; } = [];
         internal List<string> Operations { get; } = [];
         internal List<TimeSpan> Timeouts { get; } = [];
+        internal List<IReadOnlyDictionary<string, string>> Environments { get; } = [];
+        internal List<FileStream> OpenMetadata { get; } = [];
+        internal bool HoldMetadataOpen { get; init; }
 
-        internal (int Code, string Output) Run(IReadOnlyList<string> command, TimeSpan timeout)
+        internal (int Code, string Output) Run(IReadOnlyList<string> command, IReadOnlyDictionary<string, string> environment, TimeSpan timeout)
         {
             Commands.Add(command.ToArray());
             Timeouts.Add(timeout);
+            Environments.Add(new Dictionary<string, string>(environment));
             var operation = new[] { "init", "fetch", "rev-parse", "checkout" }.Single(command.Contains);
             Operations.Add(operation);
             var arguments = command.ToList();
             var tree = arguments[arguments.IndexOf("-C") + 1];
+            Assert.False(Directory.Exists(Path.Combine(tree, ".git")));
+            Assert.False(File.Exists(Path.Combine(tree, ".git")));
             switch (operation)
             {
                 case "init":
-                    Directory.CreateDirectory(Path.Combine(tree, ".git", "objects"));
-                    File.WriteAllText(Path.Combine(tree, ".git", "config"), "git metadata");
+                    Directory.CreateDirectory(Path.Combine(environment["GIT_DIR"], "objects"));
+                    File.WriteAllText(Path.Combine(environment["GIT_DIR"], "config"), "git metadata");
                     return (0, "");
                 case "fetch": return (FetchCode, "");
                 case "rev-parse": return (0, ResolvedCommit + "\n");
                 case "checkout":
+                    if (HoldMetadataOpen)
+                        OpenMetadata.Add(new FileStream(Path.Combine(environment["GIT_DIR"], "config"), FileMode.Open, FileAccess.Read, FileShare.Read));
                     if (PortablePaths)
                     {
                         Directory.CreateDirectory(Path.Combine(tree, "a"));

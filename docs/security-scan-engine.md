@@ -215,14 +215,22 @@ same `mapRulesSource`/`WslPath.ForWslc` guard used by `Run`, before any image pu
 fetch. An unusable WSL-UNC source therefore refuses preparation before downloads; the
 cache remains beside the configuration rather than being relocated. After pulling the
 image, `Prepare` uses host-side git to fetch the pinned commit into a staging tree,
-verifies that `FETCH_HEAD` exactly equals the pin, and checks out that commit. Missing or
-unrunnable git, a failed fetch/checkout, a mismatched commit or an unusable rule tree
-stops preparation; there is no scan without the declared rules. Git uses
+verifies that `FETCH_HEAD` exactly equals the pin, and checks out that commit. Fetch and
+checkout each have a five-minute budget because their work scales with the tree; metadata-only
+init and ref resolution keep a 30-second bound. Missing or unrunnable git, a failed
+fetch/checkout, a mismatched commit or an unusable rule tree stops preparation; there is no
+scan without the declared rules. Git uses
 `core.autocrlf=false` and `core.eol=lf`: disabling autocrlf alone leaves attribute-driven
 default line endings dependent on the host, which would also make cached fingerprints
 host-dependent. An explicit repository `eol=crlf` attribute still overrides this LF
 default. Failed temporary staging is cleaned up without replacing the original error if
 cleanup also fails.
+
+Temporary staging keeps the publishable `entry/tree` and `entry/verified.json` separate from
+sibling `git-dir`, `hooks` and `git-config`. Only `entry` moves into the commit-keyed cache;
+git metadata remains in the scratch directory until publication finishes, then cleanup runs.
+Nothing is deleted from inside the subtree being published immediately before its move,
+avoiding the Windows race with handles retained on recently deleted git metadata.
 
 Verified trees are cached under `<config directory>/.wip/scanner-rules/<commit>/tree`. The
 commit names immutable content; published verification metadata and a tree fingerprint

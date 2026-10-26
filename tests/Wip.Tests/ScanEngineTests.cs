@@ -294,12 +294,16 @@ public class ScanEngineTests
         public bool WrongCommit;
         public bool SecondFile;
         public RulesFetcher Fetcher => new(Path.Combine(Root, "cache"), Git);
-        private (int Code, string Output) Git(IReadOnlyList<string> argv, TimeSpan timeout)
+        private (int Code, string Output) Git(IReadOnlyList<string> argv,
+            IReadOnlyDictionary<string, string> environment, TimeSpan timeout)
         {
             BeforeGit?.Invoke();
             GitCalls.Add(argv.ToArray());
             var directory = argv[argv.ToList().IndexOf("-C") + 1];
-            if (argv.Contains("init")) Directory.CreateDirectory(Path.Combine(directory, ".git"));
+            var gitDirectory = environment["GIT_DIR"];
+            Assert.False(gitDirectory.StartsWith(directory + Path.DirectorySeparatorChar, StringComparison.Ordinal));
+            Assert.Equal(directory, environment["GIT_WORK_TREE"]);
+            if (argv.Contains("init")) Directory.CreateDirectory(gitDirectory);
             if (argv.Contains("rev-parse")) return (0, (WrongCommit ? new string('b', 40) : Rules.Commit) + "\n");
             if (argv.Contains("checkout"))
             {

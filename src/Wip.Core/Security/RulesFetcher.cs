@@ -10,14 +10,23 @@ namespace Wip.Security;
 /// <summary>Fetches verified rules during preparation; run-time lookup never invokes git.</summary>
 internal sealed class RulesFetcher(
     string cacheDirectory,
-    Func<IReadOnlyList<string>, TimeSpan, (int Code, string Output)>? run = null)
+    Func<IReadOnlyList<string>, IReadOnlyDictionary<string, string>, TimeSpan, (int Code, string Output)>? run = null)
 {
     internal const string TreeDirectoryName = "tree";
     // Version 1 allowed host-native EOL conversion. Refuse those entries rather than
     // reuse checkouts whose bytes may depend on the host that prepared them.
     private const int CacheVersion = 2;
 
+    /// <summary>For git calls that touch metadata only: init, and resolving a ref.</summary>
     private static readonly TimeSpan LocalTimeout = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// For the two calls whose cost scales with the rules tree: the fetch, and the checkout
+    /// that writes every file to disk. A templates repository is thousands of files, and on a
+    /// Windows host each one passes the virus scanner, so the metadata budget is far too short
+    /// -- the same reason the copy into the sandbox has its own deadline rather than the one
+    /// the cheap probes use.
+    /// </summary>
     private static readonly TimeSpan FetchTimeout = TimeSpan.FromMinutes(5);
 
     internal string Fetch(PinnedRules rules)
@@ -30,24 +39,23 @@ internal sealed class RulesFetcher(
         try
         {
             Directory.CreateDirectory(temporary);
-            var tree = Path.Combine(temporary, TreeDirectoryName);
+            var publication = Path.Combine(temporary, "entry");
+            var tree = Path.Combine(publication, TreeDirectoryName);
+            var gitDirectory = Path.Combine(temporary, "git-dir");
             var hooks = Path.Combine(temporary, "hooks");
             var configuration = Path.Combine(temporary, "git-config");
             Directory.CreateDirectory(tree);
             Directory.CreateDirectory(hooks);
             File.WriteAllText(configuration, "");
-            Git(tree, hooks, configuration, ["init", "--quiet", "--object-format=sha1", "--template=" + hooks], LocalTimeout);
-            Git(tree, hooks, configuration,
+            Git(tree, gitDirectory, hooks, configuration, ["init", "--quiet", "--object-format=sha1", "--template=" + hooks], LocalTimeout);
+            Git(tree, gitDirectory, hooks, configuration,
                 ["fetch", "--depth", "1", "--no-tags", "--no-recurse-submodules", "--", rules.RepositoryUrl, rules.Commit], FetchTimeout);
-            var resolved = Git(tree, hooks, configuration, ["rev-parse", "--verify", "FETCH_HEAD"], LocalTimeout).Trim();
+            var resolved = Git(tree, gitDirectory, hooks, configuration, ["rev-parse", "--verify", "FETCH_HEAD"], LocalTimeout).Trim();
             if (!string.Equals(resolved, rules.Commit, StringComparison.Ordinal))
                 throw new WipException("Pinned rules commit verification failed; no rules were staged");
-            Git(tree, hooks, configuration, ["checkout", "--quiet", "--detach", "--force", rules.Commit, "--"], LocalTimeout);
-            DeleteOwnedTree(Path.Combine(tree, ".git"));
-            Directory.Delete(hooks);
-            File.Delete(configuration);
+            Git(tree, gitDirectory, hooks, configuration, ["checkout", "--quiet", "--detach", "--force", rules.Commit, "--"], FetchTimeout);
             var fingerprint = Fingerprint(tree);
-            using (var stream = new FileStream(Path.Combine(temporary, "verified.json"), FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            using (var stream = new FileStream(Path.Combine(publication, "verified.json"), FileMode.CreateNew, FileAccess.Write, FileShare.None))
             {
                 using var writer = new Utf8JsonWriter(stream);
                 writer.WriteStartObject();
@@ -58,7 +66,9 @@ internal sealed class RulesFetcher(
                 writer.Flush();
                 stream.Flush(flushToDisk: true);
             }
-            try { Directory.Move(temporary, destination); }
+            // Publish only the checkout and its marker. Metadata stays in scratch, so
+            // Windows handles on git files or delayed metadata deletion cannot block this move.
+            try { Directory.Move(publication, destination); }
             catch (IOException) when (Directory.Exists(destination))
             {
                 // Another preparation may have published the same immutable pin first.
@@ -119,15 +129,25 @@ internal sealed class RulesFetcher(
         catch (UnauthorizedAccessException error) { throw new WipException("Pinned rules cache is inaccessible", error); }
     }
 
-    private string Git(string tree, string hooks, string configuration, IReadOnlyList<string> arguments, TimeSpan timeout)
+    private string Git(string tree, string gitDirectory, string hooks, string configuration, IReadOnlyList<string> arguments, TimeSpan timeout)
     {
         // autocrlf=false alone does not stop attribute-driven native EOL conversion.
         // Measured blob: a LF b LF c LF; native checkout: a CRLF b CRLF c CRLF;
         // with core.eol=lf: a LF b LF c LF. Otherwise fingerprints depend on the host.
         string[] command = ["git", "-c", "core.hooksPath=" + hooks, "-c", "core.autocrlf=false", "-c", "core.eol=lf",
             "-c", "credential.helper=", "-c", "protocol.allow=never", "-c", "protocol.https.allow=always", "-C", tree, .. arguments];
+        // Isolate checkout from host hooks, filters, config injection and repository context.
+        var environment = new Dictionary<string, string>
+        {
+            ["GIT_CONFIG_NOSYSTEM"] = "1", ["GIT_CONFIG_SYSTEM"] = configuration,
+            ["GIT_CONFIG_GLOBAL"] = configuration, ["GIT_CONFIG_COUNT"] = "0", ["GIT_CONFIG_PARAMETERS"] = "",
+            ["GIT_TERMINAL_PROMPT"] = "0", ["GIT_TEMPLATE_DIR"] = hooks, ["GIT_ATTR_NOSYSTEM"] = "1",
+            ["GIT_DIR"] = gitDirectory, ["GIT_WORK_TREE"] = tree, ["GIT_COMMON_DIR"] = gitDirectory,
+            ["GIT_INDEX_FILE"] = Path.Combine(gitDirectory, "index"), ["GIT_OBJECT_DIRECTORY"] = Path.Combine(gitDirectory, "objects"),
+            ["GIT_ALTERNATE_OBJECT_DIRECTORIES"] = "", ["GIT_NAMESPACE"] = ""
+        };
         (int Code, string Output) result;
-        try { result = run is not null ? run(command, timeout) : RunGit(command, timeout, tree, hooks, configuration); }
+        try { result = run is not null ? run(command, environment, timeout) : RunGit(command, environment, timeout); }
         catch (Win32Exception error) { throw GitRequired(error); }
         catch (FileNotFoundException error) { throw GitRequired(error); }
         catch (UnauthorizedAccessException error) { throw GitRequired(error); }
@@ -141,19 +161,9 @@ internal sealed class RulesFetcher(
         ? new WipException("A runnable git installation is required to fetch and verify pinned rules")
         : new WipException("A runnable git installation is required to fetch and verify pinned rules", error);
 
-    private static (int Code, string Output) RunGit(IReadOnlyList<string> command, TimeSpan timeout, string tree, string hooks, string configuration)
+    private static (int Code, string Output) RunGit(IReadOnlyList<string> command,
+        IReadOnlyDictionary<string, string> environment, TimeSpan timeout)
     {
-        var gitDirectory = Path.Combine(tree, ".git");
-        // Isolate checkout from host hooks, filters, config injection and repository context.
-        var environment = new Dictionary<string, string>
-        {
-            ["GIT_CONFIG_NOSYSTEM"] = "1", ["GIT_CONFIG_SYSTEM"] = configuration,
-            ["GIT_CONFIG_GLOBAL"] = configuration, ["GIT_CONFIG_COUNT"] = "0", ["GIT_CONFIG_PARAMETERS"] = "",
-            ["GIT_TERMINAL_PROMPT"] = "0", ["GIT_TEMPLATE_DIR"] = hooks, ["GIT_ATTR_NOSYSTEM"] = "1",
-            ["GIT_DIR"] = gitDirectory, ["GIT_WORK_TREE"] = tree, ["GIT_COMMON_DIR"] = gitDirectory,
-            ["GIT_INDEX_FILE"] = Path.Combine(gitDirectory, "index"), ["GIT_OBJECT_DIRECTORY"] = Path.Combine(gitDirectory, "objects"),
-            ["GIT_ALTERNATE_OBJECT_DIRECTORIES"] = "", ["GIT_NAMESPACE"] = ""
-        };
         using var output = new StringWriter();
         var runner = new CommandRunner(new ErrorInterpreter("linux/amd64"), output, TextWriter.Null);
         var code = runner.Run(command, environment: environment, timeout: timeout);
