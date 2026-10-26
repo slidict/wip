@@ -162,7 +162,8 @@ Check `status` before consuming `findings`. An incomplete result has a reason an
 array, so it cannot appear as a clean empty scan. A completed result still has coverage:
 omitted active, authenticated or other checks are not evidence that those checks passed.
 The CLI reserves three exit codes, all nonzero through a WSL shell. `70` means the result is
-incomplete and `result.json` holds its reason. `74` means the scan completed but its artifacts
+incomplete; with `--output` its reason is in `result.json`, and without it the reason is on
+stderr, since nothing is persisted either way. `74` means the scan completed but its artifacts
 did not reach the requested directory, which can still happen after the preflight check — a
 full volume, or a directory removed mid-run. `73` means both: the scan is incomplete and no
 `result.json` was published, so the reason is only on stderr. The responses differ: an
