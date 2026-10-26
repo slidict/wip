@@ -230,7 +230,7 @@ public class ScanEngineTests
                     : RulesUnreadableDirectory || RulesUntraversableDirectory;
                 return new(0, denied ? argv[3] : "");
             }
-            if (argv is ["exec", _, "find", var ancestor, "-maxdepth", "0", "-type", "d", "!", "-perm", "-555", "-print", "-quit"])
+            if (argv is ["exec", _, "find", var ancestor, "-maxdepth", "0", "-type", "d", "!", "-perm", "-111", "-print", "-quit"])
             {
                 var resolvedAncestor = ancestor.EndsWith("/.", StringComparison.Ordinal) ? ancestor[..^2] : ancestor;
                 if (resolvedAncestor.Length == 0) resolvedAncestor = "/";
@@ -483,8 +483,8 @@ public class ScanEngineTests
         Assert.Equal("completed", outcome.Result!.Status);
         var probes = fake.Calls.Where(command => command is ["exec", _, "find", ..]).ToArray();
         Assert.Equal(5, probes.Length);
-        Assert.Equal(new[] { "exec", "container-id", "find", "/.", "-maxdepth", "0", "-type", "d", "!", "-perm", "-555", "-print", "-quit" }, probes[0]);
-        Assert.Equal(new[] { "exec", "container-id", "find", "/opt/.", "-maxdepth", "0", "-type", "d", "!", "-perm", "-555", "-print", "-quit" }, probes[1]);
+        Assert.Equal(new[] { "exec", "container-id", "find", "/.", "-maxdepth", "0", "-type", "d", "!", "-perm", "-111", "-print", "-quit" }, probes[0]);
+        Assert.Equal(new[] { "exec", "container-id", "find", "/opt/.", "-maxdepth", "0", "-type", "d", "!", "-perm", "-111", "-print", "-quit" }, probes[1]);
         Assert.Equal(new[] { "exec", "container-id", "find", "/opt/wip-rules", "-type", "d", "!", "-perm", "-555", "-print", "-quit" }, probes[2]);
         Assert.Equal(new[] { "exec", "container-id", "find", "/opt/wip-rules", "-type", "f", "-print0" }, probes[3]);
         Assert.Equal(new[] { "exec", "container-id", "find", "/opt/wip-rules", "-type", "f", "!", "-perm", "-444", "-print", "-quit" }, probes[4]);
@@ -652,9 +652,36 @@ public class ScanEngineTests
         var plan = ValidPlan() with { Rules = cache.Rules };
         Assert.Throws<WipException>(() => Engine(fake, rulesFetcher: cache.Fetcher)
             .Run(new StubScanner(plan), "scanner", plan, new ScanTarget("http://app.test")));
-        Assert.Contains(fake.Calls, argv => argv.Contains("-exec") && argv.Contains("-r"));
+        // An ancestor is asked only for traversal; a directory in the tree is asked for both,
+        // because listing it needs read and descending into it needs execute.
+        Assert.Equal(!ancestor, fake.Calls.Any(argv => argv.Contains("-exec") && argv.Contains("-r")));
         Assert.Contains(fake.Calls, argv => argv.Contains("-exec") && argv.Contains("-x"));
         Assert.False(Ran(fake, "exec", "container-id", "zap-baseline"));
+    }
+
+    // The refusal cases alone would pass if PermissionsAllowed always returned false once the
+    // fast path missed -- and that regression refuses every tree staged under umask 027, which
+    // is the case the fallback exists for. Pin the accepting side against the fake too.
+    [Fact]
+    public void AnEffectiveProbeThatGrantsAccessLetsTheScanRun()
+    {
+        using var cache = new RulesCacheFixture();
+        cache.Fetcher.Fetch(cache.Rules);
+        var probes = new List<string[]>();
+        var fake = new Fake
+        {
+            // Every mode-bit probe reports a path, so each one falls through to the fallback.
+            RulesUnreadableFile = true,
+            RulesUnreadableDirectory = true,
+            RulesBlockedAncestor = "/opt",
+            EffectivePermissionProbe = argv => { probes.Add(argv); return new(0, ""); }
+        };
+        var plan = ValidPlan() with { Rules = cache.Rules };
+        var outcome = Engine(fake, rulesFetcher: cache.Fetcher)
+            .Run(new StubScanner(plan), "scanner", plan, new ScanTarget("http://app.test"));
+        Assert.Equal("completed", outcome.Result!.Status);
+        Assert.True(Ran(fake, "exec", "container-id", "zap-baseline"));
+        Assert.NotEmpty(probes);
     }
 
     [Fact]

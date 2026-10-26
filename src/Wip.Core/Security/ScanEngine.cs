@@ -365,10 +365,12 @@ internal sealed class ScanEngine(
 
         void RequireAncestor(string path)
         {
+            // An ancestor only has to be traversable: opening a file beneath it never lists it,
+            // so requiring read as well refuses a 0711 image directory the scanner could use.
             // A trailing /. resolves a directory symlink instead of letting -type d skip it.
             var probePath = path.TrimEnd('/') + "/.";
-            if (!PermissionsAllowed(["exec", container, "find", probePath, "-maxdepth", "0", "-type", "d"], "-555", true))
-                throw new WipException($"Pinned rules ancestor {path} is unreadable or untraversable, or its permissions could not be verified; no scan was started");
+            if (!PermissionsAllowed(["exec", container, "find", probePath, "-maxdepth", "0", "-type", "d"], "-111", false, "-x"))
+                throw new WipException($"Pinned rules ancestor {path} is untraversable, or its permissions could not be verified; no scan was started");
         }
 
         void RequirePermissions(string type, string permission, string failure)
@@ -378,12 +380,12 @@ internal sealed class ScanEngine(
                 throw new WipException($"Pinned rules contain an {failure} or {kind} permissions could not be verified; no scan was started");
         }
 
-        bool PermissionsAllowed(string[] prefix, string permission, bool directory)
+        bool PermissionsAllowed(string[] prefix, string permission, bool directory, params string[] accesses)
         {
             var result = backend([.. prefix, "!", "-perm", permission, "-print", "-quit"], limit, SandboxConsoleMode.Capture);
             if (Failed(result)) return false;
             if (string.IsNullOrWhiteSpace(result.Output)) return true;
-            foreach (var access in directory ? new[] { "-r", "-x" } : new[] { "-r" })
+            foreach (var access in accesses.Length > 0 ? accesses : directory ? ["-r", "-x"] : ["-r"])
             {
                 result = backend([.. prefix, "!", "-exec", "test", access, "{}", ";", "-print", "-quit"],
                     RulesAccessProbeTimeout, SandboxConsoleMode.Capture);

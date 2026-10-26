@@ -279,7 +279,8 @@ exec <container> rmdir -- <path>.staging
 ```
 
 The whole-tree `container cp` step has a five-minute deadline for large Windows-to-WSL
-transfers. Setup, moves, cleanup and probes keep separate one-minute bounds.
+transfers. Setup, moves, cleanup and the mode-bit probes keep separate one-minute bounds; the
+effective-access probes get the copy's five minutes, for the reason given below.
 
 The nonempty `.staging` suffix cannot equal the validated rules path, and the adapter cannot
 choose a separate staging destination. Moving the known `tree` directory puts its contents
@@ -289,19 +290,31 @@ a missing path or an empty rules directory refuses execution. The copy uses the 
 verified scanner image, with no separate mirror image or volume declaration.
 
 Before executing the scanner, the engine probes every ancestor from `/` down to the rules
-parent and every directory in the rules tree for read and traversal access by the scanner.
-A mode that grants every class what the entry needs -- read and traverse for a directory,
-read for a file -- provides a fast acceptance path.
+parent for traversal, and every directory and file in the rules tree for the access the scanner
+needs there. An ancestor is asked only to be traversable: opening a file beneath it never lists
+it, so requiring read would refuse a 0711 image directory the scanner could use. A mode that
+grants every class what the entry needs -- traverse for an ancestor, read and traverse for a
+directory in the tree, read for a file -- provides a fast acceptance path.
 It checks rather than chmods ancestors, preserving the image's existing access policy.
 Appending `/.` resolves an ancestor directory even when its path ends in a symlink, so the
 `-type d` predicate cannot silently skip it. Each probe is a separate backend invocation
 without a shell:
 
 ```text
-find <ancestor>/. -maxdepth 0 -type d ! -perm -o+rx -print -quit
-find <path> -type d ! -perm -o+rx -print -quit
+find <ancestor>/. -maxdepth 0 -type d ! -perm -111 -print -quit
+find <path> -type d ! -perm -555 -print -quit
 find <path> -type f -print0
-find <path> -type f ! -perm -o+r -print -quit
+find <path> -type f ! -perm -444 -print -quit
+```
+
+When one of those reports a path, the same prefix runs again under the scanner's own
+credentials, once per access the entry needs:
+
+```text
+find <ancestor>/. -maxdepth 0 -type d ! -exec test -x {} ; -print -quit
+find <path> -type d ! -exec test -r {} ; -print -quit
+find <path> -type d ! -exec test -x {} ; -print -quit
+find <path> -type f ! -exec test -r {} ; -print -quit
 ```
 
 The NUL-separated file list is counted against the exact number of regular files hashed in
@@ -326,7 +339,11 @@ The fallback runs under the rules copy's five-minute budget rather than the sing
 minute, because it forks one `test` per entry and a large template set staged under a restrictive
 umask misses the fast path on its first entry.
 
-BusyBox 1.36.1 in Alpine 3.20 rejects GNU `-readable`; `-exec test` works on both.
+BusyBox 1.36.1 in Alpine 3.20 rejects GNU `-readable`; `-exec test` works on both. The `;`
+terminator is the first shell metacharacter the engine puts in a backend argv, so it was measured
+rather than assumed: against WSLC 3.0.3.0, `wslc exec <container> find /tmp -maxdepth 0 -type d !
+-exec test -r {} ; -print -quit` exits 0 with no output on an accessible directory, and prints the
+path on a mode 000 one while running as uid 1000. The backend passes argv through without a shell.
 The engine neither changes image permissions nor adds a user to the scanner contract.
 Missing ancestor access, unreadable directories, an empty or partial tree, and unreadable
 files have distinct refusals. A nonzero exit, timeout or output limit from either stage
