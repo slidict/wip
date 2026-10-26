@@ -3,7 +3,9 @@
 The engine runs one diagnostic tool inside one declared sandbox, behind its declared
 [network boundary](sandbox-network-isolation.md). It owns preparation, execution, report
 collection and cleanup; each built-in adapter supplies only a command and report format.
-OWASP ZAP is the first built-in adapter, selected as `--tool zap`.
+Select exactly one built-in adapter: `--tool zap` or `--tool nuclei`. Comma-separated or
+repeated tool selections are unsupported. Adding a tool requires a reviewed pull request
+to wip itself; configuration cannot load arbitrary scanners or plugins.
 
 ## Command and image
 
@@ -54,11 +56,81 @@ requires a matching `Config.Cmd`; an unreadable command is refused. To apply an 
 command, explicitly destroy and recreate the sandbox rather than relying on an implicit
 configuration change.
 
-This overrides CMD, not ENTRYPOINT. An image with a fixed scanner ENTRYPOINT still receives
-the declared list as arguments to that entrypoint. The keepalive example therefore requires
-an image with no ENTRYPOINT or an entrypoint that executes the supplied command; `command`
-alone cannot replace a fixed one-shot ENTRYPOINT. It does not add an entrypoint override.
-The image must also provide the report-reading utilities used by the engine.
+`command` overrides CMD. For an image with a fixed scanner ENTRYPOINT, declare an
+`entrypoint` executable too. WSLC replaces only that executable, so its arguments go in
+`command`, not in `entrypoint`. For the official Nuclei image:
+
+```yaml
+entrypoint: sleep
+command: [infinity]
+```
+
+`entrypoint` must be one nonempty string without whitespace, control characters or a leading
+`-`; lists and shell command lines are refused. Omitting it preserves the image ENTRYPOINT.
+Create, reuse and exec verify a declared override against the singleton argv in
+`Config.Entrypoint`. Drift requires destroy-then-create; an unreadable field or a mismatch
+immediately after creation reports a backend limitation rather than recommending a loop of
+recreation. As with `command`, removing the declaration does not restore or verify the image
+default on an existing container. The image must provide the engine's report-reading utilities.
+
+## Nuclei adapter
+
+`--tool nuclei` uses the official v3.9.0 multi-platform image:
+
+```text
+projectdiscovery/nuclei@sha256:66b5f88c9b98ad29c03343dd34e5e85bde0ad10428d72e0171b067efe1ed7811
+```
+
+Declare that exact `image`, `entrypoint: sleep` and `command: [infinity]` on the scanner's
+internal network. The image runs as root and contains no templates. `PinnedRules` stages
+`https://github.com/projectdiscovery/nuclei-templates.git` at commit
+`2603fc1f23f2ef219ea4834128a163113c6b5168` (v10.3.2) into
+`/opt/wip-nuclei-templates` through the existing verified cache/copy path. Provenance includes
+the image, `http-misconfiguration-v1` profile and the template commit.
+
+The fixed shell wrapper passes the target as positional data, never shell syntax. It runs:
+
+```text
+nuclei -u <url> -t /opt/wip-nuclei-templates/http/misconfiguration
+  -duc -ni -no-stdin -nh -dr -dut -pt http -etags dos,fuzz,bruteforce
+  -rl 10 -c 2 -timeout 5 -retries 0 -nc -jsonl -omit-raw -omit-template
+  -o /tmp/wip-nuclei-native.jsonl -elog /tmp/wip-nuclei-errors.jsonl
+```
+
+These flags were checked against the pinned image's v3.9.0 binary.
+`-duc` disables initial template installation and update checks; `-ni` excludes interactsh
+callbacks. Only signed HTTP misconfiguration templates are selected. Other template
+categories, workflows, code, browser/headless, authenticated scanning and crawling are not
+run. This profile sends active HTTP requests and does not promise ZAP's path-subtree scope:
+templates can address other paths on the target. Redirects and implicit HTTP probing are
+disabled. Each request has a five-second timeout, no retry, concurrency two and a rate limit
+of ten requests/second; the engine supplies the total deadline. The internal network remains
+the egress boundary. Targets must be unauthenticated HTTP(S) URLs without fragments or commas
+(the latter would turn one `-u` value into multiple targets).
+
+`/tmp/wip-nuclei-unperformed.txt` records these omissions and bounds, nuclei's unmodified
+stderr log, and the request error log. Its stdout is discarded: with `-o` nuclei writes every
+finding to both, and the duplicate would pass the engine's 1 MiB collection cap on a noisy
+target, costing the whole coverage record for a scan that succeeded. Runtime failures or skipped templates are evidence
+of incomplete coverage, not passed checks. A missing sidecar remains an incomplete result
+under the shared engine's existing rules.
+
+The collected report `/tmp/wip-nuclei-report.jsonl` preserves native JSONL findings and,
+only on exit zero with an actual native output file, appends this adapter completion record:
+
+```json
+{"wip-nuclei-completed":"http-misconfiguration-v1"}
+```
+
+This distinguishes a successful zero-finding run from lost/empty output without changing the
+shared engine. Missing templates still fail in Nuclei; a missing output file cannot acquire
+a fabricated completion record. The converter validates each JSONL object and report
+structure, raising `JsonException` or `FormatException` for damage. It maps template ID,
+name, severity (`info` to `informational`), extracted evidence or matcher name, and the matched
+URL's path. Query strings and hosts are not endpoint keys; method, parameter and confidence
+remain absent because this profile does not reliably supply them. A completion record must
+be the final record, and is never a finding. No findings does not establish that excluded
+checks passed. Container lifecycle and the shared scanner contracts are unchanged.
 
 ## ZAP adapter
 

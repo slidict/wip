@@ -34,6 +34,9 @@ public sealed record SandboxStatus(
 
     /// <summary>The source argv in Config.Cmd, or null when it cannot be read.</summary>
     public IReadOnlyList<string>? Command { get; init; }
+
+    /// <summary>The source argv in Config.Entrypoint, or null when it cannot be read.</summary>
+    public IReadOnlyList<string>? Entrypoint { get; init; }
 }
 
 /// <summary>How a backend invocation uses wip's own console.</summary>
@@ -112,7 +115,8 @@ public sealed class SandboxLifecycle(
         var mounts = ExtractMounts(record);
         return new(name, backendName, inspectedId, state, mounts, ExtractNetworks(record), ExtractImage(record))
         {
-            Command = ExtractCommand(record)
+            Command = ExtractArgv(record, "Cmd"),
+            Entrypoint = ExtractArgv(record, "Entrypoint")
         };
     }
 
@@ -181,6 +185,7 @@ public sealed class SandboxLifecycle(
                     runArgs.Add($"type=volume,source={vStatus.BackendName},target={vDef.Mount}");
                 }
             }
+            if (definition.Entrypoint is { } entrypoint) runArgs.AddRange(["--entrypoint", entrypoint]);
             runArgs.Add(definition.Image);
             if (definition.Command is { } command) runArgs.AddRange(command);
             var created = backend(runArgs, MutationTimeout, SandboxConsoleMode.Stream);
@@ -595,7 +600,7 @@ public sealed class SandboxLifecycle(
     }
 
     /// <summary>
-    /// Refuses a container whose command is not the declared one.
+    /// Refuses a container whose command or entrypoint differs from its declaration.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -621,6 +626,21 @@ public sealed class SandboxLifecycle(
     private static void VerifyExistingCommand(
         string name, SandboxDefinition definition, SandboxStatus status, bool freshlyCreated = false)
     {
+        if (definition.Entrypoint is { } entrypoint)
+        {
+            // A container created before the declaration existed has no entrypoint recorded,
+            // and destroy-then-create does fix that. Only a freshly created one proves the
+            // backend will not report it.
+            if (status.Entrypoint is null)
+                throw Failure(name, freshlyCreated
+                    ? "the declared entrypoint cannot be verified because the backend does not report Config.Entrypoint as an argv list; recreating will not change that"
+                    : "the declared entrypoint is not recorded in Config.Entrypoint; run sandbox destroy, confirm absence, then sandbox create");
+            if (!status.Entrypoint.SequenceEqual(new[] { entrypoint }, StringComparer.Ordinal))
+                throw Failure(name, freshlyCreated
+                    ? "the backend recorded a different entrypoint from the executable wip passed; recreating will not change that"
+                    : "the declared entrypoint differs from Config.Entrypoint; run sandbox destroy, confirm absence, then sandbox create");
+        }
+        // As with command, removing a declaration does not assert an image default.
         if (definition.Command is not { } expected) return;
 
         // Unreadable is not drift, wherever it is found. The backend is not reporting argv the
@@ -645,10 +665,10 @@ public sealed class SandboxLifecycle(
         }
     }
 
-    private static IReadOnlyList<string>? ExtractCommand(JsonElement record)
+    private static IReadOnlyList<string>? ExtractArgv(JsonElement record, string property)
     {
         if (!record.TryGetProperty("Config", out var config) || config.ValueKind != JsonValueKind.Object ||
-            !config.TryGetProperty("Cmd", out var command) || command.ValueKind != JsonValueKind.Array)
+            !config.TryGetProperty(property, out var command) || command.ValueKind != JsonValueKind.Array)
             return null;
         var argv = new List<string>();
         foreach (var item in command.EnumerateArray())
