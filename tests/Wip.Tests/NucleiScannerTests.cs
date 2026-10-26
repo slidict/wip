@@ -61,10 +61,34 @@ public class NucleiScannerTests
     {
         var scanner = new NucleiScanner();
         Assert.Empty(scanner.ConvertReport(NucleiScanner.Completion));
-        var finding = Assert.Single(scanner.ConvertReport("""{"template-id":"rule","info":{}}"""));
+        var finding = Assert.Single(scanner.ConvertReport(
+            """{"template-id":"rule","info":{}}""" + "\n" + NucleiScanner.Completion));
         Assert.Null(finding.Name);
         Assert.Null(finding.Severity);
         Assert.Null(finding.Evidence);
+    }
+
+    // The wrapper publishes whatever nuclei flushed before a fatal error, so a report without
+    // the marker is a truncated run. Accepting it would store a partial finding set as
+    // "completed" -- the engine only reads the status this conversion implies.
+    [Theory]
+    [InlineData("""{"template-id":"rule","info":{}}""")]
+    [InlineData("")]
+    public void AReportWithoutTheCompletionRecordIsRefused(string report)
+    {
+        var scanner = new NucleiScanner();
+        Assert.Throws<FormatException>(() => scanner.ConvertReport(report));
+    }
+
+    // An empty extracted-results array is absence, not evidence: joining it yields "", which
+    // would otherwise suppress the matcher-name fallback and store an empty string.
+    [Fact]
+    public void EmptyExtractedResultsFallBackToTheMatcherName()
+    {
+        var finding = Assert.Single(new NucleiScanner().ConvertReport(
+            """{"template-id":"rule","info":{},"extracted-results":[],"matcher-name":"banner"}"""
+            + "\n" + NucleiScanner.Completion));
+        Assert.Equal("banner", finding.Evidence);
     }
 
     [Theory]

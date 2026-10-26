@@ -18,10 +18,16 @@ internal sealed class NucleiScanner : ISecurityScanner
 
     // Alpine has sh, not Python. Only this fixed program is shell syntax: paths, coverage
     // and all nuclei arguments (including the target) are positional data. Never eval them.
+    // The marker is composed from Completion rather than repeated: a renamed profile would
+    // otherwise leave the wrapper emitting one ConvertReport refuses, turning every finished
+    // scan into report-unparseable, and the test that would catch it is Linux-only. nuclei
+    // writes findings to stdout as well as to -o, so stdout is dropped: the duplicate would
+    // push the sidecar past the engine 1 MiB cap on a noisy target and lose the coverage
+    // record for a scan that succeeded. The log stays, on stderr.
     // A completion record makes a successful zero-match JSONL report nonempty for the shared
     // engine. It is appended only after exit 0 and an actual native report file; missing
     // templates/output must not become a fabricated successful empty scan.
-    private const string Wrapper = """set -u; report=$1; coverage=$2; native=$3; errors=$4; notice=$5; shift 5; rm -f -- "$report" "$native" "$errors" || exit $?; printf '%s\n' "$notice" > "$coverage" || exit $?; "$@" >> "$coverage" 2>&1; code=$?; if [ -f "$errors" ]; then cat "$errors" >> "$coverage" || exit $?; fi; if [ -f "$native" ]; then if [ "$code" -eq 0 ]; then printf '\n%s\n' '{"wip-nuclei-completed":"http-misconfiguration-v1"}' >> "$native" || exit $?; fi; mv -- "$native" "$report" || exit $?; fi; exit $code""";
+    private const string Wrapper = """set -u; report=$1; coverage=$2; native=$3; errors=$4; notice=$5; shift 5; rm -f -- "$report" "$native" "$errors" || exit $?; printf '%s\n' "$notice" > "$coverage" || exit $?; "$@" >/dev/null 2>>"$coverage"; code=$?; if [ -f "$errors" ]; then cat "$errors" >> "$coverage" || exit $?; fi; if [ -f "$native" ]; then if [ "$code" -eq 0 ]; then printf '\n%s\n' '""" + Completion + """' >> "$native" || exit $?; fi; mv -- "$native" "$report" || exit $?; fi; exit $code""";
 
     public string Name => "nuclei";
 
@@ -82,8 +88,15 @@ internal sealed class NucleiScanner : ISecurityScanner
             }
             var severity = Text(info, "severity");
             findings.Add(new ScanFinding(id, Text(info, "name"), severity == "info" ? "informational" : severity,
-                null, new ScanLocation(path, null, null), evidence ?? Text(item, "matcher-name")));
+                // An empty extracted-results array joins to "", which is absence, not evidence.
+                null, new ScanLocation(path, null, null),
+                evidence is { Length: > 0 } ? evidence : Text(item, "matcher-name")));
         }
+        // The marker is appended only after exit 0 and a real native report, but the wrapper
+        // still publishes what nuclei flushed before a fatal error. Requiring it here is what
+        // makes a truncated finding set unparseable -- and therefore incomplete -- instead of
+        // a "completed" run whose missing checks are invisible in the stored document.
+        if (!completed) throw new FormatException("Nuclei report has no completion record; the scan did not finish");
         return findings.AsReadOnly();
     }
 
