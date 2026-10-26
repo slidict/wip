@@ -32,6 +32,7 @@ key, every command's flags, guides, and troubleshooting — see the
 - [Configuration](#configuration)
 - [Commands](#commands)
 - [Sandboxes](#sandboxes)
+- [Security scanning](#security-scanning)
 - [Development](#development)
 - [Contributing](#contributing)
 - [License](#license)
@@ -258,7 +259,8 @@ the configuration and ownership model, [Sandboxes](https://github.com/slidict/wi
 for declared volumes on their own, [volume storage](docs/volume-lifecycle.md); for putting a
 sandbox behind a network it cannot reach past,
 [network isolation](docs/sandbox-network-isolation.md); for running one built-in diagnostic
-tool behind that boundary, [the security scan engine](docs/security-scan-engine.md).
+tool behind that boundary, see [Security scanning](#security-scanning) below and
+[the security scan engine](docs/security-scan-engine.md).
 
 **Sandbox networking is IPv4 only, because WSLC is.** Measured against WSLC 3.0.3: a network
 created with an IPv6 subnet and gateway is accepted and the subnet is recorded in its IPAM
@@ -268,6 +270,88 @@ container on that network gets no IPv6 address at all. The docker driver option
 an IPv6 declaration does not fail — it silently produces an IPv4-only network, which is the
 part worth knowing. Anything that depends on IPv6, including diagnosing a target's IPv6
 exposure, is out of reach until WSLC supports it.
+
+## Security scanning
+
+`wip security scan` runs a built-in diagnostic tool inside a declared sandbox against a target
+on the same isolated network.
+
+- **One tool per run, chosen from a static table.** Pass `--tool <name>` from the list returned
+  by `wip security tools`. There is no plugin API, dynamic assembly loading, reflection, or
+  `wip.yml` key that registers an external scanner. Adding a tool requires a reviewed pull
+  request to `wip` itself — an intentional restriction so that every adapter's code,
+  dependencies, pinned image, permissions, network traffic, and report/coverage handling are
+  reviewed before the tool can run.
+- **The network boundary is the point.** Both the scanner sandbox and its target run on a
+  network declared with `internal: true`, and the engine refuses to start or run a scan unless
+  it has verified that the network exists, belongs to `wip`, and is internal. There is no
+  unrestricted or fallback mode. Measured against WSLC
+  ([#262](https://github.com/slidict/wip/issues/262),
+  [network isolation](docs/sandbox-network-isolation.md)), an internal network allows traffic
+  only between sandboxes on that same declared network while blocking external IPv4 (TCP and
+  ICMP), public DNS resolvers, DNS name resolution, the default bridge's host gateway, cloud
+  metadata endpoints (`169.254.169.254`), and sandboxes on other internal networks. IPv6 is out
+  of scope because WSLC is IPv4-only (see [Sandboxes](#sandboxes) above).
+- **Images are pinned by SHA-256 digest.** Both the built-in adapter and the scanner sandbox's
+  `image:` in `wip.yml` must use the exact `name@sha256:<64 hex digits>` reference; tags
+  (including version tags) are refused because they can be reassigned. Pinning guarantees that
+  the scanner binary and its bundled rules cannot change between runs unless the configuration
+  changes.
+
+| `--tool` | Pinned image (`image:`) | Keepalive `command:` | What it runs | Omitted (reported as unperformed) |
+|---|---|---|---|---|
+| `zap` | `ghcr.io/zaproxy/zaproxy@sha256:5ccfff9a411743ab2615136a2edd7416bec9ce41572fa94e935df38c14adb2b6` | `[sleep, infinity]` | Bounded traditional spider (1 min, depth 2, 10 children, confined to the target HTTP(S) URL subtree; no form submission, `robots.txt`, or sitemap parsing; OAST callbacks removed) and passive scan (up to 1 min) | Active scanning, authenticated paths ([#277](https://github.com/slidict/wip/issues/277)), browser/Ajax crawling, form submission, out-of-band callbacks |
+
+**"Unperformed" is reported separately from "no findings."** Every scan records which checks
+and crawl scope were omitted (printed to stderr under `Unperformed checks (raw):` and written to
+`unperformed-checks.txt` and `result.json`'s `coverage` field when `--output` is given;
+incomplete runs omit `findings` altogether and exit nonzero). A completed `zap` scan with zero
+findings only reflects the unauthenticated passive scope that ran — a clean report is not proof
+that active or authenticated checks passed, or that the target is safe.
+
+### Running a scan
+
+`wip security scan` executes inside an already-running sandbox (`wip sandbox create`), and
+`sandbox create` starts the container detached (`run -d`) and requires it to stay running.
+Because scanner images typically exit immediately under their default `CMD` (`zap`'s default
+`CMD` is `bash`), **you must declare a persistent foreground `command:` such as
+`command: [sleep, infinity]` on the scanner sandbox**
+([#274](https://github.com/slidict/wip/issues/274)) — omitting `command:` is the step first-time
+readers most often get wrong. (`command:` overrides `CMD`, not `ENTRYPOINT`; if you change it
+later, `sandbox destroy` and `sandbox create` the sandbox before scanning.)
+
+```yaml
+version: 1
+resource_namespace: example-project
+
+networks:
+  - name: scan
+    internal: true
+
+sandboxes:
+  - name: target
+    image: example/app:1
+    network: scan
+  - name: scanner
+    image: ghcr.io/zaproxy/zaproxy@sha256:5ccfff9a411743ab2615136a2edd7416bec9ce41572fa94e935df38c14adb2b6
+    network: scan
+    command: [sleep, infinity] # required so the detached scanner container stays running (#274)
+```
+
+```powershell
+wip security tools
+wip sandbox create target
+wip sandbox create scanner
+wip security scan scanner --tool zap --target http://<target-ip>:8080/ --output scan-results
+wip sandbox destroy scanner
+wip sandbox destroy target
+```
+
+The engine stops the scanner container when the scan finishes (or times out); `sandbox destroy`
+removes it. For the CLI workflow, see
+[wip security scan](https://github.com/slidict/wip/wiki/wip-security-scan) on the wiki; for
+engine internals, adapter contracts, result schema, exit codes, and pinned rules staging, see
+[the security scan engine](docs/security-scan-engine.md).
 
 ## Development
 
