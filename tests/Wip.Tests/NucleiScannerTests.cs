@@ -158,7 +158,9 @@ public class NucleiScannerTests
                 printf 'native request failure\n' > "$errors"
                 if [ "$WIP_SCENARIO" = oversized ]; then
                   head -c 3000000 /dev/zero | tr '\0' e >> "$errors"
+                  printf '\n[FTL] elog closing summary\n' >> "$errors"
                   head -c 3000000 /dev/zero | tr '\0' s >&2
+                  printf '\n[FTL] stderr closing summary\n' >&2
                 fi
                 case "$WIP_SCENARIO" in
                   missing) exit 0;;
@@ -202,11 +204,19 @@ public class NucleiScannerTests
             {
                 // Both streams are oversized, so both bounds have to apply. One of them
                 // missing leaves the sidecar past 3 MB, and two notes prove neither log
-                // was dropped whole.
+                // was dropped whole. The first lines (asserted above) and the closing
+                // summaries, which explain why checks did not run, both survive the cut.
                 Assert.Equal(2, Regex.Matches(diagnostics,
                     @"\[wip: truncated, \d+ bytes dropped\]").Count);
+                Assert.Contains("[FTL] elog closing summary", diagnostics);
+                Assert.Contains("[FTL] stderr closing summary", diagnostics);
+                Assert.True(diagnostics.IndexOf("native skipped template", StringComparison.Ordinal)
+                    < diagnostics.IndexOf("[FTL] stderr closing summary", StringComparison.Ordinal));
+                Assert.True(diagnostics.IndexOf("native request failure", StringComparison.Ordinal)
+                    < diagnostics.IndexOf("[FTL] elog closing summary", StringComparison.Ordinal));
                 Assert.InRange(diagnostics.Length, 512 * 1024, ScanEngine.MaxReportCharacters - 1);
             }
+            else Assert.DoesNotContain("[wip: truncated", diagnostics);
             if (scenario == "missing") Assert.False(File.Exists(report));
             else if (exitCode != 0) Assert.DoesNotContain(NucleiScanner.Completion, File.ReadAllText(report));
             else

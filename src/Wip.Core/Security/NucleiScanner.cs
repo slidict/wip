@@ -29,12 +29,13 @@ internal sealed class NucleiScanner : ISecurityScanner
     // writes findings to stdout as well as to -o, so stdout is dropped: the duplicate would
     // push the sidecar past the engine 1 MiB cap on a noisy target and lose the coverage
     // record for a scan that succeeded. The log stays, on stderr.
-    // stderr and -elog are each cut at 256 KiB with a note of the bytes dropped: a target
-    // refusing connections makes -elog several MB, which would lose the coverage record too.
+    // stderr and -elog are each cut to their first 192 KiB and last 64 KiB with a note of the
+    // bytes dropped between: a target refusing connections makes -elog several MB, which would
+    // lose the coverage record too, and the tail keeps nuclei's closing [FTL]/[ERR] summary.
     // A completion record makes a successful zero-match JSONL report nonempty for the shared
     // engine. It is appended only after exit 0 and an actual native report file; missing
     // templates/output must not become a fabricated successful empty scan.
-    private const string Wrapper = """set -u; report=$1; coverage=$2; native=$3; errors=$4; stderr=$5; notice=$6; shift 6; limit=262144; rm -f -- "$report" "$native" "$errors" "$stderr" || exit $?; printf '%s\n' "$notice" > "$coverage" || exit $?; "$@" >/dev/null 2>"$stderr"; code=$?; for log in "$stderr" "$errors"; do if [ -f "$log" ]; then size=$(wc -c < "$log") || exit $?; size=$((size)); head -c "$limit" < "$log" >> "$coverage" || exit $?; if [ "$size" -gt "$limit" ]; then printf '\n[wip: truncated, %s bytes dropped]\n' "$((size - limit))" >> "$coverage" || exit $?; fi; fi; done; if [ -f "$native" ]; then if [ "$code" -eq 0 ]; then printf '\n%s\n' '""" + Completion + """' >> "$native" || exit $?; fi; mv -- "$native" "$report" || exit $?; fi; exit $code""";
+    private const string Wrapper = """set -u; report=$1; coverage=$2; native=$3; errors=$4; stderr=$5; notice=$6; shift 6; limit=262144; first=196608; last=65536; rm -f -- "$report" "$native" "$errors" "$stderr" || exit $?; printf '%s\n' "$notice" > "$coverage" || exit $?; "$@" >/dev/null 2>"$stderr"; code=$?; for log in "$stderr" "$errors"; do if [ -f "$log" ]; then size=$(wc -c < "$log") || exit $?; size=$((size)); if [ "$size" -gt "$limit" ]; then head -c "$first" < "$log" >> "$coverage" || exit $?; printf '\n[wip: truncated, %s bytes dropped]\n' "$((size - limit))" >> "$coverage" || exit $?; tail -c "$last" < "$log" >> "$coverage" || exit $?; else cat < "$log" >> "$coverage" || exit $?; fi; fi; done; if [ -f "$native" ]; then if [ "$code" -eq 0 ]; then printf '\n%s\n' '""" + Completion + """' >> "$native" || exit $?; fi; mv -- "$native" "$report" || exit $?; fi; exit $code""";
 
     public string Name => "nuclei";
 
