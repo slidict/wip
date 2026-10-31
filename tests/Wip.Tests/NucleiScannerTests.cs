@@ -91,6 +91,15 @@ public class NucleiScannerTests
         Assert.Equal("banner", finding.Evidence);
     }
 
+    // A JSON null is how an absent optional field is spelled; only a non-array value is malformed.
+    [Fact]
+    public void NullExtractedResultsAreAbsenceNotAMalformedArray()
+    {
+        var finding = Assert.Single(new NucleiScanner().ConvertReport(
+            """{"template-id":"rule","info":{},"extracted-results":null}""" + "\n" + NucleiScanner.Completion));
+        Assert.Null(finding.Evidence);
+    }
+
     [Theory]
     [InlineData("{}")]
     [InlineData("[]")]

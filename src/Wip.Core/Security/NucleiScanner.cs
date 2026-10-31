@@ -83,7 +83,7 @@ internal sealed class NucleiScanner : ISecurityScanner
             var path = Uri.TryCreate(matched, UriKind.Absolute, out var location) && location.Scheme is "http" or "https"
                 ? location.AbsolutePath : null;
             string? evidence = null;
-            if (item.TryGetProperty("extracted-results", out var extracted))
+            if (item.TryGetProperty("extracted-results", out var extracted) && extracted.ValueKind != JsonValueKind.Null)
             {
                 if (extracted.ValueKind != JsonValueKind.Array || extracted.EnumerateArray().Any(value => value.ValueKind != JsonValueKind.String))
                     throw new FormatException("Nuclei extracted-results must be an array of strings");
