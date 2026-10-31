@@ -277,6 +277,7 @@ internal sealed class ScanEngine(
                 var collectionDeadline = deadline < CollectionTimeout ? deadline : CollectionTimeout;
                 var (report, reportError) = ReadReport(sandbox, plan.ReportPath, collectionDeadline);
                 var (unperformed, diagnosticsError) = ReadReport(sandbox, plan.UnperformedChecksPath, collectionDeadline);
+                if (unperformed is null) diagnosticsError ??= "the scanner wrote no unperformed-check record";
                 var outcome = new ScanOutcome(scanner.Name, sandbox, plan.Image.Reference, plan.RulesVersion, network, code, report,
                     ReportError: reportError, UnperformedChecks: unperformed, UnperformedChecksError: diagnosticsError);
                 finished = FinishResult(scanner, target, outcome, runId, startedAt, networkVerifiedInternal, outputDirectory, commit);
@@ -430,7 +431,8 @@ internal sealed class ScanEngine(
         string runId, DateTimeOffset startedAt, bool networkVerifiedInternal, string? outputDirectory, string? commit)
     {
         string? reason = outcome.TimedOut ? "timeout"
-            : outcome.ReportError is not null || outcome.Report is null ? "report-collection-failed"
+            : outcome.ReportError is not null ? "report-collection-failed"
+            : outcome.Report is null ? "report-missing"
             : string.IsNullOrWhiteSpace(outcome.Report) ? "report-empty" : null;
         IReadOnlyList<ScanFinding>? findings = null;
         if (reason is null)
@@ -499,6 +501,7 @@ internal sealed class ScanEngine(
     /// sandbox rather than trusted as text: the content is a tool's output, which is treated
     /// as untrusted input downstream, and nothing here interprets it.
     /// </summary>
+    /// <returns>Both null when the file is confirmed absent.</returns>
     private (string? Report, string? Error) ReadReport(string sandbox, string reportPath, TimeSpan timeout)
     {
         // `cat` with the path as its own argument, never a shell line: a report path is data,
@@ -511,13 +514,32 @@ internal sealed class ScanEngine(
             if (captured.OutputLimitExceeded || captured.Output.Length > MaxReportCharacters)
                 return (null, "report exceeded the 1 Mi-character retention limit; no partial report was returned");
             if (captured.Code != 0)
-                return (null, $"report collection failed (exit {captured.Code})");
+                return Exists(sandbox, reportPath, timeout) is false
+                    ? (null, null)
+                    : (null, $"report collection failed (exit {captured.Code})");
             return (captured.Output, null);
         }
         catch (WipException error)
         {
             // Collection failure must not erase the scanner's status and provenance.
             return (null, $"report collection failed: {error.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Whether the path exists, or null when the probe could not tell. `cat` exits 1 for an
+    /// absent file and for an unreadable one alike, so only this separates the two.
+    /// </summary>
+    private bool? Exists(string sandbox, string path, TimeSpan timeout)
+    {
+        try
+        {
+            var probed = sandboxes.CaptureReport(sandbox, ["test", "-e", path], timeout);
+            return probed.TimedOut ? null : probed.Code switch { 0 => true, 1 => false, _ => null };
+        }
+        catch (WipException)
+        {
+            return null;
         }
     }
 

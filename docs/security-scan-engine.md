@@ -219,7 +219,7 @@ The JSON contract is versioned and written through `Utf8JsonWriter`:
 | `status` | Exactly `completed` or `incomplete` |
 | `scannerExitCode` | The original scanner status, independent of result completeness |
 | `findings` | Present only for `completed`; an empty array means no findings were reported within the recorded coverage |
-| `reason` | Present only for `incomplete`: `timeout`, `report-collection-failed`, `report-empty`, `report-unparseable` or `unperformed-checks-lost` |
+| `reason` | Present only for `incomplete`: `timeout`, `report-missing` (the scanner wrote no report), `report-collection-failed` (a report that exists could not be read), `report-empty`, `report-unparseable` or `unperformed-checks-lost` |
 | `coverage` | Redacted `unperformedChecks`, or `missingReason` explaining why it is unavailable |
 
 Each finding has optional `ruleId`, `name`, `severity`, `confidence` and `evidence`, plus

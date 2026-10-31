@@ -114,6 +114,9 @@ public class ScanEngineTests
         public bool ReportTimedOut;
         public bool ReportLimitExceeded;
         public bool ReportThrows;
+        public int? ReportProbeCode;
+        public bool ReportProbeTimedOut;
+        public bool ReportProbeThrows;
         public Exception? StopFailure;
         public int StopCode;
         public Action? BeforeStop;
@@ -268,6 +271,12 @@ public class ScanEngineTests
                     TimedOut = ReportTimedOut,
                     OutputLimitExceeded = ReportLimitExceeded,
                 };
+            }
+            if (argv is ["exec", _, "test", "-e", var probedPath])
+            {
+                if (probedPath == "/out/unperformed.txt") return new(DiagnosticsMissing ? 1 : 0, "");
+                if (ReportProbeThrows) throw new WipException("existence probe failed");
+                return new(ReportProbeCode ?? (ReportMissing ? 1 : 0), "") { TimedOut = ReportProbeTimedOut };
             }
             if (argv[0] == "exec")
             {
@@ -1504,6 +1513,55 @@ public class ScanEngineTests
     }
 
     [Fact]
+    public void AScannerThatWroteNoReportIsReportMissing()
+    {
+        var fake = new Fake { ExecCode = 2, ReportMissing = true };
+
+        var outcome = Engine(fake).Run(new StubScanner(), "scanner", ValidPlan(), new ScanTarget("http://app.test:8080"));
+
+        Assert.Null(outcome.Report);
+        Assert.Null(outcome.ReportError);
+        Assert.Equal("report-missing", outcome.Result!.IncompleteReason);
+        Assert.Contains(fake.Calls, c => c is ["exec", _, "test", "-e", "/out/report.json"]);
+
+        using var output = new StringWriter();
+        using var error = new StringWriter();
+        CliContext.WriteScanOutcome(outcome, "/out/report.json", output, error, isOutputRedirected: true);
+        Assert.Contains("stub: wrote no report at /out/report.json", error.ToString());
+    }
+
+    [Fact]
+    public void AFailedReadOfAPresentReportIsACollectionFailure()
+    {
+        var fake = new Fake { ReportCode = 1, ReportProbeCode = 0 };
+
+        var outcome = Engine(fake).Run(new StubScanner(), "scanner", ValidPlan(), new ScanTarget("http://app.test:8080"));
+
+        Assert.Contains("exit 1", outcome.ReportError);
+        Assert.Equal("report-collection-failed", outcome.Result!.IncompleteReason);
+    }
+
+    public static TheoryData<int?, bool, bool> FailedProbes => new()
+    {
+        { 2, false, false },
+        { 124, true, false },
+        { null, false, true },
+    };
+
+    [Theory]
+    [MemberData(nameof(FailedProbes))]
+    public void AnInconclusiveExistenceProbeIsNotTakenAsAbsence(int? probeCode, bool probeTimedOut, bool probeThrows)
+    {
+        var fake = new Fake { ReportMissing = true, ReportProbeCode = probeCode,
+            ReportProbeTimedOut = probeTimedOut, ReportProbeThrows = probeThrows };
+
+        var outcome = Engine(fake).Run(new StubScanner(), "scanner", ValidPlan(), new ScanTarget("http://app.test:8080"));
+
+        Assert.NotNull(outcome.ReportError);
+        Assert.Equal("report-collection-failed", outcome.Result!.IncompleteReason);
+    }
+
+    [Fact]
     public void AReportCollectionTimeoutHasItsOwnReason()
     {
         var fake = new Fake { ExecCode = 2, ReportCode = 124, ReportTimedOut = true };
@@ -1730,6 +1788,7 @@ public class ScanEngineTests
 
     [Theory]
     [InlineData("timeout")]
+    [InlineData("report-missing")]
     [InlineData("report-collection-failed")]
     [InlineData("report-empty")]
     [InlineData("report-unparseable")]
@@ -1740,7 +1799,8 @@ public class ScanEngineTests
         switch (reason)
         {
             case "timeout": fake.ExecTimedOut = true; fake.ExecCode = 124; break;
-            case "report-collection-failed": fake.ReportMissing = true; break;
+            case "report-missing": fake.ReportMissing = true; break;
+            case "report-collection-failed": fake.ReportCode = 1; break;
             case "report-empty": fake.Report = " \n"; break;
             case "report-unparseable": fake.Report = "not JSON"; break;
             case "unperformed-checks-lost": fake.DiagnosticsMissing = true; break;

@@ -297,7 +297,7 @@ public class NucleiScannerTests
             }
             else
             {
-                // Without a report the run is already report-collection-failed, so a partial
+                // Without a report the run is already report-missing, so a partial
                 // record cannot fake a completed run -- and it carries the only account of why
                 // nothing ran. Staging it here would discard that for no gain.
                 Assert.False(File.Exists(report));
