@@ -27,7 +27,7 @@ public class NucleiScannerTests
             "-etags", "dos,fuzz,bruteforce", "-rl", "10", "-c", "2", "-timeout", "5", "-retries", "0",
             "-nc", "-jsonl", "-omit-raw", "-omit-template", "-o", "/tmp/wip-nuclei-native.jsonl",
             "-elog", "/tmp/wip-nuclei-errors.jsonl"
-        }, plan.Argv.Skip(10));
+        }, plan.Argv.Skip(11));
         Assert.All(plan.Argv, argument => Assert.DoesNotContain(argument, char.IsControl));
     }
 
@@ -227,6 +227,85 @@ public class NucleiScannerTests
                 Assert.Equal(findings, new NucleiScanner().ConvertReport(raw).Count);
             }
             Assert.False(File.Exists(Path.Combine(root, "marker")));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    /// <summary>
+    /// Bounding the sidecar runs after the report is published, so a failure there costs the
+    /// coverage record and not the findings. Every step of the bound exits on failure, and
+    /// <c>tail -c</c> is the one command in it this repository has not exercised on the
+    /// scanner's own image: if that image lacked it, the earlier order destroyed a finished
+    /// scan's report instead of truncating a log.
+    /// </summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void ASidecarWriteFailureCostsTheCoverageRecordAndNotTheReport(bool reported)
+    {
+        if (OperatingSystem.IsWindows()) { Assert.Skip("Wrapper uses Alpine-compatible sh"); return; }
+        var root = Path.Combine(Path.GetTempPath(), "wip-nuclei-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var stub = Path.Combine(root, "nuclei");
+            File.WriteAllText(stub, """
+                #!/bin/sh
+                while [ "$#" -gt 0 ]; do
+                  case "$1" in
+                    -o) output=$2; shift;;
+                    -elog) errors=$2; shift;;
+                  esac
+                  shift
+                done
+                head -c 3000000 /dev/zero | tr '\0' e > "$errors"
+                if [ "$WIP_REPORT" = yes ]; then
+                  printf '%s\n' '{"template-id":"rule","info":{"name":"Issue","severity":"low"}}' > "$output"
+                fi
+                """);
+            File.SetUnixFileMode(stub, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            // The bound needs tail for an oversized log. A tail that fails stands in for an
+            // image without it, which is the only way this step fails that we cannot rule out.
+            var shadow = Path.Combine(root, "shadow");
+            Directory.CreateDirectory(shadow);
+            var brokenTail = Path.Combine(shadow, "tail");
+            File.WriteAllText(brokenTail, "#!/bin/sh\nexit 127\n");
+            File.SetUnixFileMode(brokenTail, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+
+            var plan = Plan();
+            var args = plan.Argv.Select(argument => argument.StartsWith("/tmp/wip-nuclei-", StringComparison.Ordinal)
+                ? Path.Combine(root, Path.GetFileName(argument)) : argument == "nuclei" ? stub : argument).ToArray();
+            var start = new ProcessStartInfo(args[0]) { RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = root };
+            foreach (var argument in args.Skip(1)) start.ArgumentList.Add(argument);
+            start.Environment["PATH"] = shadow + Path.PathSeparator + Environment.GetEnvironmentVariable("PATH");
+            start.Environment["WIP_REPORT"] = reported ? "yes" : "no";
+            using var process = Process.Start(start)!;
+            Assert.True(process.WaitForExit(10_000));
+            Assert.NotEqual(0, process.ExitCode);
+
+            var report = Path.Combine(root, Path.GetFileName(plan.ReportPath));
+            var sidecar = Path.Combine(root, Path.GetFileName(plan.UnperformedChecksPath));
+            if (reported)
+            {
+                var raw = File.ReadAllText(report);
+                Assert.EndsWith(NucleiScanner.Completion + "\n", raw);
+                Assert.Single(new NucleiScanner().ConvertReport(raw));
+                // No coverage record at all, rather than a partial one. FinishResult does not
+                // read the scanner's exit code, so a nonempty sidecar would make the run
+                // "completed" while a whole log was silently missing.
+                Assert.False(File.Exists(sidecar));
+            }
+            else
+            {
+                // Without a report the run is already report-collection-failed, so a partial
+                // record cannot fake a completed run -- and it carries the only account of why
+                // nothing ran. Staging it here would discard that for no gain.
+                Assert.False(File.Exists(report));
+                var diagnostics = File.ReadAllText(sidecar);
+                Assert.Contains("Checks not performed", diagnostics);
+                Assert.Matches(@"\[wip: truncated, \d+ bytes dropped\]", diagnostics);
+                Assert.InRange(diagnostics.Length, 192 * 1024, ScanEngine.MaxReportCharacters - 1);
+            }
         }
         finally { Directory.Delete(root, true); }
     }
