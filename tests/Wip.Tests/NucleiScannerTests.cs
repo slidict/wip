@@ -230,4 +230,62 @@ public class NucleiScannerTests
         }
         finally { Directory.Delete(root, true); }
     }
+
+    /// <summary>
+    /// Bounding the sidecar runs after the report is published, so a failure there costs the
+    /// coverage record and not the findings. Every step of the bound exits on failure, and
+    /// <c>tail -c</c> is the one command in it this repository has not exercised on the
+    /// scanner's own image: if that image lacked it, the earlier order destroyed a finished
+    /// scan's report instead of truncating a log.
+    /// </summary>
+    [Fact]
+    public void ASidecarWriteFailureCostsTheCoverageRecordAndNotTheReport()
+    {
+        if (OperatingSystem.IsWindows()) { Assert.Skip("Wrapper uses Alpine-compatible sh"); return; }
+        var root = Path.Combine(Path.GetTempPath(), "wip-nuclei-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var stub = Path.Combine(root, "nuclei");
+            File.WriteAllText(stub, """
+                #!/bin/sh
+                while [ "$#" -gt 0 ]; do
+                  case "$1" in
+                    -o) output=$2; shift;;
+                    -elog) errors=$2; shift;;
+                  esac
+                  shift
+                done
+                head -c 3000000 /dev/zero | tr '\0' e > "$errors"
+                printf '%s\n' '{"template-id":"rule","info":{"name":"Issue","severity":"low"}}' > "$output"
+                """);
+            File.SetUnixFileMode(stub, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            // The bound needs tail for an oversized log. A tail that fails stands in for an
+            // image without it, which is the only way this step fails that we cannot rule out.
+            var shadow = Path.Combine(root, "shadow");
+            Directory.CreateDirectory(shadow);
+            var brokenTail = Path.Combine(shadow, "tail");
+            File.WriteAllText(brokenTail, "#!/bin/sh\nexit 127\n");
+            File.SetUnixFileMode(brokenTail, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+
+            var plan = Plan();
+            var args = plan.Argv.Select(argument => argument.StartsWith("/tmp/wip-nuclei-", StringComparison.Ordinal)
+                ? Path.Combine(root, Path.GetFileName(argument)) : argument == "nuclei" ? stub : argument).ToArray();
+            var start = new ProcessStartInfo(args[0]) { RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = root };
+            foreach (var argument in args.Skip(1)) start.ArgumentList.Add(argument);
+            start.Environment["PATH"] = shadow + Path.PathSeparator + Environment.GetEnvironmentVariable("PATH");
+            using var process = Process.Start(start)!;
+            Assert.True(process.WaitForExit(10_000));
+            Assert.NotEqual(0, process.ExitCode);
+
+            var raw = File.ReadAllText(Path.Combine(root, Path.GetFileName(plan.ReportPath)));
+            Assert.EndsWith(NucleiScanner.Completion + "\n", raw);
+            Assert.Single(new NucleiScanner().ConvertReport(raw));
+            // The coverage record is what degrades: the head was written before tail failed.
+            var diagnostics = File.ReadAllText(Path.Combine(root, Path.GetFileName(plan.UnperformedChecksPath)));
+            Assert.Contains("Checks not performed", diagnostics);
+            Assert.InRange(diagnostics.Length, 1, ScanEngine.MaxReportCharacters - 1);
+        }
+        finally { Directory.Delete(root, true); }
+    }
 }

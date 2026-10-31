@@ -66,9 +66,11 @@ command: [infinity]
 ```
 
 `entrypoint` must be one nonempty string without whitespace, control characters or a leading
-`-`; lists and shell command lines are refused. Declaring it requires `command` as well, and
-loading fails without it: the override clears the image CMD, so the executable would otherwise
-run with no operand. Omitting it preserves the image ENTRYPOINT.
+`-`; lists and shell command lines are refused. Declaring it requires `command` as well:
+the override clears the image CMD, so the executable would otherwise run with no operand.
+The configuration still loads without `command` -- `sandbox create` is what refuses it, so
+commands that do not create a sandbox, `destroy` included, keep working on such a config.
+Omitting `entrypoint` preserves the image ENTRYPOINT.
 Create, reuse and exec verify a declared override against the singleton argv in
 `Config.Entrypoint`. Drift requires destroy-then-create; an unreadable field or a mismatch
 immediately after creation reports a backend limitation rather than recommending a loop of
