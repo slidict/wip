@@ -43,8 +43,18 @@ internal sealed partial class CliContext
         var outcome = engine.Run(scanner, sandbox, plan, scanTarget, TimeSpan.FromSeconds(timeoutSeconds),
             outputDirectory, commit);
 
-        return WriteScanOutcome(outcome, plan.ReportPath, Console.Out, Console.Error, Console.IsOutputRedirected, Console.IsErrorRedirected);
+        var output = ReportOutput(Console.IsOutputRedirected, Console.OpenStandardOutput, Console.Out);
+        return WriteScanOutcome(outcome, plan.ReportPath, output, Console.Error, Console.IsOutputRedirected, Console.IsErrorRedirected);
     }
+
+    /// <summary>
+    /// UTF-8 without a BOM when stdout is redirected, so the report reaches the file as the
+    /// scanner wrote it; Console.Out would re-encode it with the console code page. A terminal
+    /// keeps Console.Out, which is what renders there. Console.OutputEncoding is left alone:
+    /// it would change every later write, and can fail on Windows when stdout is a pipe.
+    /// </summary>
+    internal static TextWriter ReportOutput(bool isOutputRedirected, Func<Stream> openStandardOutput, TextWriter console) =>
+        isOutputRedirected ? new StreamWriter(openStandardOutput(), new UTF8Encoding(false)) { AutoFlush = true } : console;
 
     internal static int WriteScanOutcome(ScanOutcome outcome, string reportPath, TextWriter output, TextWriter error, bool isOutputRedirected, bool isErrorRedirected = false)
     {
