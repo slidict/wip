@@ -316,18 +316,41 @@ public class VolumeLifecycleTests
     private static Dictionary<string, string> MirrorOf(string logicalName) =>
         new() { [VolumeLifecycle.MirrorLabel] = $"v1:test:volume:{logicalName}" };
 
+    /// <summary>
+    /// The mirror is not a use, but it still holds the storage: it stays in the reference list so
+    /// the removal guards refuse while it runs.
+    /// </summary>
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void RunningOwnMirrorIsNotAReferenceAndDoesNotMarkUse(bool underConfig)
+    public void RunningOwnMirrorIsNotAUseYetStillBlocksRemoval(bool underConfig)
     {
         var fake = new Fake { LabelsUnderConfig = underConfig }; var usage = new Usage();
         var name = fake.Add("scratch", false);
         fake.Containers["mirror"] = [name]; fake.ContainerLabels["mirror"] = MirrorOf("scratch");
-        var status = new VolumeLifecycle(Settings(), fake.Run, usage).Status("scratch");
-        Assert.Empty(status.References);
+        var service = new VolumeLifecycle(Settings(), fake.Run, usage);
+        var status = service.Status("scratch");
+        Assert.Equal(["mirror"], status.References);
         Assert.False(status.WasUsed);
         Assert.Empty(usage.Used);
+        Assert.Throws<WipException>(() => service.Destroy("scratch"));
+        Assert.True(fake.Volumes.ContainsKey(name));
+        Assert.DoesNotContain(fake.Calls, c => c[1] == "remove");
+    }
+
+    /// <summary>
+    /// Usage is durable per generation, so a volume attached earlier is still marked used when the
+    /// mirror runs. Reconcile must read the mirror as a reference, or it deletes what it populated.
+    /// </summary>
+    [Fact]
+    public void ReconcileDuringOwnMirrorKeepsAGenerationAlreadyMarkedUsed()
+    {
+        var fake = new Fake(); var usage = new Usage();
+        var name = fake.Add("scratch", false); usage.Used.Add(name);
+        fake.Containers["mirror"] = [name]; fake.ContainerLabels["mirror"] = MirrorOf("scratch");
+        Assert.Equal(0, new VolumeLifecycle(Settings(), fake.Run, usage).Reconcile("scratch"));
+        Assert.True(fake.Volumes.ContainsKey(name));
+        Assert.DoesNotContain(fake.Calls, c => c[1] == "remove");
     }
 
     [Fact]
