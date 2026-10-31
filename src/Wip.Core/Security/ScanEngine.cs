@@ -286,10 +286,12 @@ internal sealed class ScanEngine(
         {
             if (Stop(sandbox) is not { } failedStop) throw;
             // The scan's failure stays first and becomes the inner exception. The type is kept,
-            // because callers such as Doctor catch ConfigException apart from WipException;
-            // any other type cannot be rebuilt, so it carries the stop failure in Data.
+            // because callers such as Doctor catch ConfigException and CommandNotFoundException
+            // apart from WipException. Any other type is a defect and cannot be rebuilt, so it
+            // carries the stop failure in Data.
             var message = $"{failure.Message}; sandbox stop also failed, so the scanner may still be running: {failedStop}";
             if (failure is ConfigException) throw new ConfigException(message, failure);
+            if (failure is CommandNotFoundException) throw new CommandNotFoundException(message, failure);
             if (failure.GetType() == typeof(WipException)) throw new WipException(message, failure);
             failure.Data[StopErrorKey] = failedStop;
             throw;

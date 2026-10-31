@@ -2046,6 +2046,19 @@ public class ScanEngineTests
     }
 
     [Fact]
+    public void AStopFailureAfterAMissingCommandKeepsItsType()
+    {
+        var fake = new Fake { AfterExec = () => throw new CommandNotFoundException("wslc was not found"), StopCode = 5 };
+
+        var error = Assert.Throws<CommandNotFoundException>(() =>
+            Engine(fake).Run(new StubScanner(), "scanner", ValidPlan(), new ScanTarget("http://app.test:8080")));
+
+        Assert.StartsWith("wslc was not found", error.Message);
+        Assert.Contains("sandbox stop failed (exit 5)", error.Message);
+        Assert.Equal("wslc was not found", Assert.IsType<CommandNotFoundException>(error.InnerException).Message);
+    }
+
+    [Fact]
     public void AStopFailureAfterAnUnexpectedFailureRethrowsTheOriginal()
     {
         var fake = new Fake { AfterExec = () => throw new InvalidOperationException("backend broke"), StopCode = 5 };
