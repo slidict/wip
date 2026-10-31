@@ -19,7 +19,7 @@ internal sealed class NucleiScanner : ISecurityScanner
     private const string ErrorsPath = "/tmp/wip-nuclei-errors.jsonl";
     private const string StderrPath = "/tmp/wip-nuclei-stderr.txt";
     internal const string Completion = "{\"wip-nuclei-completed\":\"http-misconfiguration-v1\"}";
-    private const string Coverage = "Checks not performed: authenticated scanning, crawling, out-of-band callbacks, non-HTTP protocols, workflows, headless/browser and code execution; templates outside http/misconfiguration, unsigned or invalid templates, and dos/fuzz/bruteforce tags are excluded. Redirects are disabled. Requests are bounded to 10/second, concurrency 2, timeout 5 seconds, no retries; the engine bounds total runtime. Native logs and request errors below record runtime skips/failures; no findings does not prove omitted checks passed.";
+    private const string Coverage = "Checks not performed: authenticated scanning, crawling, out-of-band callbacks, non-HTTP protocols, workflows, headless/browser and code execution; templates outside http/misconfiguration, unsigned or invalid templates, and dos/fuzz/bruteforce tags are excluded. Redirects are disabled. Requests are bounded to 10/second, concurrency 2, timeout 5 seconds, no retries; the engine bounds total runtime. Native logs and request errors below record runtime skips/failures; a log over 256 KiB keeps its first 192 KiB and last 64 KiB around a [wip: truncated, N bytes dropped] line. No findings does not prove omitted checks passed.";
 
     // Alpine has sh, not Python. Only this fixed program is shell syntax: paths, coverage
     // and all nuclei arguments (including the target) are positional data. Never eval them.

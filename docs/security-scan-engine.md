@@ -112,8 +112,10 @@ of ten requests/second; the engine supplies the total deadline. The internal net
 the egress boundary. Targets must be unauthenticated HTTP(S) URLs without fragments or commas
 (the latter would turn one `-u` value into multiple targets).
 
-`/tmp/wip-nuclei-unperformed.txt` records these omissions and bounds, nuclei's unmodified
-stderr log, and the request error log. Its stdout is discarded: with `-o` nuclei writes every
+`/tmp/wip-nuclei-unperformed.txt` records these omissions and bounds, nuclei's stderr log,
+and the request error log. Each log is bounded: one over 256 KiB keeps its first 192 KiB and
+its last 64 KiB, which holds nuclei's closing `[FTL]`/`[ERR]` summary, with a
+`[wip: truncated, N bytes dropped]` line between them. Its stdout is discarded: with `-o` nuclei writes every
 finding to both, and the duplicate would pass the engine's 1 MiB collection cap on a noisy
 target, costing the whole coverage record for a scan that succeeded. Runtime failures or skipped templates are evidence
 of incomplete coverage, not passed checks. A missing sidecar remains an incomplete result
@@ -235,7 +237,8 @@ yet part of this format. Secret-shaped values in normalized
 fields are replaced with `[REDACTED]` before writing; the separate raw artifacts are unchanged.
 JSON string escaping preserves document structure even when scanner text contains controls,
 quotes or markup. The embedded coverage copy uses the same redaction as other result strings;
-`unperformed-checks.txt` remains verbatim for investigation and may contain sensitive diagnostics.
+`unperformed-checks.txt` is stored without redaction for investigation and may contain sensitive
+diagnostics. It holds what the adapter wrote, which for Nuclei includes logs cut as described above.
 
 Check `status` before consuming `findings`. An incomplete result has a reason and no findings
 array, so it cannot appear as a clean empty scan. A completed result still has coverage:

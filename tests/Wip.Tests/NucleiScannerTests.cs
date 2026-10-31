@@ -216,7 +216,8 @@ public class NucleiScannerTests
                     < diagnostics.IndexOf("[FTL] elog closing summary", StringComparison.Ordinal));
                 Assert.InRange(diagnostics.Length, 512 * 1024, ScanEngine.MaxReportCharacters - 1);
             }
-            else Assert.DoesNotContain("[wip: truncated", diagnostics);
+            // The notice names the marker with N; a real cut states a number.
+            else Assert.DoesNotMatch(@"\[wip: truncated, \d+ bytes dropped\]", diagnostics);
             if (scenario == "missing") Assert.False(File.Exists(report));
             else if (exitCode != 0) Assert.DoesNotContain(NucleiScanner.Completion, File.ReadAllText(report));
             else
