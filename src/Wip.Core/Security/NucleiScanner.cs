@@ -36,14 +36,17 @@ internal sealed class NucleiScanner : ISecurityScanner
     // The report is published before that bounding runs. Every step of it exits on failure, so
     // leaving it first would let a sidecar write error destroy the findings of a finished scan --
     // the very loss this bound exists to prevent.
-    // The coverage record is built aside and moved into place only once both logs are in it.
-    // FinishResult does not read the scanner's exit code, so a sidecar left half written would
-    // read as a complete record and the run as "completed" with a whole log silently absent.
-    // Publishing all or nothing makes that case incomplete instead, with the report intact.
+    // When a report was published, the coverage record is built aside and moved into place only
+    // once both logs are in it. FinishResult does not read the scanner's exit code, so a sidecar
+    // left half written would read as a complete record and the run as "completed" with a whole
+    // log silently absent; publishing all or nothing makes that case incomplete instead.
+    // Without a report there is nothing to protect -- the run is already report-collection-failed
+    // whatever the sidecar holds -- so the logs are written straight to it. Staging there would
+    // discard the one explanation of why nothing ran, which is the same loss from the other side.
     // A completion record makes a successful zero-match JSONL report nonempty for the shared
     // engine. It is appended only after exit 0 and an actual native report file; missing
     // templates/output must not become a fabricated successful empty scan.
-    private const string Wrapper = """set -u; report=$1; coverage=$2; native=$3; errors=$4; stderr=$5; partial=$6; notice=$7; shift 7; limit=262144; first=196608; last=65536; rm -f -- "$report" "$native" "$errors" "$stderr" "$partial" "$coverage" || exit $?; printf '%s\n' "$notice" > "$partial" || exit $?; "$@" >/dev/null 2>"$stderr"; code=$?; if [ -f "$native" ]; then if [ "$code" -eq 0 ]; then printf '\n%s\n' '""" + Completion + """' >> "$native" || exit $?; fi; mv -- "$native" "$report" || exit $?; fi; for log in "$stderr" "$errors"; do if [ -f "$log" ]; then size=$(wc -c < "$log") || exit $?; size=$((size)); if [ "$size" -gt "$limit" ]; then head -c "$first" < "$log" >> "$partial" || exit $?; printf '\n[wip: truncated, %s bytes dropped]\n' "$((size - limit))" >> "$partial" || exit $?; tail -c "$last" < "$log" >> "$partial" || exit $?; else cat < "$log" >> "$partial" || exit $?; fi; fi; done; mv -- "$partial" "$coverage" || exit $?; exit $code""";
+    private const string Wrapper = """set -u; report=$1; coverage=$2; native=$3; errors=$4; stderr=$5; partial=$6; notice=$7; shift 7; limit=262144; first=196608; last=65536; rm -f -- "$report" "$native" "$errors" "$stderr" "$partial" "$coverage" || exit $?; "$@" >/dev/null 2>"$stderr"; code=$?; if [ -f "$native" ]; then if [ "$code" -eq 0 ]; then printf '\n%s\n' '""" + Completion + """' >> "$native" || exit $?; fi; mv -- "$native" "$report" || exit $?; fi; if [ -f "$report" ]; then sink=$partial; else sink=$coverage; fi; printf '%s\n' "$notice" > "$sink" || exit $?; for log in "$stderr" "$errors"; do if [ -f "$log" ]; then size=$(wc -c < "$log") || exit $?; size=$((size)); if [ "$size" -gt "$limit" ]; then head -c "$first" < "$log" >> "$sink" || exit $?; printf '\n[wip: truncated, %s bytes dropped]\n' "$((size - limit))" >> "$sink" || exit $?; tail -c "$last" < "$log" >> "$sink" || exit $?; else cat < "$log" >> "$sink" || exit $?; fi; fi; done; [ "$sink" = "$coverage" ] || mv -- "$partial" "$coverage" || exit $?; exit $code""";
 
     public string Name => "nuclei";
 
