@@ -252,7 +252,6 @@ internal sealed class ScanEngine(
                 "The declaration changed after the container was created, so run sandbox destroy, confirm absence, then sandbox create.");
 
         ScanOutcome finished;
-        string? stopError;
         try
         {
             if (plan.Rules is { } rules)
@@ -283,16 +282,27 @@ internal sealed class ScanEngine(
                 finished = FinishResult(scanner, target, outcome, runId, startedAt, networkVerifiedInternal, outputDirectory, commit);
             }
         }
-        finally
+        catch (Exception failure)
         {
-            // The container stop includes the tool's children. Removal remains sandbox
-            // destroy's responsibility, so failed runs leave the container inspectable.
-            stopError = Stop(sandbox);
+            if (Stop(sandbox) is not { } failedStop) throw;
+            // The scan's failure stays first and becomes the inner exception. The type is kept,
+            // because callers such as Doctor catch ConfigException apart from WipException;
+            // any other type cannot be rebuilt, so it carries the stop failure in Data.
+            var message = $"{failure.Message}; sandbox stop also failed, so the scanner may still be running: {failedStop}";
+            if (failure is ConfigException) throw new ConfigException(message, failure);
+            if (failure.GetType() == typeof(WipException)) throw new WipException(message, failure);
+            failure.Data[StopErrorKey] = failedStop;
+            throw;
         }
-        // Beside the outcome, not in result.json: that is published before teardown, while
-        // the sandbox is still available, and describes the scan rather than its cleanup.
-        return finished with { StopError = stopError };
+        // The container stop includes the tool's children. Removal remains sandbox destroy's
+        // responsibility, so failed runs leave the container inspectable. The stop failure goes
+        // beside the outcome, not in result.json: that is published before teardown, while the
+        // sandbox is still available, and describes the scan rather than its cleanup.
+        return finished with { StopError = Stop(sandbox) };
     }
+
+    /// <summary>The Data key for a stop failure on an exception whose type cannot be rebuilt.</summary>
+    internal const string StopErrorKey = "wip.sandbox-stop-error";
 
     private RulesFetcher RequireRulesFetcher() => stagedRules
         ?? throw new WipException("Pinned rules require a host staging cache; no scan was started");
@@ -528,27 +538,40 @@ internal sealed class ScanEngine(
 
     /// <summary>
     /// Whether the path exists, or null when the probe could not tell. `cat` exits 1 for an
-    /// absent file and for an unreadable one alike, so only this separates the two.
+    /// absent file and an unreadable one alike, and so does `test -e` when a stat fails for a
+    /// reason other than absence, such as a parent the scanner cannot search. Its exit 1 is
+    /// taken as absence only once the parent is confirmed searchable, which rules that out.
     /// </summary>
     private bool? Exists(string sandbox, string path, TimeSpan timeout)
     {
         try
         {
-            var probed = sandboxes.CaptureReport(sandbox, ["test", "-e", path], timeout);
-            return probed.TimedOut ? null : probed.Code switch { 0 => true, 1 => false, _ => null };
+            var probed = Probe(["test", "-e", path]);
+            if (probed != 1) return probed switch { 0 => true, _ => null };
+            // The path is validated as absolute and dot-free, so its parent is a plain prefix.
+            var trimmed = path.TrimEnd('/');
+            var separator = trimmed.LastIndexOf('/');
+            var parent = separator <= 0 ? "/" : trimmed[..separator];
+            return Probe(["test", "-x", parent]) == 0 ? false : null;
         }
         catch (WipException)
         {
             return null;
+        }
+
+        int? Probe(IReadOnlyList<string> argv)
+        {
+            var result = sandboxes.CaptureReport(sandbox, argv, timeout);
+            return result.TimedOut ? null : result.Code;
         }
     }
 
     /// <returns>Null when the container is confirmed stopped, otherwise why it may not be.</returns>
     private string? Stop(string sandbox)
     {
-        // A cleanup failure must not replace the scan's own outcome, so it is returned to be
-        // reported beside it. Rethrowing from a finally would discard whichever result or
-        // exception brought us here, so every exception is caught, not only WipException.
+        // A cleanup failure must not replace the scan's own outcome or failure, so it is
+        // returned to be reported beside it. Every exception is caught, not only WipException,
+        // since one escaping here would discard whichever result or exception brought us here.
         try
         {
             var code = sandboxes.Stop(sandbox);

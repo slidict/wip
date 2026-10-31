@@ -117,6 +117,7 @@ public class ScanEngineTests
         public int? ReportProbeCode;
         public bool ReportProbeTimedOut;
         public bool ReportProbeThrows;
+        public string? UnsearchableParent;
         public Exception? StopFailure;
         public int StopCode;
         public Action? BeforeStop;
@@ -278,6 +279,8 @@ public class ScanEngineTests
                 if (ReportProbeThrows) throw new WipException("existence probe failed");
                 return new(ReportProbeCode ?? (ReportMissing ? 1 : 0), "") { TimedOut = ReportProbeTimedOut };
             }
+            if (argv is ["exec", _, "test", "-x", var parentPath])
+                return new(parentPath == UnsearchableParent ? 1 : 0, "");
             if (argv[0] == "exec")
             {
                 if (ExecThrows) throw new WipException("scanner failed to start");
@@ -1523,6 +1526,7 @@ public class ScanEngineTests
         Assert.Null(outcome.ReportError);
         Assert.Equal("report-missing", outcome.Result!.IncompleteReason);
         Assert.Contains(fake.Calls, c => c is ["exec", _, "test", "-e", "/out/report.json"]);
+        Assert.Contains(fake.Calls, c => c is ["exec", _, "test", "-x", "/out"]);
 
         using var output = new StringWriter();
         using var error = new StringWriter();
@@ -1538,6 +1542,18 @@ public class ScanEngineTests
         var outcome = Engine(fake).Run(new StubScanner(), "scanner", ValidPlan(), new ScanTarget("http://app.test:8080"));
 
         Assert.Contains("exit 1", outcome.ReportError);
+        Assert.Equal("report-collection-failed", outcome.Result!.IncompleteReason);
+    }
+
+    [Fact]
+    public void AReportUnderAnUnsearchableParentIsNotTakenAsMissing()
+    {
+        // test -e exits 1 here too, since the stat fails with EACCES rather than ENOENT.
+        var fake = new Fake { ReportMissing = true, UnsearchableParent = "/out" };
+
+        var outcome = Engine(fake).Run(new StubScanner(), "scanner", ValidPlan(), new ScanTarget("http://app.test:8080"));
+
+        Assert.NotNull(outcome.ReportError);
         Assert.Equal("report-collection-failed", outcome.Result!.IncompleteReason);
     }
 
@@ -1997,6 +2013,51 @@ public class ScanEngineTests
     }
 
     [Fact]
+    public void AStopFailureAfterAScanFailureIsAddedToItWithoutReplacingIt()
+    {
+        var fake = new Fake { ExecThrows = true, StopCode = 5 };
+
+        var error = Assert.Throws<WipException>(() =>
+            Engine(fake).Run(new StubScanner(), "scanner", ValidPlan(), new ScanTarget("http://app.test:8080")));
+
+        Assert.StartsWith("scanner failed to start", error.Message);
+        Assert.Contains("sandbox stop also failed", error.Message);
+        Assert.Contains("sandbox stop failed (exit 5)", error.Message);
+        Assert.Equal("scanner failed to start", error.InnerException?.Message);
+        Assert.Single(fake.Calls, c => c[0] == "stop");
+    }
+
+    [Fact]
+    public void AStopFailureAfterAConfigFailureKeepsItsType()
+    {
+        using var cache = new RulesCacheFixture();
+        var fake = new Fake { StopFailure = new WipException("stop did not confirm") };
+        fake.Mounts.Add(new SandboxMount("bind", "host-project", "/work"));
+        var rules = cache.Rules with { ContainerPath = "/work/rules" };
+        cache.Fetcher.Fetch(rules);
+        var plan = ValidPlan() with { Rules = rules };
+
+        var error = Assert.Throws<ConfigException>(() => Engine(fake, rulesFetcher: cache.Fetcher)
+            .Run(new StubScanner(plan), "scanner", plan, new ScanTarget("http://app.test")));
+
+        Assert.StartsWith("Pinned rules path", error.Message);
+        Assert.Contains("stop did not confirm", error.Message);
+        Assert.IsType<ConfigException>(error.InnerException);
+    }
+
+    [Fact]
+    public void AStopFailureAfterAnUnexpectedFailureRethrowsTheOriginal()
+    {
+        var fake = new Fake { AfterExec = () => throw new InvalidOperationException("backend broke"), StopCode = 5 };
+
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            Engine(fake).Run(new StubScanner(), "scanner", ValidPlan(), new ScanTarget("http://app.test:8080")));
+
+        Assert.Equal("backend broke", error.Message);
+        Assert.Equal("sandbox stop failed (exit 5)", error.Data[ScanEngine.StopErrorKey]);
+    }
+
+    [Fact]
     public void TheSandboxIsStoppedWhenTheScanItselfThrows()
     {
         var fake = new Fake { ExecThrows = true };
@@ -2004,7 +2065,8 @@ public class ScanEngineTests
         var error = Assert.Throws<WipException>(() =>
             Engine(fake).Run(new StubScanner(), "scanner", ValidPlan(), new ScanTarget("http://app.test:8080")));
 
-        Assert.Contains("scanner failed to start", error.Message);
+        Assert.Equal("scanner failed to start", error.Message);
+        Assert.Null(error.InnerException);
         Assert.True(Ran(fake, "exec"));
         Assert.True(Ran(fake, "stop"));
     }
