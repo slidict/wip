@@ -43,8 +43,18 @@ internal sealed partial class CliContext
         var outcome = engine.Run(scanner, sandbox, plan, scanTarget, TimeSpan.FromSeconds(timeoutSeconds),
             outputDirectory, commit);
 
-        return WriteScanOutcome(outcome, plan.ReportPath, Console.Out, Console.Error, Console.IsOutputRedirected, Console.IsErrorRedirected);
+        var output = ReportOutput(Console.IsOutputRedirected, Console.OpenStandardOutput, Console.Out);
+        return WriteScanOutcome(outcome, plan.ReportPath, output, Console.Error, Console.IsOutputRedirected, Console.IsErrorRedirected);
     }
+
+    /// <summary>
+    /// UTF-8 without a BOM when stdout is redirected, so the report reaches the file as the
+    /// scanner wrote it; Console.Out would re-encode it with the console code page. A terminal
+    /// keeps Console.Out, which is what renders there. Console.OutputEncoding is left alone:
+    /// it would change every later write, and can fail on Windows when stdout is a pipe.
+    /// </summary>
+    internal static TextWriter ReportOutput(bool isOutputRedirected, Func<Stream> openStandardOutput, TextWriter console) =>
+        isOutputRedirected ? new StreamWriter(openStandardOutput(), new UTF8Encoding(false)) { AutoFlush = true } : console;
 
     internal static int WriteScanOutcome(ScanOutcome outcome, string reportPath, TextWriter output, TextWriter error, bool isOutputRedirected, bool isErrorRedirected = false)
     {
@@ -53,7 +63,9 @@ internal sealed partial class CliContext
         error.WriteLine(
             $"{outcome.Tool}\t{outcome.Sandbox}\t{outcome.Network}\t{outcome.Image}\trules={outcome.RulesVersion}\texit={outcome.ExitCode}\tstatus={(outcome.TimedOut ? "timeout" : "exited")}");
         if (outcome.Report is { } report) WriteSecurityReport(output, report, isOutputRedirected);
-        else if (outcome.TimedOut) error.WriteLine($"{outcome.Tool}: timed out; requested sandbox stop without collecting a partial report");
+        else if (outcome.TimedOut) error.WriteLine(outcome.StopError is null
+            ? $"{outcome.Tool}: timed out; the sandbox was stopped without collecting a partial report"
+            : $"{outcome.Tool}: timed out without collecting a partial report; the sandbox did not confirm a stop, so the scanner may still be running");
         else if (outcome.ReportError is { } reason) error.WriteLine($"{outcome.Tool}: {reason}");
         else error.WriteLine($"{outcome.Tool}: wrote no report at {reportPath}");
         // An empty sidecar is reported, not printed as a bare header. A header with nothing
@@ -89,6 +101,14 @@ internal sealed partial class CliContext
             WriteSecurityReport(error, persistenceError, isErrorRedirected);
             error.WriteLine();
         }
+        // A line of its own rather than a header field, so the header's format stays as
+        // consumers parse it. The message can carry backend text, so it is escaped too.
+        if (outcome.StopError is { } stopError)
+        {
+            error.Write($"{outcome.Tool}: ");
+            WriteSecurityReport(error, stopError, isErrorRedirected);
+            error.WriteLine("; check sandbox status");
+        }
         return outcome.ProcessExitCode;
     }
 
@@ -115,12 +135,6 @@ internal sealed partial class CliContext
             else rendered.Append(character);
         }
         output.Write(rendered.ToString());
-    }
-
-    internal static (int Code, string Output) CaptureProbe(Func<TextWriter, TextWriter, int> run, bool captureStderr = false)
-    {
-        var result = CaptureProbeWithOutcome((output, error) => (run(output, error), false), captureStderr);
-        return (result.Code, result.Output);
     }
 
     // Only reports have a cap. Ordinary metadata and health probes retain their existing

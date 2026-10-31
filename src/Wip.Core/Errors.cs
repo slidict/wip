@@ -30,4 +30,8 @@ public sealed class CommandNotFoundException : WipException
     public CommandNotFoundException(string message) : base(message)
     {
     }
+
+    public CommandNotFoundException(string message, Exception innerException) : base(message, innerException)
+    {
+    }
 }

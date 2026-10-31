@@ -156,6 +156,29 @@ public sealed class SecurityOutputTests
     }
 
     [Fact]
+    public void ARedirectedReportReachesStdoutAsUtf8WithoutABom()
+    {
+        const string report = "{\"title\":\"あéĀ\"}";
+        using var stdout = new MemoryStream();
+        var output = CliContext.ReportOutput(isOutputRedirected: true, () => stdout, TextWriter.Null);
+
+        var encoding = Assert.IsType<UTF8Encoding>(output.Encoding);
+        Assert.Empty(encoding.GetPreamble());
+        var outcome = new ScanOutcome("zap", "scanner", "image", "rules", "isolated", 0, report);
+        CliContext.WriteScanOutcome(outcome, "/report.json", output, TextWriter.Null, isOutputRedirected: true);
+
+        Assert.Equal(Encoding.UTF8.GetBytes(report), stdout.ToArray());
+    }
+
+    [Fact]
+    public void ATerminalReportKeepsTheConsoleWriter()
+    {
+        using var console = new StringWriter();
+        Assert.Same(console, CliContext.ReportOutput(isOutputRedirected: false,
+            () => throw new InvalidOperationException("stdout must not be reopened for a terminal"), console));
+    }
+
+    [Fact]
     public void TerminalReportsUseOneWriteInsteadOfOneWritePerCharacter()
     {
         var output = new CountingWriter();
@@ -306,10 +329,10 @@ public sealed class SecurityOutputTests
     public void GeneralProbePreservesLargeOutputAndTheExitCode(bool captureStderr)
     {
         var text = new string('x', 1_048_577);
-        var result = CliContext.CaptureProbe((output, error) =>
+        var result = CliContext.CaptureProbeWithOutcome((output, error) =>
         {
             (captureStderr ? error : output).Write(text);
-            return 17;
+            return (17, false);
         }, captureStderr);
         Assert.Equal(17, result.Code);
         Assert.Equal(text, result.Output);

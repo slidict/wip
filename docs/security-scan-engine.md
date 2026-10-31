@@ -210,6 +210,17 @@ and still returns the captured report, coverage and scan status. The primary sca
 preserved; a persistence error does not invent a new incomplete-scan reason or change the
 scanner's completed status. Verify that `result.json` was published before consuming artifacts.
 
+The sandbox is stopped after persistence. If the stop is not confirmed, the CLI writes
+`<tool>: sandbox stop failed (exit <code>); check sandbox status`, or
+`<tool>: sandbox stop failed: <reason>; check sandbox status`, to stderr. It does not change the
+exit code. A timed-out run says on stderr whether the stop was confirmed:
+`<tool>: timed out; the sandbox was stopped without collecting a partial report`, or
+`<tool>: timed out without collecting a partial report; the sandbox did not confirm a stop, so the scanner may still be running`.
+When the scan itself fails and the stop also fails, the stop failure is appended to the
+scan's error message instead -- for the error types wip raises itself, which is every handled
+failure. An exception of any other type means a defect; it is rethrown unchanged, carrying the
+stop failure in its `Data` under `wip.sandbox-stop-error`, which nothing reads today (#307).
+
 The JSON contract is versioned and written through `Utf8JsonWriter`:
 
 | Field | Consumer contract |
@@ -219,7 +230,7 @@ The JSON contract is versioned and written through `Utf8JsonWriter`:
 | `status` | Exactly `completed` or `incomplete` |
 | `scannerExitCode` | The original scanner status, independent of result completeness |
 | `findings` | Present only for `completed`; an empty array means no findings were reported within the recorded coverage |
-| `reason` | Present only for `incomplete`: `timeout`, `report-collection-failed`, `report-empty`, `report-unparseable` or `unperformed-checks-lost` |
+| `reason` | Present only for `incomplete`: `timeout`, `report-missing` (the scanner wrote no report), `report-collection-failed` (the read failed, and the report's absence could not be established), `report-empty`, `report-unparseable` or `unperformed-checks-lost` |
 | `coverage` | Redacted `unperformedChecks`, or `missingReason` explaining why it is unavailable |
 
 Each finding has optional `ruleId`, `name`, `severity`, `confidence` and `evidence`, plus

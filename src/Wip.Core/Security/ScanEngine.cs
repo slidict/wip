@@ -17,6 +17,7 @@ namespace Wip.Security;
 /// <param name="UnperformedChecksError">Why requested diagnostics could not be collected.</param>
 /// <param name="PersistenceError">Why artifacts could not be saved, without replacing the scan result.</param>
 /// <param name="ResultDirectory">The published run directory, when artifacts were saved.</param>
+/// <param name="StopError">Why the sandbox may still be running after the scan, when its stop failed.</param>
 /// <remarks>
 /// A tool's non-zero status is not an error here: scanners use exit codes to report findings.
 /// Distinguishing "ran and found things" from "did not run" belongs to the result format that
@@ -36,7 +37,8 @@ internal sealed record ScanOutcome(
     string? UnperformedChecksError = null,
     ScanResult? Result = null,
     string? PersistenceError = null,
-    string? ResultDirectory = null)
+    string? ResultDirectory = null,
+    string? StopError = null)
 {
     /// <remarks>
     /// An incomplete result outranks a failed save when the document exists, since its reason
@@ -249,6 +251,7 @@ internal sealed class ScanEngine(
                 $"Sandbox {sandbox}: is running image '{running}', but the tool pins '{plan.Image.Reference}'. " +
                 "The declaration changed after the container was created, so run sandbox destroy, confirm absence, then sandbox create.");
 
+        ScanOutcome finished;
         try
         {
             if (plan.Rules is { } rules)
@@ -266,22 +269,42 @@ internal sealed class ScanEngine(
                 // incomplete metadata before the finally block stops the container.
                 var timedOut = new ScanOutcome(scanner.Name, sandbox, plan.Image.Reference, plan.RulesVersion, network, code, null, TimedOut: true,
                     UnperformedChecksError: "scan timed out before diagnostics could be collected");
-                return FinishResult(scanner, target, timedOut, runId, startedAt, networkVerifiedInternal, outputDirectory, commit);
+                finished = FinishResult(scanner, target, timedOut, runId, startedAt, networkVerifiedInternal, outputDirectory, commit);
             }
-            var collectionDeadline = deadline < CollectionTimeout ? deadline : CollectionTimeout;
-            var (report, reportError) = ReadReport(sandbox, plan.ReportPath, collectionDeadline);
-            var (unperformed, diagnosticsError) = ReadReport(sandbox, plan.UnperformedChecksPath, collectionDeadline);
-            var outcome = new ScanOutcome(scanner.Name, sandbox, plan.Image.Reference, plan.RulesVersion, network, code, report,
-                ReportError: reportError, UnperformedChecks: unperformed, UnperformedChecksError: diagnosticsError);
-            return FinishResult(scanner, target, outcome, runId, startedAt, networkVerifiedInternal, outputDirectory, commit);
+            else
+            {
+                var collectionDeadline = deadline < CollectionTimeout ? deadline : CollectionTimeout;
+                var (report, reportError) = ReadReport(sandbox, plan.ReportPath, collectionDeadline);
+                var (unperformed, diagnosticsError) = ReadReport(sandbox, plan.UnperformedChecksPath, collectionDeadline);
+                if (unperformed is null) diagnosticsError ??= "the scanner wrote no unperformed-check record";
+                var outcome = new ScanOutcome(scanner.Name, sandbox, plan.Image.Reference, plan.RulesVersion, network, code, report,
+                    ReportError: reportError, UnperformedChecks: unperformed, UnperformedChecksError: diagnosticsError);
+                finished = FinishResult(scanner, target, outcome, runId, startedAt, networkVerifiedInternal, outputDirectory, commit);
+            }
         }
-        finally
+        catch (Exception failure)
         {
-            // The container stop includes the tool's children. Removal remains sandbox
-            // destroy's responsibility, so failed runs leave the container inspectable.
-            Stop(sandbox);
+            if (Stop(sandbox) is not { } failedStop) throw;
+            // The scan's failure stays first and becomes the inner exception. The type is kept,
+            // because callers such as Doctor catch ConfigException and CommandNotFoundException
+            // apart from WipException. Any other type is a defect and cannot be rebuilt, so it
+            // carries the stop failure in Data.
+            var message = $"{failure.Message}; sandbox stop also failed, so the scanner may still be running: {failedStop}";
+            if (failure is ConfigException) throw new ConfigException(message, failure);
+            if (failure is CommandNotFoundException) throw new CommandNotFoundException(message, failure);
+            if (failure.GetType() == typeof(WipException)) throw new WipException(message, failure);
+            failure.Data[StopErrorKey] = failedStop;
+            throw;
         }
+        // The container stop includes the tool's children. Removal remains sandbox destroy's
+        // responsibility, so failed runs leave the container inspectable. The stop failure goes
+        // beside the outcome, not in result.json: that is published before teardown, while the
+        // sandbox is still available, and describes the scan rather than its cleanup.
+        return finished with { StopError = Stop(sandbox) };
     }
+
+    /// <summary>The Data key for a stop failure on an exception whose type cannot be rebuilt.</summary>
+    internal const string StopErrorKey = "wip.sandbox-stop-error";
 
     private RulesFetcher RequireRulesFetcher() => stagedRules
         ?? throw new WipException("Pinned rules require a host staging cache; no scan was started");
@@ -420,7 +443,8 @@ internal sealed class ScanEngine(
         string runId, DateTimeOffset startedAt, bool networkVerifiedInternal, string? outputDirectory, string? commit)
     {
         string? reason = outcome.TimedOut ? "timeout"
-            : outcome.ReportError is not null || outcome.Report is null ? "report-collection-failed"
+            : outcome.ReportError is not null ? "report-collection-failed"
+            : outcome.Report is null ? "report-missing"
             : string.IsNullOrWhiteSpace(outcome.Report) ? "report-empty" : null;
         IReadOnlyList<ScanFinding>? findings = null;
         if (reason is null)
@@ -489,6 +513,7 @@ internal sealed class ScanEngine(
     /// sandbox rather than trusted as text: the content is a tool's output, which is treated
     /// as untrusted input downstream, and nothing here interprets it.
     /// </summary>
+    /// <returns>Both null when the file is confirmed absent.</returns>
     private (string? Report, string? Error) ReadReport(string sandbox, string reportPath, TimeSpan timeout)
     {
         // `cat` with the path as its own argument, never a shell line: a report path is data,
@@ -501,7 +526,9 @@ internal sealed class ScanEngine(
             if (captured.OutputLimitExceeded || captured.Output.Length > MaxReportCharacters)
                 return (null, "report exceeded the 1 Mi-character retention limit; no partial report was returned");
             if (captured.Code != 0)
-                return (null, $"report collection failed (exit {captured.Code})");
+                return Exists(sandbox, reportPath, timeout) is false
+                    ? (null, null)
+                    : (null, $"report collection failed (exit {captured.Code})");
             return (captured.Output, null);
         }
         catch (WipException error)
@@ -511,13 +538,50 @@ internal sealed class ScanEngine(
         }
     }
 
-    private void Stop(string sandbox)
+    /// <summary>
+    /// Whether the path exists, or null when the probe could not tell. `cat` exits 1 for an
+    /// absent file and an unreadable one alike, and so does `test -e` when a stat fails for a
+    /// reason other than absence, such as a parent the scanner cannot search. Its exit 1 is
+    /// taken as absence only once the parent is confirmed searchable, which rules that out.
+    /// </summary>
+    private bool? Exists(string sandbox, string path, TimeSpan timeout)
     {
-        // A cleanup failure must not replace the scan's own outcome, so it is swallowed here
-        // and left to `sandbox status` to show. Rethrowing from a finally would discard
-        // whichever result or exception brought us here.
-        // ConfigException derives from WipException, so the one clause covers both.
-        try { sandboxes.Stop(sandbox); }
-        catch (WipException) { }
+        try
+        {
+            var probed = Probe(["test", "-e", path]);
+            if (probed != 1) return probed switch { 0 => true, _ => null };
+            // The path is validated as absolute and dot-free, so its parent is a plain prefix.
+            var trimmed = path.TrimEnd('/');
+            var separator = trimmed.LastIndexOf('/');
+            var parent = separator <= 0 ? "/" : trimmed[..separator];
+            return Probe(["test", "-x", parent]) == 0 ? false : null;
+        }
+        catch (WipException)
+        {
+            return null;
+        }
+
+        int? Probe(IReadOnlyList<string> argv)
+        {
+            var result = sandboxes.CaptureReport(sandbox, argv, timeout);
+            return result.TimedOut ? null : result.Code;
+        }
+    }
+
+    /// <returns>Null when the container is confirmed stopped, otherwise why it may not be.</returns>
+    private string? Stop(string sandbox)
+    {
+        // A cleanup failure must not replace the scan's own outcome or failure, so it is
+        // returned to be reported beside it. Every exception is caught, not only WipException,
+        // since one escaping here would discard whichever result or exception brought us here.
+        try
+        {
+            var code = sandboxes.Stop(sandbox);
+            return code == 0 ? null : $"sandbox stop failed (exit {code})";
+        }
+        catch (Exception error)
+        {
+            return $"sandbox stop failed: {error.Message}";
+        }
     }
 }

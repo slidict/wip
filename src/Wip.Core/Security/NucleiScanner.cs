@@ -40,7 +40,7 @@ internal sealed class NucleiScanner : ISecurityScanner
     // once both logs are in it. FinishResult does not read the scanner's exit code, so a sidecar
     // left half written would read as a complete record and the run as "completed" with a whole
     // log silently absent; publishing all or nothing makes that case incomplete instead.
-    // Without a report there is nothing to protect -- the run is already report-collection-failed
+    // Without a report there is nothing to protect -- the run is already report-missing
     // whatever the sidecar holds -- so the logs are written straight to it. Staging there would
     // discard the one explanation of why nothing ran, which is the same loss from the other side.
     // A completion record makes a successful zero-match JSONL report nonempty for the shared

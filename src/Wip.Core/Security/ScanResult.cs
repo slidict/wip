@@ -29,7 +29,7 @@ internal static class ScanResultWriter
 {
     internal const int Version = 1;
     private static readonly string[] IncompleteReasons =
-        ["timeout", "report-collection-failed", "report-empty", "report-unparseable", "unperformed-checks-lost"];
+        ["timeout", "report-missing", "report-collection-failed", "report-empty", "report-unparseable", "unperformed-checks-lost"];
 
     internal static void Validate(ScanResult result)
     {

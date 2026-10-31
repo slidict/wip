@@ -70,6 +70,7 @@ public sealed class ScanResultStoreTests : IDisposable
 
     [Theory]
     [InlineData("timeout")]
+    [InlineData("report-missing")]
     [InlineData("report-collection-failed")]
     [InlineData("report-empty")]
     [InlineData("report-unparseable")]
