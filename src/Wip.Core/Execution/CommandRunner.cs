@@ -104,6 +104,12 @@ public sealed class CommandRunner
         return interactive ? (RunInherited(startInfo), false) : RunCaptured(startInfo, timeout);
     }
 
+    // UTF-8 for every captured run, not only scan reports: the default is the console code
+    // page, which none of these children write in. The captured callers are wslc itself
+    // (doctor, up, ps, volume sync, the JSON probes, the scan and its report collection) and
+    // the processes it runs inside containers; the compose command, a wrapper relaying
+    // wslc's output; and host git in RulesFetcher, which Git for Windows writes as UTF-8 and
+    // whose parsed output is an ASCII commit hash.
     internal static void ConfigureCapturedStreams(ProcessStartInfo startInfo)
     {
         startInfo.RedirectStandardOutput = true;
