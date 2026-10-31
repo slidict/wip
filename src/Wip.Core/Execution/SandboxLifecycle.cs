@@ -397,24 +397,6 @@ public sealed class SandboxLifecycle(
         return backend(["exec", .. options, RunningId(name), .. argv], timeout, SandboxConsoleMode.Stream);
     }
 
-    /// <summary>
-    /// Runs the same argv as <see cref="Exec"/> but keeps the child's output instead of
-    /// streaming it, for a caller that has to read what the command printed -- collecting a
-    /// scanner's report, say -- rather than show it.
-    /// </summary>
-    /// <remarks>
-    /// The status is returned alongside the output rather than thrown on, because a non-zero
-    /// exit is an answer here: a report that is not there is a fact about the run, not a
-    /// failure of the read.
-    /// </remarks>
-    public SandboxCommandResult Capture(string name, IReadOnlyList<string> argv, TimeSpan timeout)
-    {
-        ValidateArgv(argv);
-        if (timeout <= TimeSpan.Zero || timeout.TotalMilliseconds > int.MaxValue)
-            throw new ConfigException("sandbox capture timeout must be positive and at most 2147483 seconds");
-        return backend(["exec", RunningId(name), .. argv], timeout, SandboxConsoleMode.Capture);
-    }
-
     /// <summary>Collect a scan report without limiting ordinary probe output.</summary>
     internal SandboxCommandResult CaptureReport(string name, IReadOnlyList<string> argv, TimeSpan timeout)
     {
@@ -513,7 +495,7 @@ public sealed class SandboxLifecycle(
     /// </summary>
     /// <remarks>
     /// The network check lives here because this is the guard <see cref="Exec"/>,
-    /// <see cref="Capture"/>, <see cref="ExecArguments"/>, <see cref="ExecInteractive"/> and
+    /// <see cref="CaptureReport"/>, <see cref="ExecArguments"/>, <see cref="ExecInteractive"/> and
     /// <see cref="Attach"/> all pass through. Create refuses a container that is not attached
     /// to exactly its declared network, but until this, nothing else did: a container made
     /// before `network:` was added to wip.yml kept running on whatever it was given, and an

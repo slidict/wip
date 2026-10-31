@@ -306,10 +306,10 @@ public sealed class SecurityOutputTests
     public void GeneralProbePreservesLargeOutputAndTheExitCode(bool captureStderr)
     {
         var text = new string('x', 1_048_577);
-        var result = CliContext.CaptureProbe((output, error) =>
+        var result = CliContext.CaptureProbeWithOutcome((output, error) =>
         {
             (captureStderr ? error : output).Write(text);
-            return 17;
+            return (17, false);
         }, captureStderr);
         Assert.Equal(17, result.Code);
         Assert.Equal(text, result.Output);

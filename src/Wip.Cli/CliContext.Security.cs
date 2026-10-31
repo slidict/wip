@@ -117,12 +117,6 @@ internal sealed partial class CliContext
         output.Write(rendered.ToString());
     }
 
-    internal static (int Code, string Output) CaptureProbe(Func<TextWriter, TextWriter, int> run, bool captureStderr = false)
-    {
-        var result = CaptureProbeWithOutcome((output, error) => (run(output, error), false), captureStderr);
-        return (result.Code, result.Output);
-    }
-
     // Only reports have a cap. Ordinary metadata and health probes retain their existing
     // full output. Keep draining after overflow, preserving the exit code and timeout flag.
     internal static SandboxCommandResult CaptureProbeWithOutcome(
