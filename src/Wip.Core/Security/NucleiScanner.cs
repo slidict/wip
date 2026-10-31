@@ -9,6 +9,9 @@ internal sealed class NucleiScanner : ISecurityScanner
     internal const string TemplatesCommit = "2603fc1f23f2ef219ea4834128a163113c6b5168"; // nuclei-templates v10.3.2
     internal const string RulesPath = "/opt/wip-nuclei-templates";
     private const string RulesSubpath = "http/misconfiguration";
+    // Templates in RulesSubpath read wordlists from helpers/ (gitlab-user-enum, gitlab-api-user-enum);
+    // without it they fail to load and the loss shows only as an -elog line.
+    private static readonly string[] StagedSubpaths = [RulesSubpath, "helpers"];
     private const string Profile = "http-misconfiguration-v1";
     private const string ReportPath = "/tmp/wip-nuclei-report.jsonl";
     private const string UnperformedPath = "/tmp/wip-nuclei-unperformed.txt";
@@ -53,7 +56,7 @@ internal sealed class NucleiScanner : ISecurityScanner
              "-etags", "dos,fuzz,bruteforce", "-rl", "10", "-c", "2", "-timeout", "5", "-retries", "0",
              "-nc", "-jsonl", "-omit-raw", "-omit-template", "-o", NativePath, "-elog", ErrorsPath],
             ReportPath, ImageReference + "/" + Profile, UnperformedPath,
-            new PinnedRules("https://github.com/projectdiscovery/nuclei-templates.git", TemplatesCommit, RulesPath, RulesSubpath));
+            new PinnedRules("https://github.com/projectdiscovery/nuclei-templates.git", TemplatesCommit, RulesPath, StagedSubpaths));
     }
 
     public IReadOnlyList<ScanFinding> ConvertReport(string report)

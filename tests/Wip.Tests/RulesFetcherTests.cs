@@ -467,26 +467,55 @@ public sealed class RulesFetcherTests : IDisposable
     }
 
     [Fact]
-    public void ASubpathPublishesOnlyThatSubtreeAtItsOriginalPosition()
+    public void SubpathsPublishOnlyThoseSubtreesAtTheirOriginalPositions()
     {
-        var rules = Rules with { Subpath = "http/misconfiguration" };
+        var rules = Rules with { Subpaths = ["http/misconfiguration", "helpers"] };
         var fake = new FakeGit();
         var fetcher = new RulesFetcher(root, fake.Run);
 
         var staged = fetcher.Fetch(rules);
 
+        // One checkout takes every pathspec, in canonical order.
         var checkout = Assert.Single(fake.Commands, command => command.Contains("checkout"));
-        Assert.Equal(new[] { Commit, "--", "http/misconfiguration" }, checkout.TakeLast(3));
+        Assert.Equal(new[] { Commit, "--", "helpers", "http/misconfiguration" }, checkout.TakeLast(4));
         Assert.All(fake.Environments, environment => Assert.Equal("1", environment["GIT_LITERAL_PATHSPECS"]));
-        Assert.Equal(new[] { "http/misconfiguration/rule.yaml" },
+        Assert.Equal(new[] { "helpers/rule.yaml", "http/misconfiguration/rule.yaml" },
             Directory.EnumerateFiles(staged, "*", SearchOption.AllDirectories)
-                .Select(file => Path.GetRelativePath(staged, file).Replace(Path.DirectorySeparatorChar, '/')));
-        Assert.Equal(1, fetcher.RequireStagedTree(rules).FileCount);
+                .Select(file => Path.GetRelativePath(staged, file).Replace(Path.DirectorySeparatorChar, '/'))
+                .Order(StringComparer.Ordinal));
+        Assert.Equal(2, fetcher.RequireStagedTree(rules).FileCount);
         using var marker = JsonDocument.Parse(File.ReadAllText(Path.Combine(Path.GetDirectoryName(staged)!, "verified.json")));
-        Assert.Equal("http/misconfiguration", marker.RootElement.GetProperty("subpath").GetString());
-        // A subtree entry must not stand in for the whole tree of the same commit.
+        Assert.Equal(new[] { "helpers", "http/misconfiguration" },
+            marker.RootElement.GetProperty("subpaths").EnumerateArray().Select(value => value.GetString()));
+        // The same set in another order is the same pin and reuses the entry without git.
+        var reordered = Rules with { Subpaths = ["helpers", "http/misconfiguration"] };
+        Assert.Equal(rules, reordered);
+        Assert.Equal(staged, new RulesFetcher(root, (_, _, _) => throw new InvalidOperationException("must not fetch")).Fetch(reordered));
+        // Neither a whole-tree pin nor another set may reuse this entry.
         Assert.NotEqual(fetcher.StagingPath(Rules), staged);
+        Assert.NotEqual(fetcher.StagingPath(Rules with { Subpaths = ["http/misconfiguration"] }), staged);
         Assert.Throws<WipException>(() => fetcher.RequireStaged(Rules));
+        Assert.Throws<WipException>(() => fetcher.RequireStaged(Rules with { Subpaths = ["http/misconfiguration"] }));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("[\"http/misconfiguration\"]")]
+    [InlineData("[\"http/misconfiguration\",\"helpers\"]")]
+    [InlineData("\"helpers\"")]
+    public void AMarkerRecordingAnotherSubpathSetIsRefusedOnReuse(string? recorded)
+    {
+        var rules = Rules with { Subpaths = ["http/misconfiguration", "helpers"] };
+        var staged = new RulesFetcher(root, new FakeGit().Run).Fetch(rules);
+        var markerPath = Path.Combine(Path.GetDirectoryName(staged)!, "verified.json");
+        var marker = (System.Text.Json.Nodes.JsonObject)System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(markerPath))!;
+        marker.Remove("subpaths");
+        if (recorded is not null) marker["subpaths"] = System.Text.Json.Nodes.JsonNode.Parse(recorded);
+        File.WriteAllText(markerPath, marker.ToJsonString());
+        var noGit = new RulesFetcher(root, (_, _, _) => throw new InvalidOperationException("must not fetch"));
+
+        var error = Assert.Throws<WipException>(() => noGit.RequireStaged(rules));
+        Assert.Contains("prepare again", error.Message);
     }
 
     [Theory]
@@ -502,11 +531,26 @@ public sealed class RulesFetcherTests : IDisposable
     [InlineData("http\nmisconfiguration")]
     public void MalformedSubpathsAreRefusedBeforeGitRuns(string subpath)
     {
-        var rules = Rules with { Subpath = subpath };
+        // A malformed entry is refused alone and next to a valid one.
+        foreach (var rules in new[] { Rules with { Subpaths = [subpath] }, Rules with { Subpaths = ["helpers", subpath] } })
+        {
+            var error = Assert.Throws<ConfigException>(() => rules.Validate("fixture"));
+            Assert.Contains("subpath", error.Message);
+            Assert.Throws<ConfigException>(() =>
+                new RulesFetcher(root, (_, _, _) => throw new InvalidOperationException("git must not run")).Fetch(rules));
+        }
+    }
+
+    // An empty set must not quietly mean the whole tree; repeats and nesting would give one tree two keys.
+    [Theory]
+    [InlineData("")]
+    [InlineData("helpers,helpers")]
+    [InlineData("http,http/misconfiguration")]
+    public void EmptyRepeatedOrNestedSubpathSetsAreRefused(string subpaths)
+    {
+        var rules = Rules with { Subpaths = subpaths.Split(',', StringSplitOptions.RemoveEmptyEntries) };
         var error = Assert.Throws<ConfigException>(() => rules.Validate("fixture"));
-        Assert.Contains("subpath", error.Message);
-        Assert.Throws<ConfigException>(() =>
-            new RulesFetcher(root, (_, _, _) => throw new InvalidOperationException("git must not run")).Fetch(rules));
+        Assert.Contains("subpaths", error.Message);
     }
 
     private static Exception PublishError(bool accessDenied) => accessDenied
@@ -551,11 +595,12 @@ public sealed class RulesFetcherTests : IDisposable
                         OpenMetadata.Add(new FileStream(Path.Combine(environment["GIT_DIR"], "config"), FileMode.Open, FileAccess.Read, FileShare.Read));
                     var separator = arguments.LastIndexOf("--");
                     if (separator < arguments.Count - 1)
-                    {
-                        var subtree = Path.Combine(tree, arguments[separator + 1]);
-                        Directory.CreateDirectory(subtree);
-                        File.WriteAllText(Path.Combine(subtree, "rule.yaml"), "pinned rule content");
-                    }
+                        foreach (var pathspec in arguments.Skip(separator + 1))
+                        {
+                            var subtree = Path.Combine(tree, pathspec);
+                            Directory.CreateDirectory(subtree);
+                            File.WriteAllText(Path.Combine(subtree, "rule.yaml"), "pinned rule content");
+                        }
                     else if (PortablePaths)
                     {
                         Directory.CreateDirectory(Path.Combine(tree, "a"));

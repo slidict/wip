@@ -87,7 +87,9 @@ Declare that exact `image`, `entrypoint: sleep` and `command: [infinity]` on the
 internal network. The image runs as root and contains no templates. `PinnedRules` stages
 `https://github.com/projectdiscovery/nuclei-templates.git` at commit
 `2603fc1f23f2ef219ea4834128a163113c6b5168` (v10.3.2) into
-`/opt/wip-nuclei-templates` through the existing verified cache/copy path. Provenance includes
+`/opt/wip-nuclei-templates` through the existing verified cache/copy path. Only
+`http/misconfiguration` and `helpers` are staged; templates in the first read wordlists from
+the second. Provenance includes
 the image, `http-misconfiguration-v1` profile and the template commit.
 
 The fixed shell wrapper passes the target as positional data, never shell syntax. It runs:
@@ -270,7 +272,7 @@ An adapter supplies a `ScanPlan`:
 | `ReportPath` | Canonical absolute path of the report inside the container |
 | `RulesVersion` | Version or digest of the applied rule, template or add-on set |
 | `UnperformedChecksPath` | Required canonical absolute path for raw omitted-check information; missing paths are rejected before execution |
-| `Rules` | Optional `PinnedRules(RepositoryUrl, Commit, ContainerPath, Subpath)` declaration; `Subpath` is optional and stages only that directory of the repository |
+| `Rules` | Optional `PinnedRules(RepositoryUrl, Commit, ContainerPath, Subpaths)` declaration; `Subpaths` stages only those directories, each at its original position. Null stages the whole tree; an empty, repeated or nested set is refused, and order does not matter |
 
 Every adapter must declare a coverage record so an empty finding list cannot imply that
 unreported checks ran. Plan validation rejects missing coverage paths before backend calls;
@@ -322,8 +324,9 @@ staging-publication error. Linux test passes do not verify this Windows handle b
 Windows verification remains required.
 
 Verified trees are cached under `<config directory>/.wip/scanner-rules/<commit>/tree`, or
-`<commit>-<digest of the subpath>/tree` when the adapter declares one, so a subtree never
-satisfies a whole-tree pin or the reverse. The commit names immutable content; published verification metadata and a tree fingerprint
+`<commit>-<digest of the sorted subpaths>/tree` when the adapter declares them, so one set of
+subtrees never satisfies another set or a whole-tree pin, nor the reverse. The marker records
+the set and reuse refuses a mismatch. The commit names immutable content; published verification metadata and a tree fingerprint
 protect reuse against an incomplete or changed local entry. Fingerprinting sorts
 slash-normalized relative paths in ordinal order, making the digest independent of native
 separators and cache location. A second preparation of the same valid pin reuses the tree
@@ -331,8 +334,8 @@ without fetching. Verification metadata stays outside the copied tree, and symli
 refused. Version 2 cache markers reject older entries that may carry native line endings;
 remove a rejected entry and prepare again. The same recovery instruction applies when an
 existing commit directory is missing its tree or verification marker. Entries are not
-deleted or migrated automatically, and incomplete entries cannot be reused. Declaring a
-subpath changes the entry an adapter asks for, so a complete whole-tree entry staged
+deleted or migrated automatically, and incomplete entries cannot be reused. Declaring or
+changing subpaths changes the entry an adapter asks for, so a complete whole-tree entry staged
 beforehand is bypassed rather than rejected: it blocks nothing, and removing it is optional
 cleanup that reclaims disk. Removal is required only for an incomplete or mismatched entry
 under the key being prepared. `Run` requires
