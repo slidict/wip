@@ -8,13 +8,18 @@ internal sealed class NucleiScanner : ISecurityScanner
     internal const string ImageReference = "projectdiscovery/nuclei@sha256:66b5f88c9b98ad29c03343dd34e5e85bde0ad10428d72e0171b067efe1ed7811";
     internal const string TemplatesCommit = "2603fc1f23f2ef219ea4834128a163113c6b5168"; // nuclei-templates v10.3.2
     internal const string RulesPath = "/opt/wip-nuclei-templates";
+    private const string RulesSubpath = "http/misconfiguration";
+    // Templates in RulesSubpath read wordlists from helpers/ (gitlab-user-enum, gitlab-api-user-enum);
+    // without it they fail to load and the loss shows only as an -elog line.
+    private static readonly string[] StagedSubpaths = [RulesSubpath, "helpers"];
     private const string Profile = "http-misconfiguration-v1";
     private const string ReportPath = "/tmp/wip-nuclei-report.jsonl";
     private const string UnperformedPath = "/tmp/wip-nuclei-unperformed.txt";
     private const string NativePath = "/tmp/wip-nuclei-native.jsonl";
     private const string ErrorsPath = "/tmp/wip-nuclei-errors.jsonl";
+    private const string StderrPath = "/tmp/wip-nuclei-stderr.txt";
     internal const string Completion = "{\"wip-nuclei-completed\":\"http-misconfiguration-v1\"}";
-    private const string Coverage = "Checks not performed: authenticated scanning, crawling, out-of-band callbacks, non-HTTP protocols, workflows, headless/browser and code execution; templates outside http/misconfiguration, unsigned or invalid templates, and dos/fuzz/bruteforce tags are excluded. Redirects are disabled. Requests are bounded to 10/second, concurrency 2, timeout 5 seconds, no retries; the engine bounds total runtime. Native logs and request errors below record runtime skips/failures; no findings does not prove omitted checks passed.";
+    private const string Coverage = "Checks not performed: authenticated scanning, crawling, out-of-band callbacks, non-HTTP protocols, workflows, headless/browser and code execution; templates outside http/misconfiguration, unsigned or invalid templates, and dos/fuzz/bruteforce tags are excluded. Redirects are disabled. Requests are bounded to 10/second, concurrency 2, timeout 5 seconds, no retries; the engine bounds total runtime. Native logs and request errors below record runtime skips/failures; a log over 256 KiB keeps its first 192 KiB and last 64 KiB around a [wip: truncated, N bytes dropped] line. No findings does not prove omitted checks passed.";
 
     // Alpine has sh, not Python. Only this fixed program is shell syntax: paths, coverage
     // and all nuclei arguments (including the target) are positional data. Never eval them.
@@ -24,10 +29,13 @@ internal sealed class NucleiScanner : ISecurityScanner
     // writes findings to stdout as well as to -o, so stdout is dropped: the duplicate would
     // push the sidecar past the engine 1 MiB cap on a noisy target and lose the coverage
     // record for a scan that succeeded. The log stays, on stderr.
+    // stderr and -elog are each cut to their first 192 KiB and last 64 KiB with a note of the
+    // bytes dropped between: a target refusing connections makes -elog several MB, which would
+    // lose the coverage record too, and the tail keeps nuclei's closing [FTL]/[ERR] summary.
     // A completion record makes a successful zero-match JSONL report nonempty for the shared
     // engine. It is appended only after exit 0 and an actual native report file; missing
     // templates/output must not become a fabricated successful empty scan.
-    private const string Wrapper = """set -u; report=$1; coverage=$2; native=$3; errors=$4; notice=$5; shift 5; rm -f -- "$report" "$native" "$errors" || exit $?; printf '%s\n' "$notice" > "$coverage" || exit $?; "$@" >/dev/null 2>>"$coverage"; code=$?; if [ -f "$errors" ]; then cat "$errors" >> "$coverage" || exit $?; fi; if [ -f "$native" ]; then if [ "$code" -eq 0 ]; then printf '\n%s\n' '""" + Completion + """' >> "$native" || exit $?; fi; mv -- "$native" "$report" || exit $?; fi; exit $code""";
+    private const string Wrapper = """set -u; report=$1; coverage=$2; native=$3; errors=$4; stderr=$5; notice=$6; shift 6; limit=262144; first=196608; last=65536; rm -f -- "$report" "$native" "$errors" "$stderr" || exit $?; printf '%s\n' "$notice" > "$coverage" || exit $?; "$@" >/dev/null 2>"$stderr"; code=$?; for log in "$stderr" "$errors"; do if [ -f "$log" ]; then size=$(wc -c < "$log") || exit $?; size=$((size)); if [ "$size" -gt "$limit" ]; then head -c "$first" < "$log" >> "$coverage" || exit $?; printf '\n[wip: truncated, %s bytes dropped]\n' "$((size - limit))" >> "$coverage" || exit $?; tail -c "$last" < "$log" >> "$coverage" || exit $?; else cat < "$log" >> "$coverage" || exit $?; fi; fi; done; if [ -f "$native" ]; then if [ "$code" -eq 0 ]; then printf '\n%s\n' '""" + Completion + """' >> "$native" || exit $?; fi; mv -- "$native" "$report" || exit $?; fi; exit $code""";
 
     public string Name => "nuclei";
 
@@ -43,13 +51,13 @@ internal sealed class NucleiScanner : ISecurityScanner
         // cloud upload, code, browser or workflow execution is enabled. The declared internal
         // network is still the enforcement boundary, not these profile switches.
         return new(new PinnedImage(ImageReference),
-            ["sh", "-c", Wrapper, "wip-nuclei", ReportPath, UnperformedPath, NativePath, ErrorsPath, Coverage,
-             "nuclei", "-u", uri.AbsoluteUri, "-t", RulesPath + "/http/misconfiguration",
+            ["sh", "-c", Wrapper, "wip-nuclei", ReportPath, UnperformedPath, NativePath, ErrorsPath, StderrPath, Coverage,
+             "nuclei", "-u", uri.AbsoluteUri, "-t", RulesPath + "/" + RulesSubpath,
              "-duc", "-ni", "-no-stdin", "-nh", "-dr", "-dut", "-pt", "http",
              "-etags", "dos,fuzz,bruteforce", "-rl", "10", "-c", "2", "-timeout", "5", "-retries", "0",
              "-nc", "-jsonl", "-omit-raw", "-omit-template", "-o", NativePath, "-elog", ErrorsPath],
             ReportPath, ImageReference + "/" + Profile, UnperformedPath,
-            new PinnedRules("https://github.com/projectdiscovery/nuclei-templates.git", TemplatesCommit, RulesPath));
+            new PinnedRules("https://github.com/projectdiscovery/nuclei-templates.git", TemplatesCommit, RulesPath, StagedSubpaths));
     }
 
     public IReadOnlyList<ScanFinding> ConvertReport(string report)
@@ -80,7 +88,7 @@ internal sealed class NucleiScanner : ISecurityScanner
             var path = Uri.TryCreate(matched, UriKind.Absolute, out var location) && location.Scheme is "http" or "https"
                 ? location.AbsolutePath : null;
             string? evidence = null;
-            if (item.TryGetProperty("extracted-results", out var extracted))
+            if (item.TryGetProperty("extracted-results", out var extracted) && extracted.ValueKind != JsonValueKind.Null)
             {
                 if (extracted.ValueKind != JsonValueKind.Array || extracted.EnumerateArray().Any(value => value.ValueKind != JsonValueKind.String))
                     throw new FormatException("Nuclei extracted-results must be an array of strings");

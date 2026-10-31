@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Wip.Security;
 
 namespace Wip.Tests;
@@ -16,14 +17,17 @@ public class NucleiScannerTests
         plan.Validate("nuclei");
         Assert.Equal(NucleiScanner.ImageReference, plan.Image.Reference);
         Assert.Equal(new PinnedRules("https://github.com/projectdiscovery/nuclei-templates.git",
-            "2603fc1f23f2ef219ea4834128a163113c6b5168", "/opt/wip-nuclei-templates"), plan.Rules);
+            "2603fc1f23f2ef219ea4834128a163113c6b5168", "/opt/wip-nuclei-templates", ["http/misconfiguration", "helpers"]), plan.Rules);
+        // gitlab-user-enum and gitlab-api-user-enum in http/misconfiguration read helpers/wordlists;
+        // without helpers staged they fail to load and coverage shrinks silently.
+        Assert.Contains("helpers", plan.Rules!.Subpaths!);
         Assert.Equal(new[] {
             "nuclei", "-u", "http://app.test:8080/app", "-t", "/opt/wip-nuclei-templates/http/misconfiguration",
             "-duc", "-ni", "-no-stdin", "-nh", "-dr", "-dut", "-pt", "http",
             "-etags", "dos,fuzz,bruteforce", "-rl", "10", "-c", "2", "-timeout", "5", "-retries", "0",
             "-nc", "-jsonl", "-omit-raw", "-omit-template", "-o", "/tmp/wip-nuclei-native.jsonl",
             "-elog", "/tmp/wip-nuclei-errors.jsonl"
-        }, plan.Argv.Skip(9));
+        }, plan.Argv.Skip(10));
         Assert.All(plan.Argv, argument => Assert.DoesNotContain(argument, char.IsControl));
     }
 
@@ -91,6 +95,15 @@ public class NucleiScannerTests
         Assert.Equal("banner", finding.Evidence);
     }
 
+    // A JSON null is how an absent optional field is spelled; only a non-array value is malformed.
+    [Fact]
+    public void NullExtractedResultsAreAbsenceNotAMalformedArray()
+    {
+        var finding = Assert.Single(new NucleiScanner().ConvertReport(
+            """{"template-id":"rule","info":{},"extracted-results":null}""" + "\n" + NucleiScanner.Completion));
+        Assert.Null(finding.Evidence);
+    }
+
     [Theory]
     [InlineData("{}")]
     [InlineData("[]")]
@@ -121,6 +134,7 @@ public class NucleiScannerTests
     [InlineData("finding", 0, 1)]
     [InlineData("failure", 7, 0)]
     [InlineData("missing", 0, 0)]
+    [InlineData("oversized", 0, 0)]
     public void WrapperPreservesNativeLogsAndCannotFabricateMissingOutput(string scenario, int exitCode, int findings)
     {
         if (OperatingSystem.IsWindows()) { Assert.Skip("Wrapper uses Alpine-compatible sh"); return; }
@@ -142,11 +156,17 @@ public class NucleiScannerTests
                 printf 'native skipped template\n' >&2
                 printf '{"template-id":"stdout-duplicate","info":{}}\n'
                 printf 'native request failure\n' > "$errors"
+                if [ "$WIP_SCENARIO" = oversized ]; then
+                  head -c 3000000 /dev/zero | tr '\0' e >> "$errors"
+                  printf '\n[FTL] elog closing summary\n' >> "$errors"
+                  head -c 3000000 /dev/zero | tr '\0' s >&2
+                  printf '\n[FTL] stderr closing summary\n' >&2
+                fi
                 case "$WIP_SCENARIO" in
                   missing) exit 0;;
                   failure) : > "$output"; exit 7;;
                   finding) printf '%s\n' '{"template-id":"rule","info":{"name":"Issue","severity":"low"}}' > "$output";;
-                  empty) : > "$output";;
+                  empty|oversized) : > "$output";;
                 esac
                 """);
             File.SetUnixFileMode(stub, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
@@ -178,6 +198,26 @@ public class NucleiScannerTests
             Assert.Contains("native skipped template", diagnostics);
             Assert.Contains("native request failure", diagnostics);
             Assert.DoesNotContain("stdout-duplicate", diagnostics);
+            // A refused-connection target makes -elog several MB. Past the engine cap the whole
+            // sidecar is lost and a finished scan turns into unperformed-checks-lost.
+            if (scenario == "oversized")
+            {
+                // Both streams are oversized, so both bounds have to apply. One of them
+                // missing leaves the sidecar past 3 MB, and two notes prove neither log
+                // was dropped whole. The first lines (asserted above) and the closing
+                // summaries, which explain why checks did not run, both survive the cut.
+                Assert.Equal(2, Regex.Matches(diagnostics,
+                    @"\[wip: truncated, \d+ bytes dropped\]").Count);
+                Assert.Contains("[FTL] elog closing summary", diagnostics);
+                Assert.Contains("[FTL] stderr closing summary", diagnostics);
+                Assert.True(diagnostics.IndexOf("native skipped template", StringComparison.Ordinal)
+                    < diagnostics.IndexOf("[FTL] stderr closing summary", StringComparison.Ordinal));
+                Assert.True(diagnostics.IndexOf("native request failure", StringComparison.Ordinal)
+                    < diagnostics.IndexOf("[FTL] elog closing summary", StringComparison.Ordinal));
+                Assert.InRange(diagnostics.Length, 512 * 1024, ScanEngine.MaxReportCharacters - 1);
+            }
+            // The notice names the marker with N; a real cut states a number.
+            else Assert.DoesNotMatch(@"\[wip: truncated, \d+ bytes dropped\]", diagnostics);
             if (scenario == "missing") Assert.False(File.Exists(report));
             else if (exitCode != 0) Assert.DoesNotContain(NucleiScanner.Completion, File.ReadAllText(report));
             else

@@ -66,7 +66,9 @@ command: [infinity]
 ```
 
 `entrypoint` must be one nonempty string without whitespace, control characters or a leading
-`-`; lists and shell command lines are refused. Omitting it preserves the image ENTRYPOINT.
+`-`; lists and shell command lines are refused. Declaring it requires `command` as well, and
+loading fails without it: the override clears the image CMD, so the executable would otherwise
+run with no operand. Omitting it preserves the image ENTRYPOINT.
 Create, reuse and exec verify a declared override against the singleton argv in
 `Config.Entrypoint`. Drift requires destroy-then-create; an unreadable field or a mismatch
 immediately after creation reports a backend limitation rather than recommending a loop of
@@ -85,7 +87,9 @@ Declare that exact `image`, `entrypoint: sleep` and `command: [infinity]` on the
 internal network. The image runs as root and contains no templates. `PinnedRules` stages
 `https://github.com/projectdiscovery/nuclei-templates.git` at commit
 `2603fc1f23f2ef219ea4834128a163113c6b5168` (v10.3.2) into
-`/opt/wip-nuclei-templates` through the existing verified cache/copy path. Provenance includes
+`/opt/wip-nuclei-templates` through the existing verified cache/copy path. Only
+`http/misconfiguration` and `helpers` are staged; templates in the first read wordlists from
+the second. Provenance includes
 the image, `http-misconfiguration-v1` profile and the template commit.
 
 The fixed shell wrapper passes the target as positional data, never shell syntax. It runs:
@@ -108,8 +112,10 @@ of ten requests/second; the engine supplies the total deadline. The internal net
 the egress boundary. Targets must be unauthenticated HTTP(S) URLs without fragments or commas
 (the latter would turn one `-u` value into multiple targets).
 
-`/tmp/wip-nuclei-unperformed.txt` records these omissions and bounds, nuclei's unmodified
-stderr log, and the request error log. Its stdout is discarded: with `-o` nuclei writes every
+`/tmp/wip-nuclei-unperformed.txt` records these omissions and bounds, nuclei's stderr log,
+and the request error log. Each log is bounded: one over 256 KiB keeps its first 192 KiB and
+its last 64 KiB, which holds nuclei's closing `[FTL]`/`[ERR]` summary, with a
+`[wip: truncated, N bytes dropped]` line between them. Its stdout is discarded: with `-o` nuclei writes every
 finding to both, and the duplicate would pass the engine's 1 MiB collection cap on a noisy
 target, costing the whole coverage record for a scan that succeeded. Runtime failures or skipped templates are evidence
 of incomplete coverage, not passed checks. A missing sidecar remains an incomplete result
@@ -231,7 +237,8 @@ yet part of this format. Secret-shaped values in normalized
 fields are replaced with `[REDACTED]` before writing; the separate raw artifacts are unchanged.
 JSON string escaping preserves document structure even when scanner text contains controls,
 quotes or markup. The embedded coverage copy uses the same redaction as other result strings;
-`unperformed-checks.txt` remains verbatim for investigation and may contain sensitive diagnostics.
+`unperformed-checks.txt` is stored without redaction for investigation and may contain sensitive
+diagnostics. It holds what the adapter wrote, which for Nuclei includes logs cut as described above.
 
 Check `status` before consuming `findings`. An incomplete result has a reason and no findings
 array, so it cannot appear as a clean empty scan. A completed result still has coverage:
@@ -268,7 +275,7 @@ An adapter supplies a `ScanPlan`:
 | `ReportPath` | Canonical absolute path of the report inside the container |
 | `RulesVersion` | Version or digest of the applied rule, template or add-on set |
 | `UnperformedChecksPath` | Required canonical absolute path for raw omitted-check information; missing paths are rejected before execution |
-| `Rules` | Optional `PinnedRules(RepositoryUrl, Commit, ContainerPath)` declaration |
+| `Rules` | Optional `PinnedRules(RepositoryUrl, Commit, ContainerPath, Subpaths)` declaration; `Subpaths` stages only those directories, each at its original position. Null stages the whole tree; an empty, repeated or nested set is refused, and order does not matter |
 
 Every adapter must declare a coverage record so an empty finding list cannot imply that
 unreported checks ran. Plan validation rejects missing coverage paths before backend calls;
@@ -319,8 +326,10 @@ its destination is verified and reused immediately. Exhaustion fails closed with
 staging-publication error. Linux test passes do not verify this Windows handle behavior;
 Windows verification remains required.
 
-Verified trees are cached under `<config directory>/.wip/scanner-rules/<commit>/tree`. The
-commit names immutable content; published verification metadata and a tree fingerprint
+Verified trees are cached under `<config directory>/.wip/scanner-rules/<commit>/tree`, or
+`<commit>-<digest of the sorted subpaths>/tree` when the adapter declares them, so one set of
+subtrees never satisfies another set or a whole-tree pin, nor the reverse. The marker records
+the set and reuse refuses a mismatch. The commit names immutable content; published verification metadata and a tree fingerprint
 protect reuse against an incomplete or changed local entry. Fingerprinting sorts
 slash-normalized relative paths in ordinal order, making the digest independent of native
 separators and cache location. A second preparation of the same valid pin reuses the tree
@@ -328,7 +337,11 @@ without fetching. Verification metadata stays outside the copied tree, and symli
 refused. Version 2 cache markers reject older entries that may carry native line endings;
 remove a rejected entry and prepare again. The same recovery instruction applies when an
 existing commit directory is missing its tree or verification marker. Entries are not
-deleted or migrated automatically, and incomplete entries cannot be reused. `Run` requires
+deleted or migrated automatically, and incomplete entries cannot be reused. Declaring or
+changing subpaths changes the entry an adapter asks for, so a complete whole-tree entry staged
+beforehand is bypassed rather than rejected: it blocks nothing, and removing it is optional
+cleanup that reclaims disk. Removal is required only for an incomplete or mismatched entry
+under the key being prepared. `Run` requires
 a valid staged entry and performs no git fetch. It repeats the source-path guard with a
 pinned-rules context label before `container cp`. Its default WSL-UNC refusal names the
 host-path cause rather than allowing an empty transfer to look like empty rules. Runtime

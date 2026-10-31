@@ -124,6 +124,12 @@ public sealed class SandboxLifecycle(
     {
         var definition = Definition(name);
         if (definition.Image.StartsWith('-')) throw new ConfigException("Sandbox image must not start with '-'");
+        // --entrypoint also clears the image's CMD, so the executable would run with no operand
+        // and exit at once. Refused here rather than at load, so other commands, destroy
+        // included, still work on a config that already declares it.
+        if (definition.Entrypoint is not null && definition.Command is null)
+            throw new ConfigException(
+                $"Sandbox {name}: entrypoint requires command; the override clears the image's CMD, so give the executable's arguments in command, as in [infinity]; nothing was started");
         var volumeDefs = ValidateVolumes(name, definition);
         if (volumeDefs.Count != 0 && volumes is null)
             throw new ConfigException($"Sandbox {name}: volume lifecycle is not configured; no container was created");
