@@ -244,8 +244,9 @@ wip sandbox destroy agent                    # remove it; persistent volumes sur
 ```
 
 The optional `command` list replaces the image CMD without shell splitting; omitting it
-preserves the image CMD. The optional `entrypoint` executable replaces ENTRYPOINT; its
-arguments belong in `command`. For Nuclei, use `entrypoint: sleep` with `command: [infinity]`.
+preserves the image CMD. The optional `entrypoint` executable replaces ENTRYPOINT; it requires
+`command`, which carries its arguments, because the override clears the image CMD. For Nuclei,
+use `entrypoint: sleep` with `command: [infinity]`.
 Flags and arguments containing spaces remain separate list elements, such
 as `[nginx, -g, 'daemon off;']`; the first list element must not contain whitespace.
 Changing a declared command or entrypoint requires destroying and recreating the sandbox.

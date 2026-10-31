@@ -66,7 +66,9 @@ command: [infinity]
 ```
 
 `entrypoint` must be one nonempty string without whitespace, control characters or a leading
-`-`; lists and shell command lines are refused. Omitting it preserves the image ENTRYPOINT.
+`-`; lists and shell command lines are refused. Declaring it requires `command` as well, and
+loading fails without it: the override clears the image CMD, so the executable would otherwise
+run with no operand. Omitting it preserves the image ENTRYPOINT.
 Create, reuse and exec verify a declared override against the singleton argv in
 `Config.Entrypoint`. Drift requires destroy-then-create; an unreadable field or a mismatch
 immediately after creation reports a backend limitation rather than recommending a loop of
@@ -319,8 +321,9 @@ its destination is verified and reused immediately. Exhaustion fails closed with
 staging-publication error. Linux test passes do not verify this Windows handle behavior;
 Windows verification remains required.
 
-Verified trees are cached under `<config directory>/.wip/scanner-rules/<commit>/tree`. The
-commit names immutable content; published verification metadata and a tree fingerprint
+Verified trees are cached under `<config directory>/.wip/scanner-rules/<commit>/tree`, or
+`<commit>-<digest of the subpath>/tree` when the adapter declares one, so a subtree never
+satisfies a whole-tree pin or the reverse. The commit names immutable content; published verification metadata and a tree fingerprint
 protect reuse against an incomplete or changed local entry. Fingerprinting sorts
 slash-normalized relative paths in ordinal order, making the digest independent of native
 separators and cache location. A second preparation of the same valid pin reuses the tree
@@ -328,7 +331,9 @@ without fetching. Verification metadata stays outside the copied tree, and symli
 refused. Version 2 cache markers reject older entries that may carry native line endings;
 remove a rejected entry and prepare again. The same recovery instruction applies when an
 existing commit directory is missing its tree or verification marker. Entries are not
-deleted or migrated automatically, and incomplete entries cannot be reused. `Run` requires
+deleted or migrated automatically, and incomplete entries cannot be reused -- including a
+bare-commit entry staged before its adapter declared a subpath, which is no longer read and
+has to be removed by hand. `Run` requires
 a valid staged entry and performs no git fetch. It repeats the source-path guard with a
 pinned-rules context label before `container cp`. Its default WSL-UNC refusal names the
 host-path cause rather than allowing an empty transfer to look like empty rules. Runtime

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Wip.Security;
 
 namespace Wip.Tests;
@@ -152,7 +153,10 @@ public class NucleiScannerTests
                 printf 'native skipped template\n' >&2
                 printf '{"template-id":"stdout-duplicate","info":{}}\n'
                 printf 'native request failure\n' > "$errors"
-                if [ "$WIP_SCENARIO" = oversized ]; then head -c 3000000 /dev/zero | tr '\0' e >> "$errors"; fi
+                if [ "$WIP_SCENARIO" = oversized ]; then
+                  head -c 3000000 /dev/zero | tr '\0' e >> "$errors"
+                  head -c 3000000 /dev/zero | tr '\0' s >&2
+                fi
                 case "$WIP_SCENARIO" in
                   missing) exit 0;;
                   failure) : > "$output"; exit 7;;
@@ -193,8 +197,12 @@ public class NucleiScannerTests
             // sidecar is lost and a finished scan turns into unperformed-checks-lost.
             if (scenario == "oversized")
             {
-                Assert.InRange(diagnostics.Length, 1, ScanEngine.MaxReportCharacters - 1);
-                Assert.Contains("truncated", diagnostics);
+                // Both streams are oversized, so both bounds have to apply. One of them
+                // missing leaves the sidecar past 3 MB, and two notes prove neither log
+                // was dropped whole.
+                Assert.Equal(2, Regex.Matches(diagnostics,
+                    @"\[wip: truncated, \d+ bytes dropped\]").Count);
+                Assert.InRange(diagnostics.Length, 512 * 1024, ScanEngine.MaxReportCharacters - 1);
             }
             if (scenario == "missing") Assert.False(File.Exists(report));
             else if (exitCode != 0) Assert.DoesNotContain(NucleiScanner.Completion, File.ReadAllText(report));
