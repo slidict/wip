@@ -205,9 +205,6 @@ public sealed partial class SandboxSettings
         if (entry["entrypoint"] is not string executable || executable.Length == 0 ||
             executable.StartsWith('-') || executable.Any(char.IsWhiteSpace) || executable.Any(char.IsControl))
             throw new ConfigException($"sandboxes.{name}.entrypoint must be a nonempty executable string without whitespace, control characters or a leading '-'; put arguments in command");
-        // --entrypoint also clears the image's CMD, so the executable would run with no operand.
-        if (!entry.ContainsKey("command"))
-            throw new ConfigException($"sandboxes.{name}.entrypoint requires command; the override clears the image's CMD, so the executable's arguments belong in command");
         return executable;
     }
 

@@ -64,12 +64,14 @@ public class SandboxSettingsTests
         Assert.Equal(executable, Load(YamlWriter.Dump(settings.ToMapping())).SandboxResources.Sandboxes[0].Entrypoint);
     }
 
+    // Loading runs for every command, so refusing here would also block sandbox destroy on a
+    // config that already declares this. Sandbox create refuses it instead.
     [Fact]
-    public void EntrypointWithoutCommandFailsDuringLoading()
+    public void EntrypointWithoutCommandStillLoads()
     {
-        var error = Assert.Throws<ConfigException>(() => Load("resource_namespace: example\nsandboxes: [{name: box, image: tool, entrypoint: sleep}]"));
-        Assert.Contains("sandboxes.box.entrypoint", error.Message);
-        Assert.Contains("command", error.Message);
+        var sandbox = Load("resource_namespace: example\nsandboxes: [{name: box, image: tool, entrypoint: sleep}]").SandboxResources.Sandboxes[0];
+        Assert.Equal("sleep", sandbox.Entrypoint);
+        Assert.Null(sandbox.Command);
     }
 
     [Theory]

@@ -27,6 +27,29 @@ public class SandboxLifecycleTests
     }
 
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void CreateRefusesEntrypointWithoutCommandBeforeTheBackendStartsAnything(bool exists)
+    {
+        var fake = new Fake { Exists = exists, State = "exited", Entrypoint = ["sleep"] };
+        var error = Assert.Throws<ConfigException>(() =>
+            new SandboxLifecycle(Settings("\n    entrypoint: sleep"), fake.Run).Create("first"));
+        Assert.Contains("entrypoint requires command", error.Message);
+        // Refused before the network, volumes or container are even inspected.
+        Assert.Empty(fake.Calls);
+    }
+
+    [Fact]
+    public void EntrypointWithoutCommandStillAllowsStatusAndDestroy()
+    {
+        var fake = new Fake { Exists = true, Entrypoint = ["sleep"] };
+        var lifecycle = new SandboxLifecycle(Settings("\n    entrypoint: sleep"), fake.Run);
+        Assert.Equal("running", lifecycle.Status("first").State);
+        Assert.Equal(0, lifecycle.Destroy("first"));
+        Assert.Equal(["remove", "-f", fake.Id], fake.Calls.Single(argv => argv[0] == "remove"));
+    }
+
+    [Theory]
     [InlineData("running")]
     [InlineData("exited")]
     public void EntrypointDriftRefusesReuseOrStart(string state)
