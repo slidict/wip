@@ -18,6 +18,7 @@ internal sealed class NucleiScanner : ISecurityScanner
     private const string NativePath = "/tmp/wip-nuclei-native.jsonl";
     private const string ErrorsPath = "/tmp/wip-nuclei-errors.jsonl";
     private const string StderrPath = "/tmp/wip-nuclei-stderr.txt";
+    private const string PartialPath = "/tmp/wip-nuclei-unperformed.part";
     internal const string Completion = "{\"wip-nuclei-completed\":\"http-misconfiguration-v1\"}";
     private const string Coverage = "Checks not performed: authenticated scanning, crawling, out-of-band callbacks, non-HTTP protocols, workflows, headless/browser and code execution; templates outside http/misconfiguration, unsigned or invalid templates, and dos/fuzz/bruteforce tags are excluded. Redirects are disabled. Requests are bounded to 10/second, concurrency 2, timeout 5 seconds, no retries; the engine bounds total runtime. Native logs and request errors below record runtime skips/failures; a log over 256 KiB keeps its first 192 KiB and last 64 KiB around a [wip: truncated, N bytes dropped] line. No findings does not prove omitted checks passed.";
 
@@ -35,10 +36,14 @@ internal sealed class NucleiScanner : ISecurityScanner
     // The report is published before that bounding runs. Every step of it exits on failure, so
     // leaving it first would let a sidecar write error destroy the findings of a finished scan --
     // the very loss this bound exists to prevent.
+    // The coverage record is built aside and moved into place only once both logs are in it.
+    // FinishResult does not read the scanner's exit code, so a sidecar left half written would
+    // read as a complete record and the run as "completed" with a whole log silently absent.
+    // Publishing all or nothing makes that case incomplete instead, with the report intact.
     // A completion record makes a successful zero-match JSONL report nonempty for the shared
     // engine. It is appended only after exit 0 and an actual native report file; missing
     // templates/output must not become a fabricated successful empty scan.
-    private const string Wrapper = """set -u; report=$1; coverage=$2; native=$3; errors=$4; stderr=$5; notice=$6; shift 6; limit=262144; first=196608; last=65536; rm -f -- "$report" "$native" "$errors" "$stderr" || exit $?; printf '%s\n' "$notice" > "$coverage" || exit $?; "$@" >/dev/null 2>"$stderr"; code=$?; if [ -f "$native" ]; then if [ "$code" -eq 0 ]; then printf '\n%s\n' '""" + Completion + """' >> "$native" || exit $?; fi; mv -- "$native" "$report" || exit $?; fi; for log in "$stderr" "$errors"; do if [ -f "$log" ]; then size=$(wc -c < "$log") || exit $?; size=$((size)); if [ "$size" -gt "$limit" ]; then head -c "$first" < "$log" >> "$coverage" || exit $?; printf '\n[wip: truncated, %s bytes dropped]\n' "$((size - limit))" >> "$coverage" || exit $?; tail -c "$last" < "$log" >> "$coverage" || exit $?; else cat < "$log" >> "$coverage" || exit $?; fi; fi; done; exit $code""";
+    private const string Wrapper = """set -u; report=$1; coverage=$2; native=$3; errors=$4; stderr=$5; partial=$6; notice=$7; shift 7; limit=262144; first=196608; last=65536; rm -f -- "$report" "$native" "$errors" "$stderr" "$partial" "$coverage" || exit $?; printf '%s\n' "$notice" > "$partial" || exit $?; "$@" >/dev/null 2>"$stderr"; code=$?; if [ -f "$native" ]; then if [ "$code" -eq 0 ]; then printf '\n%s\n' '""" + Completion + """' >> "$native" || exit $?; fi; mv -- "$native" "$report" || exit $?; fi; for log in "$stderr" "$errors"; do if [ -f "$log" ]; then size=$(wc -c < "$log") || exit $?; size=$((size)); if [ "$size" -gt "$limit" ]; then head -c "$first" < "$log" >> "$partial" || exit $?; printf '\n[wip: truncated, %s bytes dropped]\n' "$((size - limit))" >> "$partial" || exit $?; tail -c "$last" < "$log" >> "$partial" || exit $?; else cat < "$log" >> "$partial" || exit $?; fi; fi; done; mv -- "$partial" "$coverage" || exit $?; exit $code""";
 
     public string Name => "nuclei";
 
@@ -54,7 +59,7 @@ internal sealed class NucleiScanner : ISecurityScanner
         // cloud upload, code, browser or workflow execution is enabled. The declared internal
         // network is still the enforcement boundary, not these profile switches.
         return new(new PinnedImage(ImageReference),
-            ["sh", "-c", Wrapper, "wip-nuclei", ReportPath, UnperformedPath, NativePath, ErrorsPath, StderrPath, Coverage,
+            ["sh", "-c", Wrapper, "wip-nuclei", ReportPath, UnperformedPath, NativePath, ErrorsPath, StderrPath, PartialPath, Coverage,
              "nuclei", "-u", uri.AbsoluteUri, "-t", RulesPath + "/" + RulesSubpath,
              "-duc", "-ni", "-no-stdin", "-nh", "-dr", "-dut", "-pt", "http",
              "-etags", "dos,fuzz,bruteforce", "-rl", "10", "-c", "2", "-timeout", "5", "-retries", "0",

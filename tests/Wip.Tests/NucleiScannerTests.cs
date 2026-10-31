@@ -27,7 +27,7 @@ public class NucleiScannerTests
             "-etags", "dos,fuzz,bruteforce", "-rl", "10", "-c", "2", "-timeout", "5", "-retries", "0",
             "-nc", "-jsonl", "-omit-raw", "-omit-template", "-o", "/tmp/wip-nuclei-native.jsonl",
             "-elog", "/tmp/wip-nuclei-errors.jsonl"
-        }, plan.Argv.Skip(10));
+        }, plan.Argv.Skip(11));
         Assert.All(plan.Argv, argument => Assert.DoesNotContain(argument, char.IsControl));
     }
 
@@ -281,10 +281,10 @@ public class NucleiScannerTests
             var raw = File.ReadAllText(Path.Combine(root, Path.GetFileName(plan.ReportPath)));
             Assert.EndsWith(NucleiScanner.Completion + "\n", raw);
             Assert.Single(new NucleiScanner().ConvertReport(raw));
-            // The coverage record is what degrades: the head was written before tail failed.
-            var diagnostics = File.ReadAllText(Path.Combine(root, Path.GetFileName(plan.UnperformedChecksPath)));
-            Assert.Contains("Checks not performed", diagnostics);
-            Assert.InRange(diagnostics.Length, 1, ScanEngine.MaxReportCharacters - 1);
+            // No coverage record at all, rather than a partial one. FinishResult does not read
+            // the scanner's exit code, so a nonempty sidecar would make the run "completed"
+            // while a whole log was silently missing; an absent one makes it incomplete.
+            Assert.False(File.Exists(Path.Combine(root, Path.GetFileName(plan.UnperformedChecksPath))));
         }
         finally { Directory.Delete(root, true); }
     }
