@@ -13,6 +13,7 @@ internal sealed class NucleiScanner : ISecurityScanner
     private const string UnperformedPath = "/tmp/wip-nuclei-unperformed.txt";
     private const string NativePath = "/tmp/wip-nuclei-native.jsonl";
     private const string ErrorsPath = "/tmp/wip-nuclei-errors.jsonl";
+    private const string StderrPath = "/tmp/wip-nuclei-stderr.txt";
     internal const string Completion = "{\"wip-nuclei-completed\":\"http-misconfiguration-v1\"}";
     private const string Coverage = "Checks not performed: authenticated scanning, crawling, out-of-band callbacks, non-HTTP protocols, workflows, headless/browser and code execution; templates outside http/misconfiguration, unsigned or invalid templates, and dos/fuzz/bruteforce tags are excluded. Redirects are disabled. Requests are bounded to 10/second, concurrency 2, timeout 5 seconds, no retries; the engine bounds total runtime. Native logs and request errors below record runtime skips/failures; no findings does not prove omitted checks passed.";
 
@@ -24,10 +25,12 @@ internal sealed class NucleiScanner : ISecurityScanner
     // writes findings to stdout as well as to -o, so stdout is dropped: the duplicate would
     // push the sidecar past the engine 1 MiB cap on a noisy target and lose the coverage
     // record for a scan that succeeded. The log stays, on stderr.
+    // stderr and -elog are each cut at 256 KiB with a note of the bytes dropped: a target
+    // refusing connections makes -elog several MB, which would lose the coverage record too.
     // A completion record makes a successful zero-match JSONL report nonempty for the shared
     // engine. It is appended only after exit 0 and an actual native report file; missing
     // templates/output must not become a fabricated successful empty scan.
-    private const string Wrapper = """set -u; report=$1; coverage=$2; native=$3; errors=$4; notice=$5; shift 5; rm -f -- "$report" "$native" "$errors" || exit $?; printf '%s\n' "$notice" > "$coverage" || exit $?; "$@" >/dev/null 2>>"$coverage"; code=$?; if [ -f "$errors" ]; then cat "$errors" >> "$coverage" || exit $?; fi; if [ -f "$native" ]; then if [ "$code" -eq 0 ]; then printf '\n%s\n' '""" + Completion + """' >> "$native" || exit $?; fi; mv -- "$native" "$report" || exit $?; fi; exit $code""";
+    private const string Wrapper = """set -u; report=$1; coverage=$2; native=$3; errors=$4; stderr=$5; notice=$6; shift 6; limit=262144; rm -f -- "$report" "$native" "$errors" "$stderr" || exit $?; printf '%s\n' "$notice" > "$coverage" || exit $?; "$@" >/dev/null 2>"$stderr"; code=$?; for log in "$stderr" "$errors"; do if [ -f "$log" ]; then size=$(wc -c < "$log") || exit $?; size=$((size)); head -c "$limit" -- "$log" >> "$coverage" || exit $?; if [ "$size" -gt "$limit" ]; then printf '\n[wip: truncated, %s bytes dropped]\n' "$((size - limit))" >> "$coverage" || exit $?; fi; fi; done; if [ -f "$native" ]; then if [ "$code" -eq 0 ]; then printf '\n%s\n' '""" + Completion + """' >> "$native" || exit $?; fi; mv -- "$native" "$report" || exit $?; fi; exit $code""";
 
     public string Name => "nuclei";
 
@@ -43,7 +46,7 @@ internal sealed class NucleiScanner : ISecurityScanner
         // cloud upload, code, browser or workflow execution is enabled. The declared internal
         // network is still the enforcement boundary, not these profile switches.
         return new(new PinnedImage(ImageReference),
-            ["sh", "-c", Wrapper, "wip-nuclei", ReportPath, UnperformedPath, NativePath, ErrorsPath, Coverage,
+            ["sh", "-c", Wrapper, "wip-nuclei", ReportPath, UnperformedPath, NativePath, ErrorsPath, StderrPath, Coverage,
              "nuclei", "-u", uri.AbsoluteUri, "-t", RulesPath + "/http/misconfiguration",
              "-duc", "-ni", "-no-stdin", "-nh", "-dr", "-dut", "-pt", "http",
              "-etags", "dos,fuzz,bruteforce", "-rl", "10", "-c", "2", "-timeout", "5", "-retries", "0",

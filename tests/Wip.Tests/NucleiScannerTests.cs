@@ -23,7 +23,7 @@ public class NucleiScannerTests
             "-etags", "dos,fuzz,bruteforce", "-rl", "10", "-c", "2", "-timeout", "5", "-retries", "0",
             "-nc", "-jsonl", "-omit-raw", "-omit-template", "-o", "/tmp/wip-nuclei-native.jsonl",
             "-elog", "/tmp/wip-nuclei-errors.jsonl"
-        }, plan.Argv.Skip(9));
+        }, plan.Argv.Skip(10));
         Assert.All(plan.Argv, argument => Assert.DoesNotContain(argument, char.IsControl));
     }
 
@@ -121,6 +121,7 @@ public class NucleiScannerTests
     [InlineData("finding", 0, 1)]
     [InlineData("failure", 7, 0)]
     [InlineData("missing", 0, 0)]
+    [InlineData("oversized", 0, 0)]
     public void WrapperPreservesNativeLogsAndCannotFabricateMissingOutput(string scenario, int exitCode, int findings)
     {
         if (OperatingSystem.IsWindows()) { Assert.Skip("Wrapper uses Alpine-compatible sh"); return; }
@@ -142,11 +143,12 @@ public class NucleiScannerTests
                 printf 'native skipped template\n' >&2
                 printf '{"template-id":"stdout-duplicate","info":{}}\n'
                 printf 'native request failure\n' > "$errors"
+                if [ "$WIP_SCENARIO" = oversized ]; then head -c 3000000 /dev/zero | tr '\0' e >> "$errors"; fi
                 case "$WIP_SCENARIO" in
                   missing) exit 0;;
                   failure) : > "$output"; exit 7;;
                   finding) printf '%s\n' '{"template-id":"rule","info":{"name":"Issue","severity":"low"}}' > "$output";;
-                  empty) : > "$output";;
+                  empty|oversized) : > "$output";;
                 esac
                 """);
             File.SetUnixFileMode(stub, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
@@ -178,6 +180,13 @@ public class NucleiScannerTests
             Assert.Contains("native skipped template", diagnostics);
             Assert.Contains("native request failure", diagnostics);
             Assert.DoesNotContain("stdout-duplicate", diagnostics);
+            // A refused-connection target makes -elog several MB. Past the engine cap the whole
+            // sidecar is lost and a finished scan turns into unperformed-checks-lost.
+            if (scenario == "oversized")
+            {
+                Assert.InRange(diagnostics.Length, 1, ScanEngine.MaxReportCharacters - 1);
+                Assert.Contains("truncated", diagnostics);
+            }
             if (scenario == "missing") Assert.False(File.Exists(report));
             else if (exitCode != 0) Assert.DoesNotContain(NucleiScanner.Completion, File.ReadAllText(report));
             else
