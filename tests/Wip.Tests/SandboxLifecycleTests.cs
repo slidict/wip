@@ -32,7 +32,7 @@ public class SandboxLifecycleTests
     public void EntrypointDriftRefusesReuseOrStart(string state)
     {
         var fake = new Fake { Exists = true, State = state, Entrypoint = ["nuclei"] };
-        var error = Assert.Throws<WipException>(() => new SandboxLifecycle(Settings("\n    entrypoint: sleep"), fake.Run).Create("first"));
+        var error = Assert.Throws<WipException>(() => new SandboxLifecycle(Settings("\n    entrypoint: sleep\n    command: [infinity]"), fake.Run).Create("first"));
         Assert.Contains("entrypoint differs", error.Message);
         Assert.Contains("destroy", error.Message);
         Assert.DoesNotContain(fake.Calls, argv => argv[0] is "start" or "run");
@@ -51,7 +51,7 @@ public class SandboxLifecycleTests
             Labels = new Dictionary<string, string> { [SandboxLifecycle.OwnerLabel] = fake.Owner },
             Config = new { Entrypoint = JsonSerializer.Deserialize<JsonElement>(value) }
         }});
-        var error = Assert.Throws<WipException>(() => new SandboxLifecycle(Settings("\n    entrypoint: sleep"), fake.Run).Create("first"));
+        var error = Assert.Throws<WipException>(() => new SandboxLifecycle(Settings("\n    entrypoint: sleep\n    command: [infinity]"), fake.Run).Create("first"));
         // An absent entrypoint and an unreadable one both arrive here as null, so this path
         // cannot tell them apart -- and a container that predates the declaration is the
         // likelier of the two, which destroy-then-create does fix. Advise it. Only a container
@@ -65,7 +65,7 @@ public class SandboxLifecycleTests
     public void EntrypointDriftRefusesExecAndFreshBackendMismatchIsNotRecreateAdvice()
     {
         var fake = new Fake { Exists = true, Entrypoint = ["nuclei"] };
-        var settings = Settings("\n    entrypoint: sleep");
+        var settings = Settings("\n    entrypoint: sleep\n    command: [infinity]");
         Assert.Throws<WipException>(() => new SandboxLifecycle(settings, fake.Run).Exec("first", ["scanner"], TimeSpan.FromSeconds(1)));
         Assert.DoesNotContain(fake.Calls, argv => argv[0] == "exec");
         fake.Exists = false;

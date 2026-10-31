@@ -64,6 +64,14 @@ public class SandboxSettingsTests
         Assert.Equal(executable, Load(YamlWriter.Dump(settings.ToMapping())).SandboxResources.Sandboxes[0].Entrypoint);
     }
 
+    [Fact]
+    public void EntrypointWithoutCommandFailsDuringLoading()
+    {
+        var error = Assert.Throws<ConfigException>(() => Load("resource_namespace: example\nsandboxes: [{name: box, image: tool, entrypoint: sleep}]"));
+        Assert.Contains("sandboxes.box.entrypoint", error.Message);
+        Assert.Contains("command", error.Message);
+    }
+
     [Theory]
     [InlineData("null")]
     [InlineData("[]")]
