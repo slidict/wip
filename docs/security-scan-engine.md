@@ -270,7 +270,7 @@ An adapter supplies a `ScanPlan`:
 | `ReportPath` | Canonical absolute path of the report inside the container |
 | `RulesVersion` | Version or digest of the applied rule, template or add-on set |
 | `UnperformedChecksPath` | Required canonical absolute path for raw omitted-check information; missing paths are rejected before execution |
-| `Rules` | Optional `PinnedRules(RepositoryUrl, Commit, ContainerPath)` declaration |
+| `Rules` | Optional `PinnedRules(RepositoryUrl, Commit, ContainerPath, Subpath)` declaration; `Subpath` is optional and stages only that directory of the repository |
 
 Every adapter must declare a coverage record so an empty finding list cannot imply that
 unreported checks ran. Plan validation rejects missing coverage paths before backend calls;
@@ -331,9 +331,11 @@ without fetching. Verification metadata stays outside the copied tree, and symli
 refused. Version 2 cache markers reject older entries that may carry native line endings;
 remove a rejected entry and prepare again. The same recovery instruction applies when an
 existing commit directory is missing its tree or verification marker. Entries are not
-deleted or migrated automatically, and incomplete entries cannot be reused -- including a
-bare-commit entry staged before its adapter declared a subpath, which is no longer read and
-has to be removed by hand. `Run` requires
+deleted or migrated automatically, and incomplete entries cannot be reused. Declaring a
+subpath changes the entry an adapter asks for, so a complete whole-tree entry staged
+beforehand is bypassed rather than rejected: it blocks nothing, and removing it is optional
+cleanup that reclaims disk. Removal is required only for an incomplete or mismatched entry
+under the key being prepared. `Run` requires
 a valid staged entry and performs no git fetch. It repeats the source-path guard with a
 pinned-rules context label before `container cp`. Its default WSL-UNC refusal names the
 host-path cause rather than allowing an empty transfer to look like empty rules. Runtime
