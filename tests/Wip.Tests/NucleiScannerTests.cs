@@ -16,7 +16,7 @@ public class NucleiScannerTests
         plan.Validate("nuclei");
         Assert.Equal(NucleiScanner.ImageReference, plan.Image.Reference);
         Assert.Equal(new PinnedRules("https://github.com/projectdiscovery/nuclei-templates.git",
-            "2603fc1f23f2ef219ea4834128a163113c6b5168", "/opt/wip-nuclei-templates"), plan.Rules);
+            "2603fc1f23f2ef219ea4834128a163113c6b5168", "/opt/wip-nuclei-templates", "http/misconfiguration"), plan.Rules);
         Assert.Equal(new[] {
             "nuclei", "-u", "http://app.test:8080/app", "-t", "/opt/wip-nuclei-templates/http/misconfiguration",
             "-duc", "-ni", "-no-stdin", "-nh", "-dr", "-dut", "-pt", "http",

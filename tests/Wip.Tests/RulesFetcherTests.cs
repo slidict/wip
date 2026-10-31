@@ -466,6 +466,49 @@ public sealed class RulesFetcherTests : IDisposable
         Assert.Equal(4, fake.Commands.Count);
     }
 
+    [Fact]
+    public void ASubpathPublishesOnlyThatSubtreeAtItsOriginalPosition()
+    {
+        var rules = Rules with { Subpath = "http/misconfiguration" };
+        var fake = new FakeGit();
+        var fetcher = new RulesFetcher(root, fake.Run);
+
+        var staged = fetcher.Fetch(rules);
+
+        var checkout = Assert.Single(fake.Commands, command => command.Contains("checkout"));
+        Assert.Equal(new[] { Commit, "--", "http/misconfiguration" }, checkout.TakeLast(3));
+        Assert.All(fake.Environments, environment => Assert.Equal("1", environment["GIT_LITERAL_PATHSPECS"]));
+        Assert.Equal(new[] { "http/misconfiguration/rule.yaml" },
+            Directory.EnumerateFiles(staged, "*", SearchOption.AllDirectories)
+                .Select(file => Path.GetRelativePath(staged, file).Replace(Path.DirectorySeparatorChar, '/')));
+        Assert.Equal(1, fetcher.RequireStagedTree(rules).FileCount);
+        using var marker = JsonDocument.Parse(File.ReadAllText(Path.Combine(Path.GetDirectoryName(staged)!, "verified.json")));
+        Assert.Equal("http/misconfiguration", marker.RootElement.GetProperty("subpath").GetString());
+        // A subtree entry must not stand in for the whole tree of the same commit.
+        Assert.NotEqual(fetcher.StagingPath(Rules), staged);
+        Assert.Throws<WipException>(() => fetcher.RequireStaged(Rules));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("/http")]
+    [InlineData("http/")]
+    [InlineData("http//misconfiguration")]
+    [InlineData("./http")]
+    [InlineData("http/../misconfiguration")]
+    [InlineData(":(glob)http")]
+    [InlineData("http/*")]
+    [InlineData("http\\misconfiguration")]
+    [InlineData("http\nmisconfiguration")]
+    public void MalformedSubpathsAreRefusedBeforeGitRuns(string subpath)
+    {
+        var rules = Rules with { Subpath = subpath };
+        var error = Assert.Throws<ConfigException>(() => rules.Validate("fixture"));
+        Assert.Contains("subpath", error.Message);
+        Assert.Throws<ConfigException>(() =>
+            new RulesFetcher(root, (_, _, _) => throw new InvalidOperationException("git must not run")).Fetch(rules));
+    }
+
     private static Exception PublishError(bool accessDenied) => accessDenied
         ? new UnauthorizedAccessException("external directory handle") : new IOException("external directory handle");
 
@@ -506,7 +549,14 @@ public sealed class RulesFetcherTests : IDisposable
                 case "checkout":
                     if (HoldMetadataOpen)
                         OpenMetadata.Add(new FileStream(Path.Combine(environment["GIT_DIR"], "config"), FileMode.Open, FileAccess.Read, FileShare.Read));
-                    if (PortablePaths)
+                    var separator = arguments.LastIndexOf("--");
+                    if (separator < arguments.Count - 1)
+                    {
+                        var subtree = Path.Combine(tree, arguments[separator + 1]);
+                        Directory.CreateDirectory(subtree);
+                        File.WriteAllText(Path.Combine(subtree, "rule.yaml"), "pinned rule content");
+                    }
+                    else if (PortablePaths)
                     {
                         Directory.CreateDirectory(Path.Combine(tree, "a"));
                         File.WriteAllText(Path.Combine(tree, "a", "b.yaml"), "nested rule\n");

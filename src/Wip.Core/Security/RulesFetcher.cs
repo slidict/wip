@@ -35,7 +35,7 @@ internal sealed class RulesFetcher(
     {
         rules.Validate("rules");
         var cache = Path.GetFullPath(cacheDirectory);
-        var destination = Path.Combine(cache, rules.Commit);
+        var destination = Path.Combine(cache, EntryName(rules));
         if (Directory.Exists(destination) || File.Exists(destination)) return RequireStaged(rules);
         var temporary = Path.Combine(cache, ".tmp-" + Guid.NewGuid().ToString("N"));
         try
@@ -55,7 +55,10 @@ internal sealed class RulesFetcher(
             var resolved = Git(tree, gitDirectory, hooks, configuration, ["rev-parse", "--verify", "FETCH_HEAD"], LocalTimeout).Trim();
             if (!string.Equals(resolved, rules.Commit, StringComparison.Ordinal))
                 throw new WipException("Pinned rules commit verification failed; no rules were staged");
-            Git(tree, gitDirectory, hooks, configuration, ["checkout", "--quiet", "--detach", "--force", rules.Commit, "--"], FetchTimeout);
+            // A subpath checks out only that pathspec; HEAD stays unborn, which nothing reads.
+            Git(tree, gitDirectory, hooks, configuration, rules.Subpath is null
+                ? ["checkout", "--quiet", "--detach", "--force", rules.Commit, "--"]
+                : ["checkout", "--quiet", "--force", rules.Commit, "--", rules.Subpath], FetchTimeout);
             var fingerprint = Fingerprint(tree);
             using (var stream = new FileStream(Path.Combine(publication, "verified.json"), FileMode.CreateNew, FileAccess.Write, FileShare.None))
             {
@@ -63,6 +66,7 @@ internal sealed class RulesFetcher(
                 writer.WriteStartObject();
                 writer.WriteNumber("version", CacheVersion);
                 writer.WriteString("commit", rules.Commit);
+                if (rules.Subpath is not null) writer.WriteString("subpath", rules.Subpath);
                 writer.WriteString("treeSha256", fingerprint.Hash);
                 writer.WriteEndObject();
                 writer.Flush();
@@ -109,15 +113,19 @@ internal sealed class RulesFetcher(
     internal string StagingPath(PinnedRules rules)
     {
         rules.Validate("rules");
-        return Path.Combine(Path.GetFullPath(cacheDirectory), rules.Commit, TreeDirectoryName);
+        return Path.Combine(Path.GetFullPath(cacheDirectory), EntryName(rules), TreeDirectoryName);
     }
+
+    // A subtree gets its own entry so it never satisfies, or is satisfied by, a whole-tree pin.
+    private static string EntryName(PinnedRules rules) => rules.Subpath is null ? rules.Commit
+        : rules.Commit + "-" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(rules.Subpath)))[..16].ToLowerInvariant();
 
     internal string RequireStaged(PinnedRules rules) => RequireStagedTree(rules).Path;
 
     internal (string Path, int FileCount) RequireStagedTree(PinnedRules rules)
     {
         rules.Validate("rules");
-        var entry = Path.Combine(Path.GetFullPath(cacheDirectory), rules.Commit);
+        var entry = Path.Combine(Path.GetFullPath(cacheDirectory), EntryName(rules));
         var tree = Path.Combine(entry, TreeDirectoryName);
         var marker = Path.Combine(entry, "verified.json");
         try
@@ -133,7 +141,9 @@ internal sealed class RulesFetcher(
             if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("version", out var version) ||
                 version.ValueKind != JsonValueKind.Number || !version.TryGetInt32(out var number) || number != CacheVersion ||
                 !root.TryGetProperty("commit", out var commit) || commit.ValueKind != JsonValueKind.String || commit.GetString() != rules.Commit ||
-                !root.TryGetProperty("treeSha256", out var digest) || digest.ValueKind != JsonValueKind.String)
+                !root.TryGetProperty("treeSha256", out var digest) || digest.ValueKind != JsonValueKind.String ||
+                (root.TryGetProperty("subpath", out var subpath) ? subpath.ValueKind != JsonValueKind.String || subpath.GetString() != rules.Subpath
+                    : rules.Subpath is not null))
                 throw new WipException("Pinned rules cache does not match its verified content; remove the cache entry and prepare again");
             var fingerprint = Fingerprint(tree);
             if (!string.Equals(digest.GetString(), fingerprint.Hash, StringComparison.Ordinal))
@@ -163,7 +173,7 @@ internal sealed class RulesFetcher(
             ["GIT_TERMINAL_PROMPT"] = "0", ["GIT_TEMPLATE_DIR"] = hooks, ["GIT_ATTR_NOSYSTEM"] = "1",
             ["GIT_DIR"] = gitDirectory, ["GIT_WORK_TREE"] = tree, ["GIT_COMMON_DIR"] = gitDirectory,
             ["GIT_INDEX_FILE"] = Path.Combine(gitDirectory, "index"), ["GIT_OBJECT_DIRECTORY"] = Path.Combine(gitDirectory, "objects"),
-            ["GIT_ALTERNATE_OBJECT_DIRECTORIES"] = "", ["GIT_NAMESPACE"] = ""
+            ["GIT_ALTERNATE_OBJECT_DIRECTORIES"] = "", ["GIT_NAMESPACE"] = "", ["GIT_LITERAL_PATHSPECS"] = "1"
         };
         (int Code, string Output) result;
         try { result = run is not null ? run(command, environment, timeout) : RunGit(command, environment, timeout); }

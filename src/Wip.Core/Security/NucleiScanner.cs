@@ -8,6 +8,7 @@ internal sealed class NucleiScanner : ISecurityScanner
     internal const string ImageReference = "projectdiscovery/nuclei@sha256:66b5f88c9b98ad29c03343dd34e5e85bde0ad10428d72e0171b067efe1ed7811";
     internal const string TemplatesCommit = "2603fc1f23f2ef219ea4834128a163113c6b5168"; // nuclei-templates v10.3.2
     internal const string RulesPath = "/opt/wip-nuclei-templates";
+    private const string RulesSubpath = "http/misconfiguration";
     private const string Profile = "http-misconfiguration-v1";
     private const string ReportPath = "/tmp/wip-nuclei-report.jsonl";
     private const string UnperformedPath = "/tmp/wip-nuclei-unperformed.txt";
@@ -47,12 +48,12 @@ internal sealed class NucleiScanner : ISecurityScanner
         // network is still the enforcement boundary, not these profile switches.
         return new(new PinnedImage(ImageReference),
             ["sh", "-c", Wrapper, "wip-nuclei", ReportPath, UnperformedPath, NativePath, ErrorsPath, StderrPath, Coverage,
-             "nuclei", "-u", uri.AbsoluteUri, "-t", RulesPath + "/http/misconfiguration",
+             "nuclei", "-u", uri.AbsoluteUri, "-t", RulesPath + "/" + RulesSubpath,
              "-duc", "-ni", "-no-stdin", "-nh", "-dr", "-dut", "-pt", "http",
              "-etags", "dos,fuzz,bruteforce", "-rl", "10", "-c", "2", "-timeout", "5", "-retries", "0",
              "-nc", "-jsonl", "-omit-raw", "-omit-template", "-o", NativePath, "-elog", ErrorsPath],
             ReportPath, ImageReference + "/" + Profile, UnperformedPath,
-            new PinnedRules("https://github.com/projectdiscovery/nuclei-templates.git", TemplatesCommit, RulesPath));
+            new PinnedRules("https://github.com/projectdiscovery/nuclei-templates.git", TemplatesCommit, RulesPath, RulesSubpath));
     }
 
     public IReadOnlyList<ScanFinding> ConvertReport(string report)

@@ -2,9 +2,11 @@ namespace Wip.Security;
 
 /// <summary>
 /// The immutable source and expected location of scanner rules. This declaration cannot
-/// select a volume, mount, network, helper image, or backend option.
+/// select a volume, mount, network, helper image, or backend option. A null
+/// <paramref name="Subpath"/> stages the whole tree; otherwise only that directory is checked
+/// out, keeping its position under <paramref name="ContainerPath"/>.
 /// </summary>
-internal sealed record PinnedRules(string RepositoryUrl, string Commit, string ContainerPath)
+internal sealed record PinnedRules(string RepositoryUrl, string Commit, string ContainerPath, string? Subpath = null)
 {
     internal void Validate(string tool)
     {
@@ -30,5 +32,10 @@ internal sealed record PinnedRules(string RepositoryUrl, string Commit, string C
             throw new ConfigException(
                 $"Scanner {tool}: rules container path must have at least two nonempty path segments, " +
                 "so staging cannot remove a top-level container directory");
+        if (Subpath is not null && (Subpath.Length == 0 || Subpath.StartsWith(':') || Subpath.Any(char.IsControl) ||
+            Subpath.IndexOfAny(['\\', '*', '?', '[']) >= 0 || Subpath.Split('/').Any(part => part is "" or "." or "..")))
+            throw new ConfigException(
+                $"Scanner {tool}: rules subpath must be a nonempty canonical relative POSIX path without glob or pathspec syntax, " +
+                "so the checkout selects exactly the declared directory");
     }
 }
