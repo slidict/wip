@@ -43,6 +43,8 @@ public class VolumeLifecycleTests
         public readonly List<string[]> Calls = [];
         public readonly Dictionary<string, Stored> Volumes = [];
         public readonly Dictionary<string, string[]> Containers = [];
+        public readonly Dictionary<string, Dictionary<string, string>> ContainerLabels = [];
+        public bool LabelsUnderConfig;
         public string ContainerState = "running";
         public int MutationCode;
         public int ProbeCode;
@@ -65,6 +67,22 @@ public class VolumeLifecycleTests
             return name;
         }
 
+        private Dictionary<string, object> Inspect(string containerId)
+        {
+            var record = new Dictionary<string, object>
+            {
+                ["Id"] = containerId,
+                ["State"] = new { Status = ContainerState },
+                ["Mounts"] = Containers[containerId].Select(name => new { Type = "volume", Name = name }),
+            };
+            if (ContainerLabels.TryGetValue(containerId, out var labels))
+            {
+                if (LabelsUnderConfig) record["Config"] = new { Labels = labels };
+                else record["Labels"] = labels;
+            }
+            return record;
+        }
+
         public SandboxCommandResult Run(IReadOnlyList<string> argv, TimeSpan timeout, SandboxConsoleMode console)
         {
             Calls.Add(argv.ToArray());
@@ -79,8 +97,7 @@ public class VolumeLifecycleTests
                 }
                 if (argv[0] == "volume") return new(0, JsonSerializer.Serialize(new[] { Volumes[argv[^1]] }));
                 if (argv[0] == "list") return new(0, JsonSerializer.Serialize(Containers.Keys.Select(id => new { ID = id, State = ContainerState })));
-                return new(0, ContainerInspectOutput ?? JsonSerializer.Serialize(argv.Skip(5).Select(containerId => new { Id = containerId, State = new { Status = ContainerState },
-                    Mounts = Containers[containerId].Select(name => new { Type = "volume", Name = name }) })));
+                return new(0, ContainerInspectOutput ?? JsonSerializer.Serialize(argv.Skip(5).Select(Inspect)));
             }
             Assert.Equal(TimeSpan.FromMinutes(2), timeout);
             Assert.DoesNotContain("--force", argv);
@@ -293,6 +310,78 @@ public class VolumeLifecycleTests
         Assert.Throws<WipException>(() => new VolumeLifecycle(Settings(), fake.Run, usage).Reconcile("scratch"));
         Assert.True(fake.Volumes.ContainsKey(name));
         Assert.Contains(name, usage.Used);
+        Assert.DoesNotContain(fake.Calls, c => c[1] == "remove");
+    }
+
+    private static Dictionary<string, string> MirrorOf(string logicalName) =>
+        new() { [VolumeLifecycle.MirrorLabel] = $"v1:test:volume:{logicalName}" };
+
+    /// <summary>
+    /// The mirror is not a use, but it still holds the storage: it stays in the reference list so
+    /// the removal guards refuse while it runs.
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void RunningOwnMirrorIsNotAUseYetStillBlocksRemoval(bool underConfig)
+    {
+        var fake = new Fake { LabelsUnderConfig = underConfig }; var usage = new Usage();
+        var name = fake.Add("scratch", false);
+        fake.Containers["mirror"] = [name]; fake.ContainerLabels["mirror"] = MirrorOf("scratch");
+        var service = new VolumeLifecycle(Settings(), fake.Run, usage);
+        var status = service.Status("scratch");
+        Assert.Equal(["mirror"], status.References);
+        Assert.False(status.WasUsed);
+        Assert.Empty(usage.Used);
+        Assert.Throws<WipException>(() => service.Destroy("scratch"));
+        Assert.True(fake.Volumes.ContainsKey(name));
+        Assert.DoesNotContain(fake.Calls, c => c[1] == "remove");
+    }
+
+    /// <summary>
+    /// Usage is durable per generation, so a volume attached earlier is still marked used when the
+    /// mirror runs. Reconcile must read the mirror as a reference, or it deletes what it populated.
+    /// </summary>
+    [Fact]
+    public void ReconcileDuringOwnMirrorKeepsAGenerationAlreadyMarkedUsed()
+    {
+        var fake = new Fake(); var usage = new Usage();
+        var name = fake.Add("scratch", false); usage.Used.Add(name);
+        fake.Containers["mirror"] = [name]; fake.ContainerLabels["mirror"] = MirrorOf("scratch");
+        Assert.Equal(0, new VolumeLifecycle(Settings(), fake.Run, usage).Reconcile("scratch"));
+        Assert.True(fake.Volumes.ContainsKey(name));
+        Assert.DoesNotContain(fake.Calls, c => c[1] == "remove");
+    }
+
+    [Fact]
+    public void CreateAndReconcileDuringOwnMirrorKeepTheJustPopulatedGeneration()
+    {
+        var fake = new Fake(); var usage = new Usage();
+        var service = new VolumeLifecycle(Settings(), fake.Run, usage);
+        Assert.Equal(0, service.Create("scratch"));
+        var name = service.Status("scratch").BackendName!;
+        fake.Containers["mirror"] = [name]; fake.ContainerLabels["mirror"] = MirrorOf("scratch");
+        Assert.Equal(0, service.Create("scratch"));
+        Assert.Equal(0, service.Reconcile("scratch"));
+        Assert.Equal(0, service.Reconcile("scratch"));
+        Assert.Empty(usage.Used);
+        Assert.True(fake.Volumes.ContainsKey(name));
+        Assert.DoesNotContain(fake.Calls, c => c[1] == "remove");
+    }
+
+    [Fact]
+    public void ContainersOtherThanTheVolumesOwnMirrorStillCountAsReferences()
+    {
+        var fake = new Fake(); var usage = new Usage();
+        var name = fake.Add("scratch", false);
+        fake.Containers["bare"] = [name];
+        fake.Containers["unrelated"] = [name]; fake.ContainerLabels["unrelated"] = new() { ["com.example.role"] = "app" };
+        fake.Containers["other-mirror"] = [name]; fake.ContainerLabels["other-mirror"] = MirrorOf("data");
+        var service = new VolumeLifecycle(Settings(), fake.Run, usage);
+        Assert.Equal(["bare", "unrelated", "other-mirror"], service.Status("scratch").References);
+        Assert.Contains(name, usage.Used);
+        Assert.Throws<WipException>(() => service.Destroy("scratch"));
+        Assert.True(fake.Volumes.ContainsKey(name));
         Assert.DoesNotContain(fake.Calls, c => c[1] == "remove");
     }
 }

@@ -31,6 +31,7 @@ public sealed class VolumeLifecycle(SandboxSettings settings, SandboxBackend bac
     public const string OwnerLabel = "io.slidict.wip.owner";
     public const string PolicyLabel = "io.slidict.wip.persistent";
     public const string InstanceLabel = "io.slidict.wip.instance";
+    public const string MirrorLabel = "io.slidict.wip.mirror";
     private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan MutationTimeout = TimeSpan.FromMinutes(2);
     /// <summary>
@@ -76,9 +77,11 @@ public sealed class VolumeLifecycle(SandboxSettings settings, SandboxBackend bac
         var definition = Definition(name);
         var candidate = Find(name);
         if (candidate is null) return new(name, null, definition.Persistent, [], false);
-        var references = References(candidate);
+        var (references, ownMirrors) = References(candidate, Identity(name));
         // Write only after the entire scan succeeded. Failed/partial scans never imply detach.
-        if (references.Count != 0) usage.MarkUsed(candidate);
+        // The volume's own sync mirror is not a use: marking it would let Reconcile remove what
+        // the mirror just populated. It stays in References, so the removal guards still refuse it.
+        if (references.Count != ownMirrors) usage.MarkUsed(candidate);
         return new(name, candidate, definition.Persistent, references, usage.WasUsed(candidate));
     }
 
@@ -148,6 +151,7 @@ public sealed class VolumeLifecycle(SandboxSettings settings, SandboxBackend bac
         {
             "run",
             "--rm",
+            "--label", $"{MirrorLabel}={Identity(name)}",
             "-v", $"{hostSource}:{sync.Mount}:ro",
             "--mount", $"type=volume,source={status.BackendName},target={definition.Mount}",
             sync.Image,
@@ -157,7 +161,8 @@ public sealed class VolumeLifecycle(SandboxSettings settings, SandboxBackend bac
         return backend(arguments, MirrorTimeout, SandboxConsoleMode.Stream).Code;
     }
 
-    private IReadOnlyList<string> References(string backendName)
+    /// <summary>Every reference, and how many of them are this volume's own sync mirror.</summary>
+    private (IReadOnlyList<string> All, int OwnMirrors) References(string backendName, string identity)
     {
         var started = clock.GetTimestamp();
         TimeSpan Remaining()
@@ -167,6 +172,7 @@ public sealed class VolumeLifecycle(SandboxSettings settings, SandboxBackend bac
             return remaining;
         }
         var references = new List<string>();
+        var mirrors = new List<string>();
         var ids = new List<string>();
         var rows = Records(Probe(["list", "--all", "--format", "json"], Remaining()), allowEmpty: true);
         foreach (var row in rows)
@@ -193,6 +199,7 @@ public sealed class VolumeLifecycle(SandboxSettings settings, SandboxBackend bac
                 if (matches.Length != 1 || !matched.Add(matches[0]) || !inspectedIds.Add(fullId!))
                     throw new WipException("Container identity changed or duplicated during volume reference scan");
                 if (ContainerState(container) == "deleted") continue;
+                var ownMirror = MirrorOf(container) == identity;
                 if (!container.TryGetProperty("Mounts", out var mounts) || mounts.ValueKind != JsonValueKind.Array)
                     throw new WipException("Volume reference scan omitted mounts; detach is unknown");
                 foreach (var mount in mounts.EnumerateArray())
@@ -201,12 +208,24 @@ public sealed class VolumeLifecycle(SandboxSettings settings, SandboxBackend bac
                         throw new WipException("Volume reference scan returned malformed mount");
                     if (type != "volume") continue;
                     var volumeName = Text(mount, "Name") ?? throw new WipException("Volume reference scan omitted volume name");
-                    if (volumeName == backendName) references.Add(fullId!);
+                    if (volumeName != backendName) continue;
+                    references.Add(fullId!);
+                    if (ownMirror) mirrors.Add(fullId!);
                 }
             }
         }
         Remaining();
-        return references.Distinct(StringComparer.Ordinal).ToArray();
+        return (references.Distinct(StringComparer.Ordinal).ToArray(), mirrors.Distinct(StringComparer.Ordinal).Count());
+    }
+
+    // Labels are optional: foreign containers carry none and must still be counted.
+    private static string? MirrorOf(JsonElement container)
+    {
+        if ((container.TryGetProperty("Labels", out var labels) && labels.ValueKind == JsonValueKind.Object) ||
+            (container.TryGetProperty("Config", out var config) && config.ValueKind == JsonValueKind.Object &&
+             config.TryGetProperty("Labels", out labels) && labels.ValueKind == JsonValueKind.Object))
+            return Text(labels, MirrorLabel);
+        return null;
     }
 
     private static string ContainerState(JsonElement record)

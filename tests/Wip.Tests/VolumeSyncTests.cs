@@ -112,6 +112,7 @@ public class VolumeSyncTests
         Assert.Equal(
         [
             "run", "--rm",
+            "--label", "io.slidict.wip.mirror=v1:test:volume:src",
             "-v", "C:/host/workspace:/host-src:ro",
             "--mount", $"type=volume,source={backend},target=/workspace/src",
             "mirror:1",
