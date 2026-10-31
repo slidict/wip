@@ -63,7 +63,9 @@ internal sealed partial class CliContext
         error.WriteLine(
             $"{outcome.Tool}\t{outcome.Sandbox}\t{outcome.Network}\t{outcome.Image}\trules={outcome.RulesVersion}\texit={outcome.ExitCode}\tstatus={(outcome.TimedOut ? "timeout" : "exited")}");
         if (outcome.Report is { } report) WriteSecurityReport(output, report, isOutputRedirected);
-        else if (outcome.TimedOut) error.WriteLine($"{outcome.Tool}: timed out; requested sandbox stop without collecting a partial report");
+        else if (outcome.TimedOut) error.WriteLine(outcome.StopError is null
+            ? $"{outcome.Tool}: timed out; the sandbox was stopped without collecting a partial report"
+            : $"{outcome.Tool}: timed out without collecting a partial report; the sandbox did not confirm a stop, so the scanner may still be running");
         else if (outcome.ReportError is { } reason) error.WriteLine($"{outcome.Tool}: {reason}");
         else error.WriteLine($"{outcome.Tool}: wrote no report at {reportPath}");
         // An empty sidecar is reported, not printed as a bare header. A header with nothing
@@ -98,6 +100,14 @@ internal sealed partial class CliContext
             error.Write($"{outcome.Tool}: result persistence failed: ");
             WriteSecurityReport(error, persistenceError, isErrorRedirected);
             error.WriteLine();
+        }
+        // A line of its own rather than a header field, so the header's format stays as
+        // consumers parse it. The message can carry backend text, so it is escaped too.
+        if (outcome.StopError is { } stopError)
+        {
+            error.Write($"{outcome.Tool}: ");
+            WriteSecurityReport(error, stopError, isErrorRedirected);
+            error.WriteLine("; check sandbox status");
         }
         return outcome.ProcessExitCode;
     }

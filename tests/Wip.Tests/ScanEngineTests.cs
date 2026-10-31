@@ -114,7 +114,8 @@ public class ScanEngineTests
         public bool ReportTimedOut;
         public bool ReportLimitExceeded;
         public bool ReportThrows;
-        public bool StopThrows;
+        public Exception? StopFailure;
+        public int StopCode;
         public Action? BeforeStop;
         public Action? AfterExec;
 
@@ -277,7 +278,8 @@ public class ScanEngineTests
             if (argv[0] == "stop")
             {
                 BeforeStop?.Invoke();
-                if (StopThrows) throw new InvalidOperationException("stop failed unexpectedly");
+                if (StopFailure is not null) throw StopFailure;
+                if (StopCode != 0) return new(StopCode, "");
                 ContainerState = "exited";
                 return new(0, "");
             }
@@ -1539,13 +1541,69 @@ public class ScanEngineTests
     }
 
     [Fact]
-    public void AnUnexpectedStopExceptionDoesNotAttemptASecondStop()
+    public void AnUnexpectedStopExceptionKeepsTheOutcomeAndIsReported()
     {
-        var fake = new Fake { ExecCode = CommandRunner.TimeoutExitCode, ExecTimedOut = true, StopThrows = true };
+        var fake = new Fake { ExecCode = CommandRunner.TimeoutExitCode, ExecTimedOut = true,
+            StopFailure = new InvalidOperationException("stop failed unexpectedly") };
 
-        Assert.Throws<InvalidOperationException>(() => Engine(fake).Run(new StubScanner(), "scanner", ValidPlan(), new ScanTarget("http://app.test:8080")));
+        var outcome = Engine(fake).Run(new StubScanner(), "scanner", ValidPlan(), new ScanTarget("http://app.test:8080"));
 
+        Assert.True(outcome.TimedOut);
+        Assert.Equal(ScanEngine.IncompleteExitCode, outcome.ProcessExitCode);
+        Assert.Equal("timeout", outcome.Result!.IncompleteReason);
+        Assert.Contains("stop failed unexpectedly", outcome.StopError);
         Assert.Single(fake.Calls, c => c[0] == "stop");
+    }
+
+    public static TheoryData<int, Exception?, string> StopFailures => new()
+    {
+        { 5, null, "exit 5" },
+        { 0, new WipException("stop did not confirm"), "stop did not confirm" },
+    };
+
+    [Theory]
+    [MemberData(nameof(StopFailures))]
+    public void AFailedStopIsReportedBesideTheOutcome(int stopCode, Exception? stopFailure, string expected)
+    {
+        var fake = new Fake { ExecCode = 2, StopCode = stopCode, StopFailure = stopFailure };
+
+        var outcome = Engine(fake).Run(new StubScanner(), "scanner", ValidPlan(), new ScanTarget("http://app.test:8080"));
+
+        Assert.Equal(2, outcome.ExitCode);
+        Assert.Equal(fake.Report, outcome.Report);
+        Assert.Contains(expected, outcome.StopError);
+
+        using var output = new StringWriter();
+        using var error = new StringWriter();
+        CliContext.WriteScanOutcome(outcome, "/out/report.json", output, error, isOutputRedirected: true, isErrorRedirected: true);
+        Assert.Equal(fake.Report, output.ToString());
+        Assert.Contains("stub: sandbox stop failed", error.ToString());
+        Assert.Contains(expected, error.ToString());
+    }
+
+    [Fact]
+    public void AConfirmedStopReportsNoStopError()
+    {
+        var fake = new Fake();
+
+        var outcome = Engine(fake).Run(new StubScanner(), "scanner", ValidPlan(), new ScanTarget("http://app.test:8080"));
+
+        Assert.Null(outcome.StopError);
+    }
+
+    [Fact]
+    public void ATimeoutWhoseStopFailedSaysTheScannerMayStillBeRunning()
+    {
+        var fake = new Fake { ExecCode = CommandRunner.TimeoutExitCode, ExecTimedOut = true, StopCode = 1 };
+
+        var outcome = Engine(fake).Run(new StubScanner(), "scanner", ValidPlan(), new ScanTarget("http://app.test:8080"));
+
+        using var output = new StringWriter();
+        using var error = new StringWriter();
+        CliContext.WriteScanOutcome(outcome, "/out/report.json", output, error, isOutputRedirected: true, isErrorRedirected: true);
+        Assert.Contains("timed out without collecting a partial report; the sandbox did not confirm a stop, so the scanner may still be running", error.ToString());
+        Assert.Contains("sandbox stop failed (exit 1)", error.ToString());
+        Assert.DoesNotContain("the sandbox was stopped", error.ToString());
     }
 
     [Fact]
@@ -1602,7 +1660,8 @@ public class ScanEngineTests
         var code = CliContext.WriteScanOutcome(outcome, plan.ReportPath, output, error,
             isOutputRedirected: true, isErrorRedirected: true);
         Assert.Equal(70, code);
-        Assert.Contains("timed out; requested sandbox stop without collecting a partial report", error.ToString());
+        Assert.Contains("timed out; the sandbox was stopped without collecting a partial report", error.ToString());
+        Assert.DoesNotContain("stop failed", error.ToString());
         Assert.Contains("unperformed-check diagnostics unavailable: scan timed out before diagnostics could be collected", error.ToString());
         Assert.DoesNotContain("wrote no report", error.ToString());
     }
