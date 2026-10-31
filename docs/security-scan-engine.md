@@ -217,7 +217,9 @@ exit code. A timed-out run says on stderr whether the stop was confirmed:
 `<tool>: timed out; the sandbox was stopped without collecting a partial report`, or
 `<tool>: timed out without collecting a partial report; the sandbox did not confirm a stop, so the scanner may still be running`.
 When the scan itself fails and the stop also fails, the stop failure is appended to the
-scan's error message instead.
+scan's error message instead -- for the error types wip raises itself, which is every handled
+failure. An exception of any other type means a defect; it is rethrown unchanged, carrying the
+stop failure in its `Data` under `wip.sandbox-stop-error`, which nothing reads today (#307).
 
 The JSON contract is versioned and written through `Utf8JsonWriter`:
 
