@@ -84,7 +84,8 @@ jobs:
           # pwsh with no console of its own, so the property has nothing to govern. Reading
           # the pipe directly does not depend on any of that: StandardOutputEncoding states
           # the encoding for this one child, whatever the host's console is. Returns the
-          # child's exit code, since the caller can no longer read $LASTEXITCODE for it.
+          # child's exit code and its output together, since the caller can no longer read
+          # $LASTEXITCODE for it and the text is gone once this returns.
           function Show-Wsl([string[]] $WslArgs) {
               $psi = [System.Diagnostics.ProcessStartInfo]::new('wsl.exe')
               foreach ($argument in $WslArgs) { $psi.ArgumentList.Add($argument) }
@@ -100,15 +101,26 @@ jobs:
               $process.WaitForExit()
 
               foreach ($text in @($out, $err)) { if ($text.Trim()) { Write-Host $text.TrimEnd() } }
-              return $process.ExitCode
+              return @{ Code = $process.ExitCode; Text = ($out + "`n" + $err) }
           }
 
-          # Hosted runners can be denied access to the Store update endpoint.
-          # Use the stable GitHub distribution directly; the next step verifies WSLC.
-          $code = Show-Wsl @('--update', '--web-download')
+          # Hosted runners are intermittently denied the Store update endpoint, which exits
+          # non-zero with WSL already installed and usable. Report that and carry on: the next
+          # step verifies WSLC, and it is what decides whether this job can run. The reason goes
+          # in the annotation because the exit code is -1 for a refusal as much as for a real
+          # failure, and WSL prints the cause far above the end of a collapsed log group.
+          $update = Show-Wsl @('--update', '--web-download')
           Show-Wsl @('--shutdown') | Out-Null
           Show-Wsl @('--version') | Out-Null
-          if ($code -ne 0) { throw "wsl --update --web-download exited $code" }
+          if ($update.Code -ne 0) {
+              # Both lines matter and WSL prints them in either order: the parenthesised status
+              # is the cause a reader understands, the Error code is what they can search for.
+              $reasons = $update.Text -split "\r?\n" | ForEach-Object { $_.Trim() } |
+                  Where-Object { $_ -match 'Error code:|\(\d{3}\)' } |
+                  Select-Object -Unique -First 3
+              $detail = if ($reasons) { $reasons -join ' ' } else { 'no reason this step recognises.' }
+              Write-Host "::warning title=WSL update did not apply::wsl --update --web-download exited $($update.Code); the next step decides whether this job can run. WSL reported: $detail"
+          }
 
       # Kept separate from the test itself so a runner image without WSLC reports that in one
       # line, instead of as a wip command failing for reasons that have nothing to do with wip.
