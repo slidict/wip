@@ -236,6 +236,21 @@ public sealed class SyncSettings
             throw new ConfigException("sync.mount must be an absolute path");
         }
 
+        if (Target.Contains(':'))
+        {
+            throw new ConfigException("sync.target must not contain colons");
+        }
+
+        if (Mount.Contains(':'))
+        {
+            throw new ConfigException("sync.mount must not contain colons");
+        }
+
+        if (Volume.Contains(':'))
+        {
+            throw new ConfigException("sync.volume must not contain colons");
+        }
+
         if (Mount.TrimEnd('/') == Target.TrimEnd('/'))
         {
             throw new ConfigException("sync.mount must differ from sync.target");
