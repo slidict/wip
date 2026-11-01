@@ -352,19 +352,18 @@ public sealed class CommandBuilder
     }
 
     /// <summary>
-    /// WSLC's <c>--entrypoint</c> replaces only the executable. Compose exec-form entrypoints
-    /// may also contain arguments, so append everything after the executable in front of the
-    /// service command rather than passing the whole joined value as an executable name. Only
-    /// done when there is an actual command/argv, though: with none, wslc run (like Docker)
-    /// falls back to the image's own CMD as the new entrypoint's arguments, and splicing in
-    /// entrypoint arguments here would wrongly occupy that slot and suppress the image's CMD.
+    /// WSLC's <c>--entrypoint</c> takes the executable only, so a Compose exec-form
+    /// entrypoint's own arguments have to travel as operands, ahead of the service command.
+    /// They are emitted whether or not that command exists: the override clears the image's
+    /// CMD (measured against wslc 3.0.3.0, see #302), so with no command they are the only
+    /// operands rather than a slot the CMD would have filled.
     /// </summary>
     private static IEnumerable<string> ContainerArguments(
         OrderedDictionary<string, object?> values,
         IEnumerable<string> arguments)
     {
         var command = arguments as IReadOnlyCollection<string> ?? arguments.ToList();
-        return command.Count > 0 && Entrypoint(values) is { } entrypoint
+        return Entrypoint(values) is { } entrypoint
             ? entrypoint.Arguments.Concat(command)
             : command;
     }
