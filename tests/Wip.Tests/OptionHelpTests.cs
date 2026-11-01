@@ -49,6 +49,20 @@ public class OptionHelpTests
         Assert.Equal("", string.Join(", ", missing));
     }
 
+    [Fact]
+    public void LifecycleSummariesReadAsRemovalAndKeepPersistentVolumes()
+    {
+        var root = Program.BuildRoot();
+        var volume = root.Subcommands.Single(command => command.Name == "volume");
+        var reconcile = volume.Subcommands.Single(command => command.Name == "reconcile");
+        var sandbox = root.Subcommands.Single(command => command.Name == "sandbox");
+        var destroy = sandbox.Subcommands.Single(command => command.Name == "destroy");
+
+        Assert.Contains("Remove", reconcile.Description!, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("creat", reconcile.Description!, StringComparison.OrdinalIgnoreCase);
+        Assert.Matches(@"(?i)\b(?:keep\w*|retain\w*|preserv\w*)\s+persistent\s+volumes\b|\bpersistent\s+volumes\s+(?:are\s+)?(?:kept|retained|preserved)\b", destroy.Description!);
+    }
+
     private static IEnumerable<Command> Commands(Command command)
     {
         yield return command;

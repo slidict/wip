@@ -242,7 +242,7 @@ internal static class Program
             ("create", "Create the named sandbox and its declared volumes, or resume it if it exists"),
             ("status", "Print the named sandbox's state, container and owning declaration"),
             ("stop", "Stop the named sandbox, keeping it and its volumes for a later create"),
-            ("destroy", "Remove the named sandbox and the volumes it owns exclusively"),
+            ("destroy", "Remove the named sandbox, its container and exclusively owned ephemeral volumes, keeping persistent volumes"),
             ("exec", "Run a command inside the named sandbox"),
             ("attach", "Attach this terminal to the named sandbox's running container"),
         })
@@ -321,7 +321,7 @@ internal static class Program
             ("create", "Create the named volume if it does not exist yet"),
             ("status", "Print the named volume's state and the declaration that owns it"),
             ("destroy", "Remove the named volume and the data it holds"),
-            ("reconcile", "Bring the named volume back in line with its declaration, recreating an ephemeral one"),
+            ("reconcile", "Remove the named ephemeral volume after use if unreferenced, keeping persistent or still referenced volumes"),
             ("sync", "Mirror the host directory the named volume declares in volumes[].sync into it"),
         })
         {
