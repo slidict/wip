@@ -96,30 +96,40 @@ jobs:
               $psi.StandardErrorEncoding = [System.Text.Encoding]::Unicode
 
               $process = [System.Diagnostics.Process]::Start($psi)
+              # One pipe is read asynchronously: a child that fills stderr while the parent is
+              # blocked on stdout deadlocks, and here that means hanging to the job timeout.
+              $errorRead = $process.StandardError.ReadToEndAsync()
               $out = $process.StandardOutput.ReadToEnd()
-              $err = $process.StandardError.ReadToEnd()
+              $err = $errorRead.GetAwaiter().GetResult()
               $process.WaitForExit()
 
               foreach ($text in @($out, $err)) { if ($text.Trim()) { Write-Host $text.TrimEnd() } }
               return @{ Code = $process.ExitCode; Text = ($out + "`n" + $err) }
           }
 
-          # Hosted runners are intermittently denied the Store update endpoint, which exits
-          # non-zero with WSL already installed and usable. Report that and carry on: the next
-          # step verifies WSLC, and it is what decides whether this job can run. The reason goes
-          # in the annotation because the exit code is -1 for a refusal as much as for a real
-          # failure, and WSL prints the cause far above the end of a collapsed log group.
+          # --web-download takes the stable GitHub distribution rather than the Store, and is
+          # kept for that reason -- but hosted runners are intermittently denied that endpoint
+          # too, and WSL then exits non-zero with WSL already installed and usable. A refusal
+          # is reported and the job carries on, because `Verify wslc is available` is what
+          # decides whether it can run. Anything else still fails here: -1 is what a refusal
+          # and a broken install both return, so the output is the only thing that tells them
+          # apart, and a half-applied update must not be left to surface as a lifecycle bug.
           $update = Show-Wsl @('--update', '--web-download')
           Show-Wsl @('--shutdown') | Out-Null
           Show-Wsl @('--version') | Out-Null
           if ($update.Code -ne 0) {
-              # Both lines matter and WSL prints them in either order: the parenthesised status
-              # is the cause a reader understands, the Error code is what they can search for.
+              # Every distinct reason line, in the order WSL printed them: the parenthesised
+              # status is the cause a reader understands, the Error code is what they can
+              # search for, and the same line often arrives on both stdout and stderr.
+              # -Unique and -First are separate stages on purpose -- in one Select-Object,
+              # -First is applied first and duplicates eat the budget.
               $reasons = $update.Text -split "\r?\n" | ForEach-Object { $_.Trim() } |
                   Where-Object { $_ -match 'Error code:|\(\d{3}\)' } |
-                  Select-Object -Unique -First 3
-              $detail = if ($reasons) { $reasons -join ' ' } else { 'no reason this step recognises.' }
-              Write-Host "::warning title=WSL update did not apply::wsl --update --web-download exited $($update.Code); the next step decides whether this job can run. WSL reported: $detail"
+                  Select-Object -Unique | Select-Object -First 3
+              if (-not $reasons) {
+                  throw "wsl --update --web-download exited $($update.Code) and named no refusal this step recognises; treat WSL as unusable and read the output above"
+              }
+              Write-Host "::warning title=WSL update was refused::wsl --update --web-download exited $($update.Code); the next step decides whether this job can run. WSL reported: $($reasons -join ' ')"
           }
 
       # Kept separate from the test itself so a runner image without WSLC reports that in one
@@ -229,8 +239,11 @@ jobs:
               $psi.StandardErrorEncoding = [System.Text.Encoding]::Unicode
 
               $process = [System.Diagnostics.Process]::Start($psi)
+              # One pipe is read asynchronously: a child that fills stderr while the parent is
+              # blocked on stdout deadlocks, and here that means hanging to the job timeout.
+              $errorRead = $process.StandardError.ReadToEndAsync()
               $out = $process.StandardOutput.ReadToEnd()
-              $err = $process.StandardError.ReadToEnd()
+              $err = $errorRead.GetAwaiter().GetResult()
               $process.WaitForExit()
 
               foreach ($text in @($out, $err)) { if ($text.Trim()) { Write-Host $text.TrimEnd() } }
