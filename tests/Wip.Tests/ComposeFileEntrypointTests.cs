@@ -49,7 +49,7 @@ public class ComposeFileEntrypointTests
     }
 
     [Fact]
-    public void ExecFormEntrypointWithoutCommandLeavesTheImageCmdIntact()
+    public void ExecFormEntrypointWithoutCommandPassesEntrypointArguments()
     {
         using var directory = new TemporaryDirectory();
         var composePath = Path.Combine(directory.Path, "compose.yml");
@@ -68,13 +68,11 @@ public class ComposeFileEntrypointTests
             """, allowAliases: false), Path.Combine(directory.Path, "wip.yml"));
         var builder = new CommandBuilder("wslc.exe", config, new FakeEnvironment());
 
-        // No command: means no argv, so wslc (like Docker) must fall back to the image's own
-        // CMD for the new entrypoint's arguments -- "--verbose" must not be spliced in here,
-        // or it would occupy that slot and suppress the image's CMD.
+        // The entrypoint override clears the image's CMD, so its own arguments must be emitted.
         Assert.Equal(
             [
                 "wslc.exe", "run", "--name", "app", "--network", directory.Name, "-d",
-                "--entrypoint", "/usr/local/bin/start", "myapp:dev",
+                "--entrypoint", "/usr/local/bin/start", "myapp:dev", "--verbose",
             ],
             builder.Up(detach: true));
     }
