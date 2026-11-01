@@ -91,7 +91,10 @@ execution, so normalized output does not depend on the invoking directory. `imag
 the mirror runs in a throwaway container of its own, and the images that mount the volume are
 not guaranteed to carry rsync. A leading `-` in `image` or an `exclude` entry, a
 `mount` equal to the volume's own destination, a non-canonical `mount`, a comma in
-`source`/`mount`, a non-boolean `delete` and any other key are rejected at load.
+`source`/`mount`, a colon in `mount`, a non-boolean `delete` and any other key are rejected at load.
+`source` allows colons because a Windows host path contains a drive-letter colon.
+The separate top-level `sync:` block also rejects colons in `mount`, `target` and `volume`
+at load, while allowing them in `source` for the same Windows host path reason.
 
 `wip volume sync` resolves the volume's current generation, then runs
 `run --rm -v <source>:<sync.mount>:ro --mount type=volume,source=<generation>,target=<mount> <image> rsync …`.

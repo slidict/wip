@@ -132,6 +132,29 @@ public class SandboxSettingsTests
     [InlineData("volumes: [{name: data, persistent: true, mount: /data, sync: {image: m, exclude: .git}}]")]
     public void InvalidResourcesFailAtConfigLoad(string yaml) => Assert.Throws<ConfigException>(() => Load("resource_namespace: example\n" + yaml));
 
+    [Theory]
+    [InlineData("{image: m, mount: '/host:src'}")]
+    [InlineData("{image: m, mount: '/host-src,ro'}")]
+    public void InvalidSyncMountFailsAtConfigLoad(string sync)
+    {
+        var error = Assert.Throws<ConfigException>(() => Load(
+            "resource_namespace: example\nvolumes: [{name: data, persistent: true, mount: /data, sync: " + sync + "}]"));
+
+        Assert.Contains("volumes.data.sync.mount", error.Message);
+    }
+
+    [Fact]
+    public void DeclaredSyncAllowsColonInSource()
+    {
+        // Windows host paths contain a drive-letter colon.
+        var config = Load("""
+            resource_namespace: example
+            volumes: [{name: data, persistent: true, mount: /data, sync: {image: m, source: 'C:\Users\src'}}]
+            """);
+
+        Assert.Equal(@"C:\Users\src", config.SandboxResources.Volumes[0].Sync!.Source);
+    }
+
     [Fact]
     public void DeclaredSyncKeepsItsSourceRawAndDefaultsTheRest()
     {

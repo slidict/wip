@@ -251,6 +251,7 @@ public sealed partial class SandboxSettings
         if (source.Contains(',')) throw new ConfigException($"{path}.source cannot contain commas");
         var mount = entry.ContainsKey("mount") ? Text(entry, "mount", path) : "/host-src";
         if (mount.Contains(',')) throw new ConfigException($"{path}.mount cannot contain commas");
+        if (mount.Contains(':')) throw new ConfigException($"{path}.mount cannot contain colons");
         if (!mount.StartsWith('/') || (mount != "/" && mount[1..].Split('/').Any(part => part is "" or "." or "..")))
             throw new ConfigException($"{path}.mount must be a canonical absolute Linux path");
         // rsync copies the mount's contents into the target, so an overlapping pair would make
