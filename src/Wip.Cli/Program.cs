@@ -242,7 +242,7 @@ internal static class Program
             ("create", "Create the named sandbox and its declared volumes, or resume it if it exists"),
             ("status", "Print the named sandbox's state, container and owning declaration"),
             ("stop", "Stop the named sandbox, keeping it and its volumes for a later create"),
-            ("destroy", "Remove the named sandbox, its container and exclusively owned ephemeral volumes, keeping persistent volumes"),
+            ("destroy", "Remove the named sandbox and its container, plus used ephemeral volumes no container still references, keeping persistent volumes"),
             ("exec", "Run a command inside the named sandbox"),
             ("attach", "Attach this terminal to the named sandbox's running container"),
         })

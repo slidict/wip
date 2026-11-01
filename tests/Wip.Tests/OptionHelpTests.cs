@@ -60,6 +60,7 @@ public class OptionHelpTests
 
         Assert.Contains("Remove", reconcile.Description!, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("creat", reconcile.Description!, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("exclusiv", destroy.Description!, StringComparison.OrdinalIgnoreCase);
         Assert.Matches(@"(?i)\b(?:keep\w*|retain\w*|preserv\w*)\s+persistent\s+volumes\b|\bpersistent\s+volumes\s+(?:are\s+)?(?:kept|retained|preserved)\b", destroy.Description!);
     }
 
