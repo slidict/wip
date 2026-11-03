@@ -212,8 +212,11 @@ scanner's completed status. Verify that `result.json` was published before consu
 
 The sandbox is stopped after persistence. If the stop is not confirmed, the CLI writes
 `<tool>: sandbox stop failed (exit <code>); check sandbox status`, or
-`<tool>: sandbox stop failed: <reason>; check sandbox status`, to stderr. It does not change the
-exit code. A timed-out run says on stderr whether the stop was confirmed:
+`<tool>: sandbox stop failed: <reason>; check sandbox status`, to stderr. It changes the exit
+code only where the exit would otherwise be `0`, which is the `75` described below; `70`, `73`,
+`74` and a scanner's own nonzero status are left as they are, so a timed-out run whose stop also
+failed still exits on its own code with the stop reported only on stderr.
+A timed-out run says on stderr whether the stop was confirmed:
 `<tool>: timed out; the sandbox was stopped without collecting a partial report`, or
 `<tool>: timed out without collecting a partial report; the sandbox did not confirm a stop, so the scanner may still be running`.
 When the scan itself fails and the stop also fails, the stop failure is appended to the
