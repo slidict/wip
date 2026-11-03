@@ -115,7 +115,10 @@ public class VolumeLifecycleTests
             Assert.Equal(TimeSpan.FromMinutes(2), timeout);
             Assert.DoesNotContain("--force", argv);
             Assert.DoesNotContain("prune", argv);
-            if (argv[0] == "run" && MutationCode == 0)
+            // Scoped to the sandbox, like the filtered list above: VolumeLifecycle.Sync starts the
+            // mirror with run too, and registering that as the sandbox would present the mirror as
+            // a foreign reference and invert the own-mirror semantics this class pins.
+            if (Sandbox is not null && argv[0] == "run" && MutationCode == 0)
             {
                 SandboxRunning = true;
                 // A created sandbox mounts the volume, so every later scan counts it as a
