@@ -44,6 +44,8 @@ public class VolumeLifecycleTests
         public readonly Dictionary<string, Stored> Volumes = [];
         public readonly Dictionary<string, string[]> Containers = [];
         public readonly Dictionary<string, Dictionary<string, string>> ContainerLabels = [];
+        /// <summary>Only a sandbox needs names: its own inspect checks them, a volume scan does not.</summary>
+        public readonly Dictionary<string, string[]> ContainerNames = [];
         public bool LabelsUnderConfig;
         public string ContainerState = "running";
         public int MutationCode;
@@ -55,6 +57,8 @@ public class VolumeLifecycleTests
         /// <summary>Backend name of the one sandbox this fake answers for, once <c>run</c> has created it.</summary>
         public string? Sandbox;
         public bool SandboxRunning;
+        /// <summary>Runs when the sandbox container appears, which is after its volume's status scan.</summary>
+        public Action? OnSandboxRun;
         private int listCount;
 
         public string Add(string logicalName, bool persistent, string? instance = null)
@@ -78,6 +82,7 @@ public class VolumeLifecycleTests
                 ["State"] = new { Status = ContainerState },
                 ["Mounts"] = Containers[containerId].Select(name => new { Type = "volume", Name = name }),
             };
+            if (ContainerNames.TryGetValue(containerId, out var names)) record["Names"] = names;
             if (ContainerLabels.TryGetValue(containerId, out var labels))
             {
                 if (LabelsUnderConfig) record["Config"] = new { Labels = labels };
@@ -99,19 +104,29 @@ public class VolumeLifecycleTests
                     return new(0, ListOutput ?? JsonSerializer.Serialize(Volumes.Values.Select(v => new { v.Name })));
                 }
                 if (argv[0] == "volume") return new(0, JsonSerializer.Serialize(new[] { Volumes[argv[^1]] }));
-                // The sandbox's own probes filter by name or inspect its ID; the volume scan does neither.
+                // Only the sandbox's own list filters by name; the volume scan lists everything.
+                // Its inspect takes the same shape as the scan's, so one record serves both and
+                // the sandbox stays in Containers, where a scan sees the volume it mounts.
                 if (Sandbox is not null && argv[0] == "list" && argv.Contains("--filter"))
                     return new(0, SandboxRunning ? JsonSerializer.Serialize(new[] { new { ID = "sandbox", Names = new[] { Sandbox }, State = "running" } }) : "");
-                if (Sandbox is not null && argv[0] == "inspect" && argv[^1] == "sandbox")
-                    return new(0, JsonSerializer.Serialize(new[] { new { Id = "sandbox", Names = new[] { Sandbox }, State = "running",
-                        Labels = new Dictionary<string, string> { [SandboxLifecycle.OwnerLabel] = "v1:test:sandbox:first" } } }));
                 if (argv[0] == "list") return new(0, JsonSerializer.Serialize(Containers.Keys.Select(id => new { ID = id, State = ContainerState })));
                 return new(0, ContainerInspectOutput ?? JsonSerializer.Serialize(argv.Skip(5).Select(Inspect)));
             }
             Assert.Equal(TimeSpan.FromMinutes(2), timeout);
             Assert.DoesNotContain("--force", argv);
             Assert.DoesNotContain("prune", argv);
-            if (argv[0] == "run") SandboxRunning = MutationCode == 0;
+            if (argv[0] == "run" && MutationCode == 0)
+            {
+                SandboxRunning = true;
+                // A created sandbox mounts the volume, so every later scan counts it as a
+                // reference. Registering it is what makes the usage marking realistic.
+                var mounted = argv.Where(a => a.StartsWith("type=volume,source=", StringComparison.Ordinal))
+                    .Select(a => a.Split(',')[1]["source=".Length..]).ToArray();
+                Containers["sandbox"] = mounted;
+                ContainerNames["sandbox"] = [Sandbox!];
+                ContainerLabels["sandbox"] = new() { [SandboxLifecycle.OwnerLabel] = "v1:test:sandbox:first" };
+                OnSandboxRun?.Invoke();
+            }
             if (argv[1] == "create" && (MutationCode == 0 || LeaveResidue))
             {
                 var labels = new Dictionary<string, string>();
@@ -397,7 +412,10 @@ public class VolumeLifecycleTests
 
     /// <summary>
     /// Runs sandbox create against the real volume lifecycle, not a stub, so the own-mirror
-    /// exclusion is exercised on the path create takes to reach the volume.
+    /// exclusion is exercised on the path create takes to reach the volume. Create scans the
+    /// volume before it starts the container, so the mirror is the only reference at that
+    /// moment and usage must stay unmarked; the reconcile after the container exists sees the
+    /// sandbox's own mount and marks it, which is why the end state is used rather than empty.
     /// </summary>
     [Fact]
     public void SandboxCreateDuringOwnMirrorDoesNotMarkTheVolumeUsed()
@@ -417,10 +435,15 @@ public class VolumeLifecycleTests
         var fake = new Fake { Sandbox = SandboxLifecycle.BackendName("test", "first") }; var usage = new Usage();
         var name = fake.Add("scratch", false);
         fake.Containers["mirror"] = [name]; fake.ContainerLabels["mirror"] = MirrorOf("scratch");
+        string[]? usedWhenTheSandboxStarted = null;
+        fake.OnSandboxRun = () => usedWhenTheSandboxStarted = [.. usage.Used];
         var volumes = new VolumeLifecycle(settings, fake.Run, usage);
         Assert.Equal(0, new SandboxLifecycle(settings, fake.Run, volumes).Create("first"));
         Assert.Contains(fake.Calls, c => c[0] == "run" && c.Contains($"type=volume,source={name},target=/scratch"));
-        Assert.Empty(usage.Used);
+        // The own mirror was the only reference when create scanned the volume.
+        Assert.Empty(usedWhenTheSandboxStarted!);
+        // Once the sandbox exists its own mount is a reference, so the volume is in use.
+        Assert.Equal([name], usage.Used);
         Assert.True(fake.Volumes.ContainsKey(name));
     }
 }
