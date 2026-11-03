@@ -19,11 +19,7 @@ on:
     inputs:
       tag:
         description: Release tag to submit (e.g. v2.0.0).
-        required: false
-        type: string
-      repair_pr:
-        description: Existing microsoft/winget-pkgs PR number to repair instead of creating a new PR.
-        required: false
+        required: true
         type: string
 
 permissions:
@@ -48,7 +44,6 @@ jobs:
 
     steps:
       - name: Resolve version
-        if: inputs.repair_pr == ''
         id: resolve
         run: |
           set -euo pipefail
@@ -58,7 +53,7 @@ jobs:
       # branch. Otherwise a long-lived fork can make the pull request include unrelated old
       # commits or fail because its base has fallen behind microsoft/winget-pkgs.
       - name: Sync slidict-bot winget-pkgs fork
-        if: env.WINGET_TOKEN != '' && inputs.repair_pr == ''
+        if: env.WINGET_TOKEN != ''
         env:
           GH_TOKEN: ${{ env.WINGET_TOKEN }}
         run: |
@@ -81,7 +76,7 @@ jobs:
       # below prints what to set up.
       - name: Create winget-pkgs pull request
         id: winget_submission
-        if: env.WINGET_TOKEN != '' && inputs.repair_pr == ''
+        if: env.WINGET_TOKEN != ''
         uses: vedantmgoyal9/winget-releaser@b7370d4d152efdce803a26cc6ca9eee58cb2ad54 # v2
         with:
           identifier: Slidict.Wip
@@ -94,17 +89,15 @@ jobs:
 
       # Komac v2.16.0 still produces manifest schema 1.12.0, but winget-pkgs
       # now requires 1.28.0. Amend the generated PR rather than opening another.
-      # workflow_dispatch(repair_pr) also repairs an existing PR such as #448242.
       - name: Upgrade WinGet manifest schema to 1.28.0
-        if: env.WINGET_TOKEN != '' && (inputs.repair_pr != '' || steps.winget_submission.outputs['pr-url'] != '')
+        if: env.WINGET_TOKEN != '' && steps.winget_submission.outputs['pr-url'] != ''
         env:
           GH_TOKEN: ${{ env.WINGET_TOKEN }}
           CREATED_PR_URL: ${{ steps.winget_submission.outputs['pr-url'] }}
-          REPAIR_PR: ${{ inputs.repair_pr }}
         run: |
           set -euo pipefail
 
-          pr_number="${REPAIR_PR:-${CREATED_PR_URL##*/}}"
+          pr_number="${CREATED_PR_URL##*/}"
           if [[ ! "$pr_number" =~ ^[0-9]+$ ]]; then
             echo "::error::Invalid WinGet PR number: $pr_number"
             exit 1
