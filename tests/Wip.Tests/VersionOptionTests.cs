@@ -10,6 +10,7 @@ namespace Wip.Tests;
 /// <c>--version</c> on the root, and the same report out of either spelling with no wip.yml in
 /// sight.
 /// </summary>
+[Collection(ConsoleStateCollection.Name)]
 public class VersionOptionTests
 {
     /// <summary>

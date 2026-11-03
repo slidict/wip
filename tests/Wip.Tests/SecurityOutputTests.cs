@@ -8,10 +8,7 @@ using Wip.Security;
 
 namespace Wip.Tests;
 
-[CollectionDefinition("Console encoding", DisableParallelization = true)]
-public sealed class ConsoleEncodingCollection;
-
-[Collection("Console encoding")]
+[Collection(ConsoleStateCollection.Name)]
 public sealed class SecurityOutputTests
 {
     [Fact]
