@@ -401,13 +401,21 @@ public sealed class RulesFetcherTests : IDisposable
         var fake = new FakeGit();
         var attempts = 0;
         var waits = new List<TimeSpan>();
-        var fetcher = new RulesFetcher(root, fake.Run, (source, destination) =>
+        var fetcher = new RulesFetcher(root, fake.Run, (_, destination) =>
         {
             attempts++;
-            // Model the winner without a real move, which Windows scanners can make transiently
-            // fail and so turn this into a retry the assertions below do not allow.
+            // Model the winner without reading anything under source. A real move, or a copy of
+            // its marker, can hit the same transient hold Publish retries for, which would either
+            // turn this into a second attempt or fail it on the incomplete-entry message instead
+            // of the fingerprint one. The marker only has to be one this cache version accepts.
             var tree = Directory.CreateDirectory(Path.Combine(destination, "tree")).FullName;
-            File.Copy(Path.Combine(source, "verified.json"), Path.Combine(destination, "verified.json"));
+            File.WriteAllText(Path.Combine(destination, "verified.json"), JsonSerializer.Serialize(
+                new Dictionary<string, object>
+                {
+                    ["version"] = RulesFetcher.CacheVersion,
+                    ["commit"] = Commit,
+                    ["treeSha256"] = new string('0', 64),
+                }));
             File.WriteAllText(Path.Combine(tree, "rules.yaml"), "unverified content");
             throw new IOException("another publisher won");
         }, waits.Add);

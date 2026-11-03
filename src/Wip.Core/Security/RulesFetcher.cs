@@ -17,7 +17,8 @@ internal sealed class RulesFetcher(
     internal const string TreeDirectoryName = "tree";
     // Version 1 allowed host-native EOL conversion. Refuse those entries rather than
     // reuse checkouts whose bytes may depend on the host that prepared them.
-    private const int CacheVersion = 2;
+    // Internal so a test can write a marker this version accepts without copying a real one.
+    internal const int CacheVersion = 2;
 
     /// <summary>For git calls that touch metadata only: init, and resolving a ref.</summary>
     private static readonly TimeSpan LocalTimeout = TimeSpan.FromSeconds(30);
