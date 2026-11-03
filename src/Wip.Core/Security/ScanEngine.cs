@@ -45,6 +45,8 @@ internal sealed record ScanOutcome(
     /// is there. When the save also failed there is no document, so 70 would send a consumer
     /// to a result.json that is not there; that case gets its own code. A scanner's own use
     /// of a reserved code folds to 1 rather than claiming a condition that did not occur.
+    /// A failed stop ranks last: it is about residue, not the result, and only replaces 0,
+    /// since 0 is the one status a CI job reads as success.
     /// </remarks>
     internal int ProcessExitCode => Result?.Status switch
     {
@@ -52,6 +54,7 @@ internal sealed record ScanOutcome(
         "incomplete" => ScanEngine.IncompleteExitCode,
         "completed" when PersistenceError is not null => ScanEngine.PersistenceFailedExitCode,
         "completed" when ScanEngine.IsReservedExitCode(ExitCode) => 1,
+        "completed" when StopError is not null && ExitCode == 0 => ScanEngine.StopFailedExitCode,
         _ => ExitCode
     };
 }
@@ -131,8 +134,15 @@ internal sealed class ScanEngine(
     // fixing before the rerun, or the rerun loses its result the same way.
     internal const int IncompleteUnsavedExitCode = 73;
 
+    // EX_TEMPFAIL (75), for a completed scan, saved if --output was given, whose sandbox stop
+    // failed. Not 74: the result is fine, and the container may still be running with the
+    // scanner inside, so a consumer needs sandbox status rather than the output path. It only
+    // replaces 0; every other code already fails the job and says more about the result.
+    internal const int StopFailedExitCode = 75;
+
     internal static bool IsReservedExitCode(int code) =>
-        code is IncompleteExitCode or PersistenceFailedExitCode or IncompleteUnsavedExitCode;
+        code is IncompleteExitCode or PersistenceFailedExitCode or IncompleteUnsavedExitCode
+            or StopFailedExitCode;
 
     private readonly RulesFetcher? stagedRules = rulesFetcher;
     private readonly Func<string, string>? mapStagedSource = mapRulesSource;
