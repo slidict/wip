@@ -1787,6 +1787,7 @@ public class ScanEngineTests
     [InlineData(70, 1)]
     [InlineData(73, 1)]
     [InlineData(74, 1)]
+    [InlineData(75, 1)]
     [InlineData(124, 124)]
     public void ACompletedResultPreservesNormalizedFindingsAndTheToolStatus(int scannerCode, int processCode)
     {
@@ -1911,6 +1912,48 @@ public class ScanEngineTests
             Assert.Equal(fake.Report, output.ToString());
             Assert.Contains($"exit={scannerCode}", error.ToString());
             Assert.Contains("result persistence failed", error.ToString());
+        }
+        finally
+        {
+            if (File.Exists(directory)) File.Delete(directory);
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// A failed stop leaves residue, not a bad result, so it ranks below every other code and
+    /// only replaces 0 -- the one status a CI job reads as success.
+    /// </summary>
+    [Theory]
+    [InlineData(0, false, ScanEngine.StopFailedExitCode)]
+    [InlineData(0, true, ScanEngine.PersistenceFailedExitCode)]
+    [InlineData(2, false, 2)]
+    [InlineData(70, false, 1)]
+    public void AFailedStopOnlyReplacesASuccessfulExit(int scannerCode, bool saveFails, int processCode)
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "wip-result-stop-" + Guid.NewGuid().ToString("N"));
+        var fake = new Fake { ExecCode = scannerCode, StopCode = 5 };
+        if (saveFails)
+            fake.AfterExec = () =>
+            {
+                Directory.Delete(directory);
+                File.WriteAllText(directory, "the output location became a file after preflight");
+            };
+        try
+        {
+            var outcome = Engine(fake).Run(new StubScanner(), "scanner", ValidPlan(),
+                new ScanTarget("http://app.test"), outputDirectory: directory);
+
+            Assert.Equal("completed", outcome.Result!.Status);
+            Assert.NotNull(outcome.StopError);
+            Assert.Equal(saveFails, outcome.PersistenceError is not null);
+            Assert.Equal(saveFails, outcome.ResultDirectory is null);
+            Assert.Equal(processCode, outcome.ProcessExitCode);
+
+            using var output = new StringWriter();
+            using var error = new StringWriter();
+            Assert.Equal(processCode, CliContext.WriteScanOutcome(outcome, ValidPlan().ReportPath, output, error, true, true));
+            Assert.Contains("check sandbox status", error.ToString());
         }
         finally
         {

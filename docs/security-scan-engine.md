@@ -256,7 +256,7 @@ diagnostics. It holds what the adapter wrote, which for Nuclei includes logs cut
 Check `status` before consuming `findings`. An incomplete result has a reason and no findings
 array, so it cannot appear as a clean empty scan. A completed result still has coverage:
 omitted active, authenticated or other checks are not evidence that those checks passed.
-The CLI reserves three exit codes, all nonzero through a WSL shell. `70` means the result is
+The CLI reserves four exit codes, all nonzero through a WSL shell. `70` means the result is
 incomplete; with `--output` its reason is in `result.json`, and without it the reason is on
 stderr, since nothing is persisted either way. `74` means the scan completed but its artifacts
 did not reach the requested directory, which can still happen after the preflight check — a
@@ -264,10 +264,14 @@ full volume, or a directory removed mid-run. `73` means both: the scan is incomp
 `result.json` was published, so the reason is only on stderr. The responses differ: an
 incomplete scan has to be run again; a completed one whose save failed has its report on stdout
 and needs the output path looked at; and an incomplete unsaved one needs the output path fixed
-before the rerun, or the rerun loses its result the same way.
+before the rerun, or the rerun loses its result the same way. `75` means the scan completed,
+and its result was saved when `--output` was given, but the sandbox stop failed: the container
+may still be running with the scanner inside, so check `sandbox status` rather than the output
+path. `75` ranks last: `70`, `73`, `74` and a scanner's own nonzero status win, and `75` appears
+only where the exit would otherwise be `0`.
 
-A completed scanner that itself returns `70`, `73` or `74` maps to CLI exit `1`; its original status
-remains in `scannerExitCode` and provenance. Other completed scanner statuses are forwarded
+A completed scanner that itself returns `70`, `73`, `74` or `75` maps to CLI exit `1`; its original
+status remains in `scannerExitCode` and provenance. Other completed scanner statuses are forwarded
 unchanged. So each reserved code means only what the CLI uses it for, and a completed scan whose
 result was not saved never returns `0` — asking for `--output` and receiving neither a file nor
 a nonzero status is the reading this format exists to prevent.
