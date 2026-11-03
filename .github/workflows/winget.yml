@@ -96,10 +96,10 @@ jobs:
       # now requires 1.28.0. Amend the generated PR rather than opening another.
       # workflow_dispatch(repair_pr) also repairs an existing PR such as #448242.
       - name: Upgrade WinGet manifest schema to 1.28.0
-        if: env.WINGET_TOKEN != '' && (inputs.repair_pr != '' || steps.winget_submission.outputs.pr-url != '')
+        if: env.WINGET_TOKEN != '' && (inputs.repair_pr != '' || steps.winget_submission.outputs['pr-url'] != '')
         env:
           GH_TOKEN: ${{ env.WINGET_TOKEN }}
-          CREATED_PR_URL: ${{ steps.winget_submission.outputs.pr-url }}
+          CREATED_PR_URL: ${{ steps.winget_submission.outputs['pr-url'] }}
           REPAIR_PR: ${{ inputs.repair_pr }}
         run: |
           set -euo pipefail
