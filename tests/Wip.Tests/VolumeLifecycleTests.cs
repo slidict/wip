@@ -52,6 +52,9 @@ public class VolumeLifecycleTests
         public string? ListOutput;
         public string? ContainerInspectOutput;
         public Action<int>? OnVolumeList;
+        /// <summary>Backend name of the one sandbox this fake answers for, once <c>run</c> has created it.</summary>
+        public string? Sandbox;
+        public bool SandboxRunning;
         private int listCount;
 
         public string Add(string logicalName, bool persistent, string? instance = null)
@@ -96,12 +99,19 @@ public class VolumeLifecycleTests
                     return new(0, ListOutput ?? JsonSerializer.Serialize(Volumes.Values.Select(v => new { v.Name })));
                 }
                 if (argv[0] == "volume") return new(0, JsonSerializer.Serialize(new[] { Volumes[argv[^1]] }));
+                // The sandbox's own probes filter by name or inspect its ID; the volume scan does neither.
+                if (Sandbox is not null && argv[0] == "list" && argv.Contains("--filter"))
+                    return new(0, SandboxRunning ? JsonSerializer.Serialize(new[] { new { ID = "sandbox", Names = new[] { Sandbox }, State = "running" } }) : "");
+                if (Sandbox is not null && argv[0] == "inspect" && argv[^1] == "sandbox")
+                    return new(0, JsonSerializer.Serialize(new[] { new { Id = "sandbox", Names = new[] { Sandbox }, State = "running",
+                        Labels = new Dictionary<string, string> { [SandboxLifecycle.OwnerLabel] = "v1:test:sandbox:first" } } }));
                 if (argv[0] == "list") return new(0, JsonSerializer.Serialize(Containers.Keys.Select(id => new { ID = id, State = ContainerState })));
                 return new(0, ContainerInspectOutput ?? JsonSerializer.Serialize(argv.Skip(5).Select(Inspect)));
             }
             Assert.Equal(TimeSpan.FromMinutes(2), timeout);
             Assert.DoesNotContain("--force", argv);
             Assert.DoesNotContain("prune", argv);
+            if (argv[0] == "run") SandboxRunning = MutationCode == 0;
             if (argv[1] == "create" && (MutationCode == 0 || LeaveResidue))
             {
                 var labels = new Dictionary<string, string>();
@@ -383,5 +393,34 @@ public class VolumeLifecycleTests
         Assert.Throws<WipException>(() => service.Destroy("scratch"));
         Assert.True(fake.Volumes.ContainsKey(name));
         Assert.DoesNotContain(fake.Calls, c => c[1] == "remove");
+    }
+
+    /// <summary>
+    /// Runs sandbox create against the real volume lifecycle, not a stub, so the own-mirror
+    /// exclusion is exercised on the path create takes to reach the volume.
+    /// </summary>
+    [Fact]
+    public void SandboxCreateDuringOwnMirrorDoesNotMarkTheVolumeUsed()
+    {
+        var settings = new Config(YamlLoader.LoadText("""
+            version: 1
+            resource_namespace: test
+            volumes:
+              - name: scratch
+                persistent: false
+                mount: /scratch
+            sandboxes:
+              - name: first
+                image: fixture:latest
+                volumes: [scratch]
+            """, allowAliases: false)).SandboxResources;
+        var fake = new Fake { Sandbox = SandboxLifecycle.BackendName("test", "first") }; var usage = new Usage();
+        var name = fake.Add("scratch", false);
+        fake.Containers["mirror"] = [name]; fake.ContainerLabels["mirror"] = MirrorOf("scratch");
+        var volumes = new VolumeLifecycle(settings, fake.Run, usage);
+        Assert.Equal(0, new SandboxLifecycle(settings, fake.Run, volumes).Create("first"));
+        Assert.Contains(fake.Calls, c => c[0] == "run" && c.Contains($"type=volume,source={name},target=/scratch"));
+        Assert.Empty(usage.Used);
+        Assert.True(fake.Volumes.ContainsKey(name));
     }
 }
