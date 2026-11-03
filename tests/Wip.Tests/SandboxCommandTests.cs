@@ -3,6 +3,7 @@ using Wip.Cli;
 
 namespace Wip.Tests;
 
+[Collection(ConsoleStateCollection.Name)]
 public class SandboxCommandTests
 {
     [Theory]

@@ -6,6 +6,7 @@ namespace Wip.Tests;
 /// <summary>Covers <c>wip help</c>'s own argument validation and its reuse of <c>--help</c>'s
 /// text. The AI round trip itself is covered by <see cref="LocalAiProvider"/>'s tests; wiring it
 /// up here would mean either a real local AI server or duplicating those tests for no benefit.</summary>
+[Collection(ConsoleStateCollection.Name)]
 public class HelpCommandTests
 {
     [Fact]

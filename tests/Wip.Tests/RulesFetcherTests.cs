@@ -404,8 +404,11 @@ public sealed class RulesFetcherTests : IDisposable
         var fetcher = new RulesFetcher(root, fake.Run, (source, destination) =>
         {
             attempts++;
-            Directory.Move(source, destination);
-            File.WriteAllText(Path.Combine(destination, "tree", "rules.yaml"), "unverified content");
+            // Model the winner without a real move, which Windows scanners can make transiently
+            // fail and so turn this into a retry the assertions below do not allow.
+            var tree = Directory.CreateDirectory(Path.Combine(destination, "tree")).FullName;
+            File.Copy(Path.Combine(source, "verified.json"), Path.Combine(destination, "verified.json"));
+            File.WriteAllText(Path.Combine(tree, "rules.yaml"), "unverified content");
             throw new IOException("another publisher won");
         }, waits.Add);
 
