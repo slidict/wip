@@ -1,6 +1,6 @@
 # Reproducible dependency and SDK resolution
 
-`global.json` selects .NET SDK **10.0.401**, with roll-forward disabled and
+`global.json` selects .NET SDK **10.0.403**, with roll-forward disabled and
 prerelease SDKs excluded. Install that exact SDK before restoring. Test, Native
 AOT, real-WSLC E2E, and release jobs all install it through setup-dotnet's
 `global-json-file` input. Updating the SDK is an explicit reviewed change to this
