@@ -71,10 +71,13 @@ internal static class Program
         // here would replace the failure this handler exists to report.
         if (exception.Data?[ScanEngine.StopErrorKey] is string { Length: > 0 } stopError)
         {
-            // The text comes from the sandbox backend, so it is escaped the same way the
-            // operator-facing StopError line is rather than reaching a terminal raw.
+            // The text comes from the sandbox backend, so it is escaped with the same helper as
+            // the operator-facing StopError line. Escaped unconditionally, unlike a scan report:
+            // a report piped to a file has to stay byte-exact, while this line has no such
+            // consumer, and redirecting still reaches a terminal through `2>&1 | tee`. The
+            // newline goes first because the helper keeps it, and one would forge a second line.
             var escaped = new StringWriter();
-            CliContext.WriteSecurityReport(escaped, stopError, Console.IsErrorRedirected);
+            CliContext.WriteSecurityReport(escaped, stopError.Replace("\n", "\\n"), isOutputRedirected: false);
             Log.Error($"sandbox stop also failed, so the scanner may still be running: {escaped}");
         }
     }

@@ -53,6 +53,22 @@ public class ProgramErrorTests
     }
 
     [Fact]
+    public void TheStopFailureIsEscapedSoBackendTextCannotForgeALine()
+    {
+        var failure = new FutureWipException("scan went wrong");
+        failure.Data[ScanEngine.StopErrorKey] = "stop failed: [31mred[0m\nwip: error: forged";
+
+        var (_, _, error) = Run(() => throw failure);
+
+        Assert.DoesNotContain("", error);
+        Assert.Contains("\\u001b", error);
+        // The newline is rendered literally, so the backend cannot add a line of its own.
+        Assert.Contains("\\nwip: error: forged", error);
+        var lines = error.Split('\n').Select(line => line.TrimEnd('\r')).Where(line => line.Length > 0);
+        Assert.Equal(2, lines.Count());
+    }
+
+    [Fact]
     public void AWipExceptionWithoutAStopFailureLogsOnlyTheMessage()
     {
         var (_, code, error) = Run(() => throw new WipException("plain failure"));
