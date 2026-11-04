@@ -27,9 +27,18 @@ internal static class Program
         // and the exceptions are caught here instead.
         var invocation = new InvocationConfiguration { EnableDefaultExceptionHandler = false };
 
+        return Report(() => Parse(root, args).Invoke(invocation));
+    }
+
+    /// <summary>
+    /// Runs the command and turns wip's own failures into a one-line message and an exit code.
+    /// Any other exception is a defect and still leaves with its stack trace.
+    /// </summary>
+    internal static int Report(Func<int> command)
+    {
         try
         {
-            return Parse(root, args).Invoke(invocation);
+            return command();
         }
         catch (ExitException exit)
         {
@@ -37,8 +46,29 @@ internal static class Program
         }
         catch (WipException exception)
         {
+            // A WipException subclass is not rebuilt by ScanEngine.Run, so its message lacks the
+            // stop failure and only Data carries it.
+            LogStopError(exception);
             Log.Error(exception.Message);
             return 1;
+        }
+        catch (Exception exception)
+        {
+            LogStopError(exception);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Logs the sandbox stop failure that <see cref="ScanEngine"/> leaves in
+    /// <see cref="Exception.Data"/> when it cannot rebuild the exception, so the operator learns
+    /// the scanner may still be running.
+    /// </summary>
+    private static void LogStopError(Exception exception)
+    {
+        if (exception.Data[ScanEngine.StopErrorKey] is string { Length: > 0 } stopError)
+        {
+            Log.Error($"sandbox stop also failed, so the scanner may still be running: {stopError}");
         }
     }
 
