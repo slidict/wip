@@ -167,7 +167,7 @@
         "type": "Project",
         "dependencies": {
           "System.CommandLine": "[2.0.14, )",
-          "Wip.Core": "[2.13.0, )"
+          "Wip.Core": "[2.13.1, )"
         }
       },
       "wip.core": {

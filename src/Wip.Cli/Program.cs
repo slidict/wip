@@ -27,9 +27,18 @@ internal static class Program
         // and the exceptions are caught here instead.
         var invocation = new InvocationConfiguration { EnableDefaultExceptionHandler = false };
 
+        return Report(() => Parse(root, args).Invoke(invocation));
+    }
+
+    /// <summary>
+    /// Runs the command and turns wip's own failures into a one-line message and an exit code.
+    /// Any other exception is a defect and still leaves with its stack trace.
+    /// </summary>
+    internal static int Report(Func<int> command)
+    {
         try
         {
-            return Parse(root, args).Invoke(invocation);
+            return command();
         }
         catch (ExitException exit)
         {
@@ -37,8 +46,39 @@ internal static class Program
         }
         catch (WipException exception)
         {
+            // A WipException subclass is not rebuilt by ScanEngine.Run, so its message lacks the
+            // stop failure and only Data carries it. The scan's own failure is logged first, the
+            // order ScanEngine uses when it can rebuild the message.
             Log.Error(exception.Message);
+            LogStopError(exception);
             return 1;
+        }
+        catch (Exception exception)
+        {
+            LogStopError(exception);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Logs the sandbox stop failure that <see cref="ScanEngine"/> leaves in
+    /// <see cref="Exception.Data"/> when it cannot rebuild the exception, so the operator learns
+    /// the scanner may still be running.
+    /// </summary>
+    private static void LogStopError(Exception exception)
+    {
+        // Data is null-safe because a derived type may override it away, and an exception thrown
+        // here would replace the failure this handler exists to report.
+        if (exception.Data?[ScanEngine.StopErrorKey] is string { Length: > 0 } stopError)
+        {
+            // The text comes from the sandbox backend, so it is escaped with the same helper as
+            // the operator-facing StopError line. Escaped unconditionally, unlike a scan report:
+            // a report piped to a file has to stay byte-exact, while this line has no such
+            // consumer, and redirecting still reaches a terminal through `2>&1 | tee`. The
+            // newline goes first because the helper keeps it, and one would forge a second line.
+            var escaped = new StringWriter();
+            CliContext.WriteSecurityReport(escaped, stopError.Replace("\n", "\\n"), isOutputRedirected: false);
+            Log.Error($"sandbox stop also failed, so the scanner may still be running: {escaped}");
         }
     }
 
