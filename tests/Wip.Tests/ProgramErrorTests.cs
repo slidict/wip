@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using Wip.Cli;
 using Wip.Security;
 
@@ -19,9 +20,12 @@ public class ProgramErrorTests
         var failure = new InvalidOperationException("backend broke");
         failure.Data[ScanEngine.StopErrorKey] = StopFailure;
 
-        var (thrown, _, error) = Run(() => throw failure);
+        var (thrown, _, error) = Run(() => ThrowFrom(failure));
 
         Assert.Same(failure, thrown);
+        // Identity alone does not say the original stack survived. CA2200 already fails the build
+        // on `throw exception;`, so this holds the promise even if that rule is ever suppressed.
+        Assert.Contains(nameof(ThrowFrom), thrown!.StackTrace);
         Assert.Contains($"sandbox stop also failed, so the scanner may still be running: {StopFailure}", error);
     }
 
@@ -48,6 +52,13 @@ public class ProgramErrorTests
         Assert.Contains("plain failure", error);
         Assert.DoesNotContain("sandbox stop also failed", error);
     }
+
+    /// <summary>
+    /// Throws from a frame the rethrow must keep. Not inlined, because the Release build would
+    /// otherwise drop the frame and the assertion would fail for the wrong reason.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static int ThrowFrom(Exception failure) => throw failure;
 
     private static (Exception? Thrown, int Code, string Error) Run(Func<int> command)
     {
