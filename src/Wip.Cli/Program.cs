@@ -47,9 +47,10 @@ internal static class Program
         catch (WipException exception)
         {
             // A WipException subclass is not rebuilt by ScanEngine.Run, so its message lacks the
-            // stop failure and only Data carries it.
-            LogStopError(exception);
+            // stop failure and only Data carries it. The scan's own failure is logged first, the
+            // order ScanEngine uses when it can rebuild the message.
             Log.Error(exception.Message);
+            LogStopError(exception);
             return 1;
         }
         catch (Exception exception)
@@ -66,9 +67,15 @@ internal static class Program
     /// </summary>
     private static void LogStopError(Exception exception)
     {
-        if (exception.Data[ScanEngine.StopErrorKey] is string { Length: > 0 } stopError)
+        // Data is null-safe because a derived type may override it away, and an exception thrown
+        // here would replace the failure this handler exists to report.
+        if (exception.Data?[ScanEngine.StopErrorKey] is string { Length: > 0 } stopError)
         {
-            Log.Error($"sandbox stop also failed, so the scanner may still be running: {stopError}");
+            // The text comes from the sandbox backend, so it is escaped the same way the
+            // operator-facing StopError line is rather than reaching a terminal raw.
+            var escaped = new StringWriter();
+            CliContext.WriteSecurityReport(escaped, stopError, Console.IsErrorRedirected);
+            Log.Error($"sandbox stop also failed, so the scanner may still be running: {escaped}");
         }
     }
 

@@ -14,6 +14,9 @@ public class ProgramErrorTests
 {
     private const string StopFailure = "sandbox stop failed (exit 5)";
 
+    /// <summary>Stands in for the exit code a throwing command never produced.</summary>
+    private const int NotReturned = -1;
+
     [Fact]
     public void AnUnexpectedFailureLogsTheStopFailureAndStillLeaves()
     {
@@ -41,6 +44,12 @@ public class ProgramErrorTests
         Assert.Equal(1, code);
         Assert.Contains($"sandbox stop also failed, so the scanner may still be running: {StopFailure}", error);
         Assert.Contains("scan went wrong", error);
+        // The scan's own failure comes first, as ScanEngine orders it in the rebuilt message, so
+        // the first line read alone names the cause rather than the cleanup.
+        Assert.True(
+            error.IndexOf("scan went wrong", StringComparison.Ordinal)
+                < error.IndexOf("sandbox stop also failed", StringComparison.Ordinal),
+            "the scan failure must be logged before the stop failure");
     }
 
     [Fact]
@@ -71,7 +80,8 @@ public class ProgramErrorTests
         }
         catch (Exception exception)
         {
-            return (exception, 0, writer.ToString());
+            // Not 0: a command that threw must not look like one that returned success.
+            return (exception, NotReturned, writer.ToString());
         }
         finally
         {
