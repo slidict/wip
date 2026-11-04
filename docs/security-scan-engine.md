@@ -90,14 +90,18 @@ internal network. The image runs as root and contains no templates. `PinnedRules
 `https://github.com/projectdiscovery/nuclei-templates.git` at commit
 `2603fc1f23f2ef219ea4834128a163113c6b5168` (v10.3.2) into
 `/opt/wip-nuclei-templates` through the existing verified cache/copy path. Only
-`http/misconfiguration` and `helpers` are staged; templates in the first read wordlists from
-the second. Provenance includes
+`http/misconfiguration` and `helpers` are staged; `gitlab-api-user-enum` reads a wordlist
+from the second (`gitlab-user-enum` does too, but `-etags` excludes it). Staging `helpers` is
+not enough: without `-ud`, nuclei resolves the relative path against the staged root, then
+denies access to it. That failure appears only on stderr at template compile time, never in
+`-elog`. Provenance includes
 the image, `http-misconfiguration-v1` profile and the template commit.
 
 The fixed shell wrapper passes the target as positional data, never shell syntax. It runs:
 
 ```text
 nuclei -u <url> -t /opt/wip-nuclei-templates/http/misconfiguration
+  -ud /opt/wip-nuclei-templates
   -duc -ni -no-stdin -nh -dr -dut -pt http -etags dos,fuzz,bruteforce
   -rl 10 -c 2 -timeout 5 -retries 0 -nc -jsonl -omit-raw -omit-template
   -o /tmp/wip-nuclei-native.jsonl -elog /tmp/wip-nuclei-errors.jsonl
@@ -105,14 +109,16 @@ nuclei -u <url> -t /opt/wip-nuclei-templates/http/misconfiguration
 
 These flags were checked against the pinned image's v3.9.0 binary.
 `-duc` disables initial template installation and update checks; `-ni` excludes interactsh
-callbacks. Only signed HTTP misconfiguration templates are selected. Other template
-categories, workflows, code, browser/headless, authenticated scanning and crawling are not
-run. This profile sends active HTTP requests and does not promise ZAP's path-subtree scope:
-templates can address other paths on the target. Redirects and implicit HTTP probing are
-disabled. Each request has a five-second timeout, no retry, concurrency two and a rate limit
-of ten requests/second; the engine supplies the total deadline. The internal network remains
-the egress boundary. Targets must be unauthenticated HTTP(S) URLs without fragments or commas
-(the latter would turn one `-u` value into multiple targets).
+callbacks; `-ud` roots nuclei's payload allowlist at the staged rules tree, which lets
+`gitlab-api-user-enum` compile at all. Only signed HTTP misconfiguration templates are
+selected. Other template categories, workflows, code, browser/headless, authenticated
+scanning and crawling are not run. This profile sends active HTTP requests and does not
+promise ZAP's path-subtree scope: templates can address other paths on the target. Redirects
+and implicit HTTP probing are disabled. Each request has a five-second timeout, no retry,
+concurrency two and a rate limit of ten requests/second; the engine supplies the total
+deadline. The internal network remains the egress boundary. Targets must be unauthenticated
+HTTP(S) URLs without fragments or commas (the latter would turn one `-u` value into multiple
+targets).
 
 `/tmp/wip-nuclei-unperformed.txt` records these omissions and bounds, nuclei's stderr log,
 and the request error log. Each log is bounded: one over 256 KiB keeps its first 192 KiB and

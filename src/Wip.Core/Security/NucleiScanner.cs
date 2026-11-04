@@ -9,8 +9,10 @@ internal sealed class NucleiScanner : ISecurityScanner
     internal const string TemplatesCommit = "2603fc1f23f2ef219ea4834128a163113c6b5168"; // nuclei-templates v10.3.2
     internal const string RulesPath = "/opt/wip-nuclei-templates";
     private const string RulesSubpath = "http/misconfiguration";
-    // Templates in RulesSubpath read wordlists from helpers/ (gitlab-user-enum, gitlab-api-user-enum);
-    // without it they fail to load and the loss shows only as an -elog line.
+    // gitlab-api-user-enum in RulesSubpath reads a wordlist from helpers/ by relative path, which
+    // resolves against the staged root; -ud puts that root on nuclei's payload allowlist. Without
+    // either, the template fails at compile time on stderr and never reaches -elog. gitlab-user-enum
+    // also reads helpers/ but is excluded by -etags fuzz.
     private static readonly string[] StagedSubpaths = [RulesSubpath, "helpers"];
     private const string Profile = "http-misconfiguration-v1";
     private const string ReportPath = "/tmp/wip-nuclei-report.jsonl";
@@ -58,12 +60,13 @@ internal sealed class NucleiScanner : ISecurityScanner
             uri.AbsoluteUri.Contains(','))
             throw new ConfigException("Nuclei requires one unauthenticated HTTP or HTTPS URL without a fragment or comma");
         // Verified against the pinned v3.9.0 binary's -help. -duc disables fresh installs
-        // as well as update checks; -ni excludes interactsh templates. No remote templates,
+        // as well as update checks; -ni excludes interactsh templates; -ud sets the templates
+        // directory that the payload allowlist is rooted at. No remote templates,
         // cloud upload, code, browser or workflow execution is enabled. The declared internal
         // network is still the enforcement boundary, not these profile switches.
         return new(new PinnedImage(ImageReference),
             ["sh", "-c", Wrapper, "wip-nuclei", ReportPath, UnperformedPath, NativePath, ErrorsPath, StderrPath, PartialPath, Coverage,
-             "nuclei", "-u", uri.AbsoluteUri, "-t", RulesPath + "/" + RulesSubpath,
+             "nuclei", "-u", uri.AbsoluteUri, "-t", RulesPath + "/" + RulesSubpath, "-ud", RulesPath,
              "-duc", "-ni", "-no-stdin", "-nh", "-dr", "-dut", "-pt", "http",
              "-etags", "dos,fuzz,bruteforce", "-rl", "10", "-c", "2", "-timeout", "5", "-retries", "0",
              "-nc", "-jsonl", "-omit-raw", "-omit-template", "-o", NativePath, "-elog", ErrorsPath],

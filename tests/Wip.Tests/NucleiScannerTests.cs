@@ -18,11 +18,15 @@ public class NucleiScannerTests
         Assert.Equal(NucleiScanner.ImageReference, plan.Image.Reference);
         Assert.Equal(new PinnedRules("https://github.com/projectdiscovery/nuclei-templates.git",
             "2603fc1f23f2ef219ea4834128a163113c6b5168", "/opt/wip-nuclei-templates", ["http/misconfiguration", "helpers"]), plan.Rules);
-        // gitlab-user-enum and gitlab-api-user-enum in http/misconfiguration read helpers/wordlists;
-        // without helpers staged they fail to load and coverage shrinks silently.
+        // gitlab-api-user-enum in http/misconfiguration reads helpers/wordlists. Without helpers
+        // staged, or without -ud on the staged root, it fails at compile time on stderr only.
         Assert.Contains("helpers", plan.Rules!.Subpaths!);
+        var ud = Array.IndexOf(plan.Argv.ToArray(), "-ud");
+        Assert.True(ud >= 0 && ud + 1 < plan.Argv.Count);
+        Assert.Equal(plan.Rules.ContainerPath, plan.Argv[ud + 1]);
         Assert.Equal(new[] {
             "nuclei", "-u", "http://app.test:8080/app", "-t", "/opt/wip-nuclei-templates/http/misconfiguration",
+            "-ud", "/opt/wip-nuclei-templates",
             "-duc", "-ni", "-no-stdin", "-nh", "-dr", "-dut", "-pt", "http",
             "-etags", "dos,fuzz,bruteforce", "-rl", "10", "-c", "2", "-timeout", "5", "-retries", "0",
             "-nc", "-jsonl", "-omit-raw", "-omit-template", "-o", "/tmp/wip-nuclei-native.jsonl",
