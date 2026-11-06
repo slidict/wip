@@ -42,11 +42,18 @@ function Show-Wsl([string[]] $WslArgs) {
     $psi.StandardErrorEncoding = [System.Text.Encoding]::Unicode
 
     $process = [System.Diagnostics.Process]::Start($psi)
-    $errorRead = $process.StandardError.ReadToEndAsync()
-    $out = $process.StandardOutput.ReadToEnd()
-    $err = $errorRead.GetAwaiter().GetResult()
-    $process.WaitForExit()
+    try {
+        $errorRead = $process.StandardError.ReadToEndAsync()
+        $out = $process.StandardOutput.ReadToEnd()
+        $err = $errorRead.GetAwaiter().GetResult()
+        $process.WaitForExit()
+        # Read before the finally block: ExitCode is not available on a disposed Process.
+        $code = $process.ExitCode
+    }
+    finally {
+        $process.Dispose()
+    }
 
     foreach ($text in @($out, $err)) { if ($text.Trim()) { Write-Host $text.TrimEnd() } }
-    return @{ Code = $process.ExitCode; Text = ($out + "`n" + $err) }
+    return @{ Code = $code; Text = ($out + "`n" + $err) }
 }
