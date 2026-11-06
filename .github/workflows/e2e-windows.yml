@@ -124,6 +124,8 @@ jobs:
           $ErrorActionPreference = 'Continue'
           $PSNativeCommandUseErrorActionPreference = $false
 
+          . "$env:GITHUB_WORKSPACE\scripts\Show-Wsl.ps1"
+
           $candidates = @()
           if ($found = Get-Command wslc -ErrorAction SilentlyContinue) { $candidates += $found.Source }
           $candidates += Join-Path $env:ProgramFiles 'WSL\wslc.exe'
@@ -147,23 +149,10 @@ jobs:
 
           if (-not $wslc) {
             Write-Host "--- wsl --status"
-            # Absolute path for the same reason as Show-Wsl. This one only reports and skips:
-            # the step throws its own, more useful error about wslc.exe a few lines below, and
-            # failing here would replace it.
-            $wslExe = Join-Path $env:SystemRoot 'System32\wsl.exe'
-            if (Test-Path -LiteralPath $wslExe -PathType Leaf) {
-              $status = [System.Diagnostics.ProcessStartInfo]::new($wslExe)
-              $status.ArgumentList.Add('--status')
-              $status.UseShellExecute = $false
-              $status.RedirectStandardOutput = $true
-              $status.StandardOutputEncoding = [System.Text.Encoding]::Unicode
-              $reader = [System.Diagnostics.Process]::Start($status)
-              Write-Host $reader.StandardOutput.ReadToEnd().TrimEnd()
-              $reader.WaitForExit()
-            }
-            else {
-              Write-Host "  (the WSL launcher was not found at $wslExe)"
-            }
+            # Caught, not allowed to throw: the step raises its own, more useful error about
+            # wslc.exe a few lines below, and failing here would replace it.
+            try { Show-Wsl @('--status') | Out-Null }
+            catch { Write-Host "  (wsl --status failed: $_)" }
             Write-Host "--- $($env:ProgramFiles)\WSL"
             Get-ChildItem -LiteralPath (Join-Path $env:ProgramFiles 'WSL') -ErrorAction SilentlyContinue |
               Select-Object Name, Length | Format-Table | Out-String | Write-Host
@@ -214,8 +203,12 @@ jobs:
           # dot-source the one copy.
           . "$env:GITHUB_WORKSPACE\scripts\Show-Wsl.ps1"
 
-          Show-Wsl @('--version') | Out-Null
-          Show-Wsl @('--status') | Out-Null
+          # Caught individually: this step runs under if: failure() to collect evidence, so a
+          # launcher that cannot be resolved must not stop it reaching the wslc output below.
+          foreach ($wslArgs in @(@('--version'), @('--status'))) {
+              try { Show-Wsl $wslArgs | Out-Null }
+              catch { Write-Host "  (wsl $($wslArgs -join ' ') failed: $_)" }
+          }
 
           # wslc.exe writes UTF-8, so it is left to print for itself under the step's default.
           wslc version
