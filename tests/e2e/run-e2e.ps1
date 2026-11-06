@@ -67,6 +67,11 @@ param(
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false
 
+# Show-Wsl, and the rule for which wsl.exe is trusted, live in one place for this repository.
+# Relative to this script rather than the working directory: the script is run from wherever
+# the caller happens to be.
+. (Join-Path $PSScriptRoot '..\..\scripts\Show-Wsl.ps1')
+
 $script:Container = 'wip-e2e-app'
 # Every assertion below is built from $script:Container rather than repeating the literal, so
 # renaming the fixture's container: cannot leave a check silently pointed at a container that
@@ -246,21 +251,9 @@ function Write-Diagnostics {
     }
     catch { Write-Host "  (wslc logs $script:Container failed: $_)" }
 
-    # wsl.exe writes UTF-16LE while wslc.exe writes UTF-8, so reading wsl.exe the ordinary way
-    # prints "W`0S`0L`0 ...". Stating the encoding for this one child covers it without
-    # touching [Console]::OutputEncoding, which governs how *every* other command here is read
-    # and, under a host started without a console, may govern nothing at all.
-    try {
-        $status = [System.Diagnostics.ProcessStartInfo]::new('wsl.exe')
-        $status.ArgumentList.Add('--status')
-        $status.UseShellExecute = $false
-        $status.RedirectStandardOutput = $true
-        $status.StandardOutputEncoding = [System.Text.Encoding]::Unicode
-
-        $reader = [System.Diagnostics.Process]::Start($status)
-        Write-Host $reader.StandardOutput.ReadToEnd().TrimEnd()
-        $reader.WaitForExit()
-    }
+    # Show-Wsl resolves the launcher by absolute path and states the encoding for the child;
+    # scripts/Show-Wsl.ps1 says why each matters. Caught, because this function is best effort.
+    try { Show-Wsl @('--status') | Out-Null }
     catch { Write-Host "  (wsl --status failed: $_)" }
 }
 

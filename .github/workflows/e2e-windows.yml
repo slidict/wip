@@ -79,33 +79,10 @@ jobs:
           $ErrorActionPreference = 'Continue'
           $PSNativeCommandUseErrorActionPreference = $false
 
-          # wsl.exe writes UTF-16LE, and every attempt to fix that through
-          # [Console]::OutputEncoding came back garbled in these steps -- the runner starts
-          # pwsh with no console of its own, so the property has nothing to govern. Reading
-          # the pipe directly does not depend on any of that: StandardOutputEncoding states
-          # the encoding for this one child, whatever the host's console is. Returns the
-          # child's exit code and its output together, since the caller can no longer read
-          # $LASTEXITCODE for it and the text is gone once this returns.
-          function Show-Wsl([string[]] $WslArgs) {
-              $psi = [System.Diagnostics.ProcessStartInfo]::new('wsl.exe')
-              foreach ($argument in $WslArgs) { $psi.ArgumentList.Add($argument) }
-              $psi.UseShellExecute = $false
-              $psi.RedirectStandardOutput = $true
-              $psi.RedirectStandardError = $true
-              $psi.StandardOutputEncoding = [System.Text.Encoding]::Unicode
-              $psi.StandardErrorEncoding = [System.Text.Encoding]::Unicode
-
-              $process = [System.Diagnostics.Process]::Start($psi)
-              # One pipe is read asynchronously: a child that fills stderr while the parent is
-              # blocked on stdout deadlocks, and here that means hanging to the job timeout.
-              $errorRead = $process.StandardError.ReadToEndAsync()
-              $out = $process.StandardOutput.ReadToEnd()
-              $err = $errorRead.GetAwaiter().GetResult()
-              $process.WaitForExit()
-
-              foreach ($text in @($out, $err)) { if ($text.Trim()) { Write-Host $text.TrimEnd() } }
-              return @{ Code = $process.ExitCode; Text = ($out + "`n" + $err) }
-          }
+          # Show-Wsl runs wsl.exe by absolute path and returns its exit code and output;
+          # scripts/Show-Wsl.ps1 says why each of those matters. Both steps that need it
+          # dot-source the one copy.
+          . "$env:GITHUB_WORKSPACE\scripts\Show-Wsl.ps1"
 
           # --web-download takes the stable GitHub distribution rather than the Store, and is
           # kept for that reason -- but hosted runners are intermittently denied that endpoint
@@ -147,6 +124,8 @@ jobs:
           $ErrorActionPreference = 'Continue'
           $PSNativeCommandUseErrorActionPreference = $false
 
+          . "$env:GITHUB_WORKSPACE\scripts\Show-Wsl.ps1"
+
           $candidates = @()
           if ($found = Get-Command wslc -ErrorAction SilentlyContinue) { $candidates += $found.Source }
           $candidates += Join-Path $env:ProgramFiles 'WSL\wslc.exe'
@@ -170,14 +149,10 @@ jobs:
 
           if (-not $wslc) {
             Write-Host "--- wsl --status"
-            $status = [System.Diagnostics.ProcessStartInfo]::new('wsl.exe')
-            $status.ArgumentList.Add('--status')
-            $status.UseShellExecute = $false
-            $status.RedirectStandardOutput = $true
-            $status.StandardOutputEncoding = [System.Text.Encoding]::Unicode
-            $reader = [System.Diagnostics.Process]::Start($status)
-            Write-Host $reader.StandardOutput.ReadToEnd().TrimEnd()
-            $reader.WaitForExit()
+            # Caught, not allowed to throw: the step raises its own, more useful error about
+            # wslc.exe a few lines below, and failing here would replace it.
+            try { Show-Wsl @('--status') | Out-Null }
+            catch { Write-Host "  (wsl --status failed: $_)" }
             Write-Host "--- $($env:ProgramFiles)\WSL"
             Get-ChildItem -LiteralPath (Join-Path $env:ProgramFiles 'WSL') -ErrorAction SilentlyContinue |
               Select-Object Name, Length | Format-Table | Out-String | Write-Host
@@ -223,35 +198,17 @@ jobs:
           $ErrorActionPreference = 'Continue'
           $PSNativeCommandUseErrorActionPreference = $false
 
-          # wsl.exe writes UTF-16LE, and every attempt to fix that through
-          # [Console]::OutputEncoding came back garbled in these steps -- the runner starts
-          # pwsh with no console of its own, so the property has nothing to govern. Reading
-          # the pipe directly does not depend on any of that: StandardOutputEncoding states
-          # the encoding for this one child, whatever the host's console is. Returns the
-          # child's exit code, since the caller can no longer read $LASTEXITCODE for it.
-          function Show-Wsl([string[]] $WslArgs) {
-              $psi = [System.Diagnostics.ProcessStartInfo]::new('wsl.exe')
-              foreach ($argument in $WslArgs) { $psi.ArgumentList.Add($argument) }
-              $psi.UseShellExecute = $false
-              $psi.RedirectStandardOutput = $true
-              $psi.RedirectStandardError = $true
-              $psi.StandardOutputEncoding = [System.Text.Encoding]::Unicode
-              $psi.StandardErrorEncoding = [System.Text.Encoding]::Unicode
+          # Show-Wsl runs wsl.exe by absolute path and returns its exit code and output;
+          # scripts/Show-Wsl.ps1 says why each of those matters. Both steps that need it
+          # dot-source the one copy.
+          . "$env:GITHUB_WORKSPACE\scripts\Show-Wsl.ps1"
 
-              $process = [System.Diagnostics.Process]::Start($psi)
-              # One pipe is read asynchronously: a child that fills stderr while the parent is
-              # blocked on stdout deadlocks, and here that means hanging to the job timeout.
-              $errorRead = $process.StandardError.ReadToEndAsync()
-              $out = $process.StandardOutput.ReadToEnd()
-              $err = $errorRead.GetAwaiter().GetResult()
-              $process.WaitForExit()
-
-              foreach ($text in @($out, $err)) { if ($text.Trim()) { Write-Host $text.TrimEnd() } }
-              return $process.ExitCode
+          # Caught individually: this step runs under if: failure() to collect evidence, so a
+          # launcher that cannot be resolved must not stop it reaching the wslc output below.
+          foreach ($wslArgs in @(@('--version'), @('--status'))) {
+              try { Show-Wsl $wslArgs | Out-Null }
+              catch { Write-Host "  (wsl $($wslArgs -join ' ') failed: $_)" }
           }
-
-          Show-Wsl @('--version') | Out-Null
-          Show-Wsl @('--status') | Out-Null
 
           # wslc.exe writes UTF-8, so it is left to print for itself under the step's default.
           wslc version
