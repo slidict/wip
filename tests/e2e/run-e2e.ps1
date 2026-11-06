@@ -250,8 +250,17 @@ function Write-Diagnostics {
     # prints "W`0S`0L`0 ...". Stating the encoding for this one child covers it without
     # touching [Console]::OutputEncoding, which governs how *every* other command here is read
     # and, under a host started without a console, may govern nothing at all.
+    #
+    # Named by absolute path: with UseShellExecute = $false a bare name reaches CreateProcess
+    # as lpApplicationName = null, whose search order puts the current directory ahead of
+    # System32. The catch below reports a missing launcher rather than searching for one.
     try {
-        $status = [System.Diagnostics.ProcessStartInfo]::new('wsl.exe')
+        $wslExe = Join-Path $env:SystemRoot 'System32\wsl.exe'
+        if (-not (Test-Path -LiteralPath $wslExe -PathType Leaf)) {
+            throw "the WSL launcher was not found at $wslExe"
+        }
+
+        $status = [System.Diagnostics.ProcessStartInfo]::new($wslExe)
         $status.ArgumentList.Add('--status')
         $status.UseShellExecute = $false
         $status.RedirectStandardOutput = $true
