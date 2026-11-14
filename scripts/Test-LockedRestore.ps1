@@ -79,6 +79,15 @@ try {
     if (@(Get-SolutionLockFileDrift -Root $diagnosis).Count -ne 0) { throw 'An explicit pin was reported as stale' }
     Set-DriftFixture -Central '9.9.9' -Requested '[1.0.0, )' -Package 'Unmanaged'
     if (@(Get-SolutionLockFileDrift -Root $diagnosis).Count -ne 0) { throw 'A package with no central version was reported as stale' }
+
+    # A restore that writes nothing to stdout must still return its own exit code: Tee-Object
+    # creates its variable only when a record reaches it, and reading an unset one under
+    # Set-StrictMode would replace that code with an error. The stand-in prints nothing and
+    # exits 7; it is a .ps1 so the case runs on both test hosts.
+    $silent = Join-Path $diagnosis 'silent.ps1'
+    [IO.File]::WriteAllText($silent, 'exit 7')
+    & (Join-Path $PSScriptRoot 'Invoke-LockedRestore.ps1') -Dotnet $silent
+    if ($LASTEXITCODE -ne 7) { throw "A silent restore did not return its own exit code (got $LASTEXITCODE)" }
 }
 finally {
     Remove-Item -LiteralPath $diagnosis -Recurse -Force

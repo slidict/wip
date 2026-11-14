@@ -32,6 +32,11 @@ $PSNativeCommandUseErrorActionPreference = $false
 $repo = Split-Path $PSScriptRoot -Parent
 . (Join-Path $PSScriptRoot 'Get-LockFileDrift.ps1')
 
+# Tee-Object creates its variable only when a record reaches it, and a restore that writes
+# nothing to stdout (a runtime-only install with no SDK) would leave it unset for the read
+# below to fail on under Set-StrictMode.
+$output = @()
+
 Push-Location $repo
 try {
     # Tee rather than capture: the restore's own output still streams to the job log, and
