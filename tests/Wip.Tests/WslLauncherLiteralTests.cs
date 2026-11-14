@@ -25,11 +25,10 @@ namespace Wip.Tests;
 /// variations of one defect and must not each need their own discovery.
 /// </para>
 /// <para>
-/// <b>Only the PowerShell forms are matched.</b> The C# side starts the launcher by bare name
-/// too (<c>ProcessProbe</c>, reached from <c>WindowsEnvironment.DetectWsl2</c>), which is
-/// tracked as #329 and fixed on its own terms -- the resolution belongs where a path is
-/// resolved there, not at each call. Matching the C# form here would make this test fail for a
-/// defect it is not the fix for, so every pattern below is anchored to PowerShell syntax.
+/// <b>Only the PowerShell forms are matched.</b> The C# side resolves the launcher in
+/// <c>WslLauncher</c>, and <c>ProcessProbe</c> and <c>CommandRunner</c> refuse any executable
+/// that is not fully qualified, so a bare name there fails at the call rather than here. Every
+/// pattern below is anchored to PowerShell syntax.
 /// </para>
 /// <para>
 /// <b>The command form is searched under <c>benchmark/</c> only</b> (<see cref="BenchmarkScope"/>).

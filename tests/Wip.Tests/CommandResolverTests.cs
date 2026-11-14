@@ -30,6 +30,32 @@ public sealed class CommandResolverTests
     }
 
     [Fact]
+    public void ResolveSkipsARelativePathEntry()
+    {
+        using var directory = new TemporaryDirectory();
+        const string commandName = "wip-relative-path-entry-test";
+        var executable = Path.Combine(directory.Path, commandName);
+        File.WriteAllText(executable, string.Empty);
+        var relative = Path.GetRelativePath(Environment.CurrentDirectory, directory.Path);
+        Assert.SkipWhen(Path.IsPathFullyQualified(relative), "the temporary directory is on another drive");
+
+        var originalPath = Environment.GetEnvironmentVariable("PATH");
+        try
+        {
+            // The real PATH walk is what is under test, so no injected resolveExecutable.
+            Environment.SetEnvironmentVariable("PATH", relative);
+            Assert.Throws<CommandNotFoundException>(() => new CommandResolver([commandName]).Resolve());
+
+            Environment.SetEnvironmentVariable("PATH", directory.Path);
+            Assert.Equal(Path.GetFullPath(executable), new CommandResolver([commandName]).Resolve());
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PATH", originalPath);
+        }
+    }
+
+    [Fact]
     public void ResolveReturnsPathProducedByExecutableResolver()
     {
         var actual = Path.GetFullPath(Path.Combine("tools", "wslc.EXE"));

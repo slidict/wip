@@ -59,5 +59,9 @@ public class CommandRunnerQuietTests
         Assert.Contains("hello", output.ToString());
     }
 
-    private static IReadOnlyList<string> Cmd(string script) => ["cmd.exe", "/c", script];
+    private static IReadOnlyList<string> Cmd(string script) => [CmdExe, "/c", script];
+
+    // Rooted: CommandRunner refuses a bare name, which CreateProcess would search the current directory for.
+    private static string CmdExe =>
+        Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.System), "cmd.exe");
 }

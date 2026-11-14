@@ -81,8 +81,8 @@ public sealed class CommandResolver
 
     /// <summary>
     /// A name containing a separator is taken as a path; anything else is searched for on
-    /// PATH. On Windows an extensionless name is retried against each PATHEXT suffix, which
-    /// is what lets a bare "wslc" resolve to wslc.exe.
+    /// PATH, skipping any entry that is not fully qualified. On Windows an extensionless name
+    /// is retried against each PATHEXT suffix, which is what lets a bare "wslc" resolve to wslc.exe.
     /// </summary>
     private static string? ResolveExecutable(string command)
     {
@@ -94,6 +94,12 @@ public sealed class CommandResolver
         var path = System.Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
         foreach (var directory in path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
         {
+            // A relative entry such as "." is the working directory, which this search must not reach.
+            if (!Path.IsPathFullyQualified(directory))
+            {
+                continue;
+            }
+
             var resolved = ResolveFile(Path.Combine(directory, command));
             if (resolved is not null)
             {

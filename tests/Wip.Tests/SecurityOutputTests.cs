@@ -197,7 +197,7 @@ public sealed class SecurityOutputTests
     public void ToolExit124IsNotAnEnforcedTimeout()
     {
         var command = OperatingSystem.IsWindows()
-            ? new[] { "cmd.exe", "/c", "exit /b 124" }
+            ? new[] { Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.System), "cmd.exe"), "/c", "exit /b 124" }
             : new[] { "/bin/sh", "-c", "exit 124" };
         var runner = new CommandRunner(new ErrorInterpreter("linux/amd64"), TextWriter.Null, TextWriter.Null);
         var result = runner.RunWithOutcome(command, timeout: TimeSpan.FromSeconds(5));

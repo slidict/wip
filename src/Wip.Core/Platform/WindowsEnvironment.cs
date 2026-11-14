@@ -38,7 +38,10 @@ public sealed class WindowsEnvironment : IEnvironment
     /// default version is 2. Distinguishing them means parsing that output, which is
     /// localised and UTF-16 encoded, so it needs to be checked against a real machine before
     /// being relied on -- see docs/csharp-migration-plan.md §11. The Ruby build made exactly
-    /// this check, so this is no less accurate than what it replaced.
+    /// this check, so this is no less accurate than what it replaced. A launcher
+    /// <see cref="WslLauncher"/> cannot find means WSL is not installed, which is exactly the
+    /// fact this reports, so it is false rather than an exception.
     /// </remarks>
-    private static bool DetectWsl2() => ProcessProbe.Succeeds("wsl.exe", ["--status"]);
+    private static bool DetectWsl2() =>
+        WslLauncher.Resolve() is { } launcher && ProcessProbe.Succeeds(launcher, ["--status"]);
 }
