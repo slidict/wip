@@ -9,33 +9,46 @@ namespace Wip.Platform;
 /// <c>wsl.exe</c> committed to a cloned repository would run with the user's privileges.
 /// </para>
 /// <para>
-/// Order is the design. System32 and <c>ProgramFiles\WSL</c> need administrator rights to
-/// write to, so whoever can write to the working directory cannot plant a decoy there. They
-/// are tried first, and on a normal install one of them matches and the search stops.
+/// Order is the design. System32, <c>ProgramFiles\WSL</c> and the Store package's install
+/// directory under <c>ProgramFiles\WindowsApps</c> need administrator rights to write to, so
+/// whoever can write to the working directory cannot plant a decoy there. They are tried
+/// first, and on a normal install one of them matches and the search stops.
+/// </para>
+/// <para>
+/// <c>scripts/Show-Wsl.ps1</c> finds the package directory through <c>Get-AppxPackage</c>.
+/// Here it is found by listing <c>WindowsApps</c> instead, because C# would need the Appx/WinRT
+/// API or a <c>powershell.exe</c> child. That listing usually fails for a normal user (the
+/// directory's ACL is restricted), so it is best-effort and a failure falls through.
 /// </para>
 /// <para>
 /// <c>%LOCALAPPDATA%\Microsoft\WindowsApps</c>, where the app execution alias lives, is
-/// writable by anything running as the current user. It is last only because it is the one
-/// candidate that reaches a Store-only install; dropping it would make wip report that WSL2
-/// is not available on a machine where WSL works. It is a reachable location, not a safe one.
-/// </para>
-/// <para>
-/// <c>scripts/Show-Wsl.ps1</c> also asks <c>Get-AppxPackage</c> for the package's install
-/// location. That is deliberately not ported: C# would need the Appx/WinRT API or a
-/// <c>powershell.exe</c> child, and the alias directory reaches the same install at the same
-/// trust level. PATH is never consulted, and there is no fallback to a bare name.
+/// writable by anything running as the current user. It is last only because it is what
+/// reaches a Store-only install when the package directory cannot be listed; dropping it would
+/// make wip report that WSL2 is not available on a machine where WSL works. It covers that
+/// install only while the alias is switched on in Settings. It is a reachable location, not a
+/// safe one. PATH is never consulted, and there is no fallback to a bare name.
 /// </para>
 /// </remarks>
 public static class WslLauncher
 {
+    private const string PackagePattern = "MicrosoftCorporationII.WindowsSubsystemForLinux_*__8wekyb3d8bbwe";
+
     /// <summary>The trusted locations first, the user-writable alias directory last.</summary>
-    public static IReadOnlyList<string> DefaultCandidates =>
-    [
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "wsl.exe"),
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "WSL", "wsl.exe"),
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "Microsoft", "WindowsApps", "wsl.exe"),
-    ];
+    public static IReadOnlyList<string> DefaultCandidates
+    {
+        get
+        {
+            var programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+            return
+            [
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "wsl.exe"),
+                Path.Combine(programFiles, "WSL", "wsl.exe"),
+                .. PackageCandidates(Path.Combine(programFiles, "WindowsApps")),
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "Microsoft", "WindowsApps", "wsl.exe"),
+            ];
+        }
+    }
 
     /// <summary>Returns the first fully qualified candidate that exists as a file, or null.</summary>
     public static string? Resolve(IReadOnlyList<string>? candidates = null, Func<string, bool>? exists = null)
@@ -52,5 +65,32 @@ public static class WslLauncher
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// <c>wsl.exe</c> in each WSL package directory under <paramref name="windowsApps"/>, newest
+    /// name first so two installed versions do not pick at random; empty when it cannot be listed.
+    /// </summary>
+    internal static string[] PackageCandidates(string windowsApps, Func<string, string, string[]>? list = null)
+    {
+        // A relative root would list the working directory.
+        if (!Path.IsPathFullyQualified(windowsApps))
+        {
+            return [];
+        }
+
+        try
+        {
+            // Materialized here: a lazy enumeration would throw outside this catch.
+            return (list ?? Directory.GetDirectories)(windowsApps, PackagePattern)
+                .OrderByDescending(directory => Path.GetFileName(directory), StringComparer.OrdinalIgnoreCase)
+                .Select(directory => Path.Combine(directory, "wsl.exe"))
+                .ToArray();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException
+            or System.Security.SecurityException)
+        {
+            return [];
+        }
     }
 }
