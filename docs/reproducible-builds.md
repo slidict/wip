@@ -26,10 +26,12 @@ dotnet publish src/Wip.Cli/Wip.Cli.csproj --configuration Release --runtime win-
 ```
 
 `scripts/Invoke-LockedRestore.ps1` is `dotnet restore wip.slnx --locked-mode` plus one
-thing: when that restore fails, it compares every lock file in the solution against
-`Directory.Packages.props` and names each stale one, the package and the command that
-repairs it. A failure with any other cause gets no advice, because `--force-evaluate`
-would rewrite the locks without fixing it. The exit code is the restore's own.
+thing: when that restore reports a lock mismatch (NU1004) **and** a lock file really
+disagrees with `Directory.Packages.props`, it names each stale one, the package and the
+command that repairs it. Both conditions are required — a failure that happens before
+NuGet evaluates the locks, such as SDK selection, gets no advice even if a lock file is
+stale at the same time, because `--force-evaluate` repairs nothing about it. The exit code
+is the restore's own.
 
 Locked restore fails if project requests or project-reference dependencies no
 longer match the locks. Build, test, and publish do not silently restore a new

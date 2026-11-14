@@ -9,10 +9,11 @@
     indistinguishable from a breaking change in the bumped package -- and rediscovering that
     costs a read of every failed job's log.
 
-    Only a lock-against-central mismatch gets advice. A restore that failed for any other
-    reason (NU1903 from an implicit SDK package, an unreachable feed) prints nothing extra:
-    --force-evaluate would rewrite the lock files without fixing those, which is worse than
-    saying nothing. docs/reproducible-builds.md keeps --force-evaluate an intentional,
+    Advice needs two things: NuGet reporting a lock mismatch in this restore, and a lock file
+    that really disagrees with the central versions. Drift alone would misread an unrelated
+    failure -- SDK selection failing before NuGet evaluates the locks, NU1903 from an implicit
+    SDK package, an unreachable feed -- as something --force-evaluate repairs, which is worse
+    than saying nothing. docs/reproducible-builds.md keeps --force-evaluate an intentional,
     committed refresh; this script never runs it.
 
     The exit code is the restore's own, so every caller keeps the behaviour it had when the
@@ -33,18 +34,18 @@ $repo = Split-Path $PSScriptRoot -Parent
 
 Push-Location $repo
 try {
-    & $Dotnet restore $Solution --locked-mode
+    # Tee rather than capture: the restore's own output still streams to the job log, and
+    # the copy is what decides whether NuGet reported a lock mismatch at all.
+    & $Dotnet restore $Solution --locked-mode | Tee-Object -Variable output
     $code = $LASTEXITCODE
 }
 finally {
     Pop-Location
 }
 
-if ($code -eq 0) { exit 0 }
-
-$drift = @(Get-SolutionLockFileDrift -Root $repo -Solution $Solution)
-if ($drift.Count -gt 0) {
+$advice = Get-LockedRestoreAdvice -ExitCode $code -Output $output -Root $repo -Solution $Solution
+if ($advice) {
     Write-Host ''
-    Write-Host (Format-LockFileDriftReport -Drift $drift -Solution $Solution)
+    Write-Host $advice
 }
 exit $code

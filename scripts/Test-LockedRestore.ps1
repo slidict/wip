@@ -52,11 +52,29 @@ try {
         if ($report -notmatch [regex]::Escape($expected)) { throw "Report did not name '$expected': $report" }
     }
 
+    # The advice is gated on NuGet having reported the mismatch, not on drift alone: a restore
+    # that failed before it evaluated the locks is not repaired by --force-evaluate, even when a
+    # lock file happens to be stale at the same time.
+    $reported = @('/x/y.csproj : error NU1004: CentralTransitive ... [/x/wip.slnx]')
+    $unrelated = @('error : Cannot find a .NET SDK matching global.json')
+    if (-not (Get-LockedRestoreAdvice -ExitCode 1 -Output $reported -Root $diagnosis)) {
+        throw 'A reported mismatch with a stale lock file gave no advice'
+    }
+    if (Get-LockedRestoreAdvice -ExitCode 1 -Output $unrelated -Root $diagnosis) {
+        throw 'An unrelated failure was answered with the lock advice'
+    }
+    if (Get-LockedRestoreAdvice -ExitCode 0 -Output $reported -Root $diagnosis) {
+        throw 'A successful restore produced advice'
+    }
+
     # An in-sync pair, an explicit [V] pin against the "[V, V]" NuGet writes for it, and a
     # package with no central version must all stay silent: a restore that failed for another
     # reason must not be answered with --force-evaluate.
     Set-DriftFixture -Central '1.0.0' -Requested '[1.0.0, )'
     if (@(Get-SolutionLockFileDrift -Root $diagnosis).Count -ne 0) { throw 'An in-sync lock file was reported as stale' }
+    if (Get-LockedRestoreAdvice -ExitCode 1 -Output $reported -Root $diagnosis) {
+        throw 'Advice was produced with nothing stale to name'
+    }
     Set-DriftFixture -Central '[1.0.0]' -Requested '[1.0.0, 1.0.0]'
     if (@(Get-SolutionLockFileDrift -Root $diagnosis).Count -ne 0) { throw 'An explicit pin was reported as stale' }
     Set-DriftFixture -Central '9.9.9' -Requested '[1.0.0, )' -Package 'Unmanaged'

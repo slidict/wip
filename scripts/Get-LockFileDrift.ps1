@@ -117,6 +117,34 @@ function Get-SolutionLockFileDrift {
 
 <#
 .SYNOPSIS
+    The advice a failed locked restore should print, or nothing.
+
+.DESCRIPTION
+    Two conditions, not one. NuGet must have reported a lock mismatch in this restore, and a
+    lock file must actually disagree with the central versions. Drift on its own is not enough:
+    when SDK selection fails while a lock file happens to be stale, the restore never evaluated
+    the locks, and --force-evaluate repairs nothing about that failure. The NU1004 code is
+    matched rather than its text, which is localised.
+#>
+function Get-LockedRestoreAdvice {
+    param(
+        [Parameter(Mandatory = $true)][int] $ExitCode,
+        [AllowEmptyCollection()][string[]] $Output,
+        [Parameter(Mandatory = $true)][string] $Root,
+        [string] $Solution = 'wip.slnx'
+    )
+
+    if ($ExitCode -eq 0) { return $null }
+    # Substring, not a regex: the only thing stable across locales is the code itself.
+    if (-not ($Output -like '*NU1004*')) { return $null }
+
+    $drift = @(Get-SolutionLockFileDrift -Root $Root -Solution $Solution)
+    if ($drift.Count -eq 0) { return $null }
+    return Format-LockFileDriftReport -Drift $drift -Solution $Solution
+}
+
+<#
+.SYNOPSIS
     The report a failed restore prints: what is stale, and the command that repairs it.
 #>
 function Format-LockFileDriftReport {
