@@ -11,7 +11,10 @@ cheap to write down and expensive to discover during a migration.
 Three kinds of claim appear below, and they are not equally strong — read the distinction before
 relying on any of them.
 
-- **wip-side claims** are cited to `file:line` and were verified against `f466afa`.
+- **wip-side claims** are cited to `file:line`, verified against `f466afa`. Verify them the
+  same way they were written, with `git show f466afa:<path> | grep -n`, which counts the exact
+  bytes of the blob. A line number read off a rendered or converted copy of the file is not the
+  same measurement and has already disagreed with the blob twice.
 - **Upstream naming and discovery claims** were read from the branch at `dcf514b5`:
   `ComposeNormalizer.cpp` for the network and container name formats and the project-name
   normalization, `ComposeSpec.cpp` for `name` / `container_name`, and `WSLCSession.cpp` for how
@@ -22,15 +25,17 @@ relying on any of them.
   Re-read that Issue rather than trusting this paragraph's date — it is the tracking record and
   this is a snapshot of it.
 
-One claim is explicitly weaker than the rest and is marked where it appears: what upstream does
-with an existing network that has the right name and none of its labels.
+Two claims are explicitly weaker than the rest and are marked where they appear: what upstream
+does when it meets an existing network that has the right name and none of its labels, and what
+it does when it meets an existing container name.
 
 ## The two schemes
 
 | | wip `compose-native` | upstream as of `#42086` |
 |---|---|---|
 | network name | `compose.project` if set, else the name of the directory holding `wip.yml`, **verbatim** | `<project>_default` — `std::format("{}_default", projectName)` in `ComposeNormalizer.cpp` |
-| project name | not derived; the directory name is used as-is | the directory's filename through `NormalizeProjectName()`: lower-cased, every character except alphanumerics, `-` and `_` removed, leading non-alphanumerics stripped, length capped |
+| project name | not derived; `compose.project`, else the directory name, used as-is | `ComposeNormalizer::Normalize` prefers an explicit project name when one is supplied (`if (documents.ExplicitProjectName.has_value())`) and derives it from the directory's filename only otherwise — so **both** schemes have an override, and both inputs land in the same places |
+| project-name normalization | none | `NormalizeProjectName()`: lower-cased, every character except alphanumerics, `-` and `_` removed, leading non-alphanumerics stripped. It is **validated, not trimmed** — an empty or overlong result throws `E_INVALIDARG` (`result.empty() \|\| result.size() > WSLC_MAX_COMPOSE_PROJECT_NAME_LENGTH`), so a long directory name fails rather than being shortened |
 | container name | the compose service name, **verbatim** | `<project>-<service>-1` — `"{}-{}-1"`, and **only as a default**: it is applied `if (container.Name.empty())`, so a service's own `name` or `container_name` (`ComposeSpec.cpp` prefers `name`) overrides it |
 | ownership labels | **none** | `com.microsoft.wslc.compose.*` (WSLC-owned, not `com.docker.compose.*`) |
 
@@ -80,18 +85,27 @@ WSLC labels and names that usually differ, so `wslc compose` does not recognize 
 that switches gets a second network and a second set of containers while the originals keep
 running, and nothing points at the first set any more.
 
-**A name collision that blocks instead.** The two schemes can also land on the *same* network
-name, because wip uses `compose.project` verbatim and upstream appends `_default`: a project in
-a directory named `foo` that sets `compose.project: foo_default` already occupies the name
-upstream will want. That network carries none of the WSLC labels, and upstream validates
-ownership and metadata-version labels on the network it finds. So the likely outcome there is a
+**A network-name collision that blocks instead.** The two schemes can also land on the *same*
+network name, because wip uses `compose.project` verbatim and upstream appends `_default`: a
+project in a directory named `foo` that sets `compose.project: foo_default` already occupies the
+name upstream will want. That network carries none of the WSLC labels, and upstream validates
+ownership and metadata-version labels on the network it finds, so the likely outcome is a
 refusal rather than a duplicate — `wslc compose` stops on a network it will not adopt.
 
-The second hazard's *consequence* is the one claim here taken on report rather than read: the
-collision itself follows from wip's own code (`Config.cs:102`), but which branch upstream takes
-for an unlabeled network of the right name was not verified in this repository. It is recorded
-because a refusal and a duplicate need different recovery, and a reader meeting either should
-know both are possible.
+**A container-name collision, independently of the network.** Upstream generates
+`<project>-<service>-1` only when a service names nothing, so a `compose.yml` that sets
+`container_name` to the same string wip already uses — the service name — asks upstream to
+create a container that exists. Container names are unique, so that attempt fails rather than
+producing a second set, and it fails even when the two network names differ. This is a separate
+path from the one above and has to be checked separately during a migration.
+
+Both collision *consequences* are the claims here taken on report rather than read. The
+collisions themselves follow from code: wip's verbatim names at `Config.cs:102` and
+`CommandBuilder.cs:84`, upstream's `_default` suffix and its acceptance of `container_name`.
+What was not verified in this repository is which branch upstream takes once it meets an
+existing unlabeled network or an existing container name. They are recorded anyway, because a
+refusal and a duplicate need different recovery and a reader meeting either should know both
+shapes are possible.
 
 ### Rejected
 
