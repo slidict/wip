@@ -45,7 +45,10 @@ function Get-CentralPackageVersion {
     on the range and not on how either chose to space it.
 #>
 function ConvertTo-NormalizedRange {
-    param([Parameter(Mandatory = $true)][string] $Range)
+    # AllowEmptyString: a malformed range is compared as the empty string it normalizes to,
+    # the way the textual comparison always did. Rejecting it here would abort the diagnosis
+    # of the restore that is already failing.
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string] $Range)
 
     return (($Range -replace '\s+', '') -replace ',', ', ')
 }
@@ -55,7 +58,7 @@ function ConvertTo-NormalizedRange {
     The requested range NuGet records in a lock file for a central version.
 #>
 function ConvertTo-RequestedRange {
-    param([Parameter(Mandatory = $true)][string] $CentralVersion)
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string] $CentralVersion)
 
     $value = $CentralVersion.Trim()
     if ($value -match '^[^\[\](),\s]+$') { return "[$value, )" }
@@ -80,9 +83,10 @@ function Get-LockFileDrift {
     foreach ($framework in $lock.dependencies.PSObject.Properties) {
         foreach ($entry in $framework.Value.PSObject.Properties) {
             $package = $entry.Value
-            # Absent or empty alike: central management does not pin the entry.
+            # Absent or null: central management does not pin the entry. An empty range is
+            # not the same thing -- it disagrees with any central version, so it stays drift.
             if (-not $package.PSObject.Properties['requested']) { continue }
-            if ([string]::IsNullOrWhiteSpace($package.requested)) { continue }
+            if ($null -eq $package.requested) { continue }
             if (-not $CentralVersion.ContainsKey($entry.Name)) { continue }
 
             $expected = ConvertTo-RequestedRange -CentralVersion $CentralVersion[$entry.Name]
