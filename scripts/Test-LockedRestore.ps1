@@ -80,6 +80,22 @@ try {
     Set-DriftFixture -Central '9.9.9' -Requested '[1.0.0, )' -Package 'Unmanaged'
     if (@(Get-SolutionLockFileDrift -Root $diagnosis).Count -ne 0) { throw 'A package with no central version was reported as stale' }
 
+    # An interval carried through from the props, where only the spacing differs: NuGet records
+    # "[1.0.0, 2.0.0)" for the "[1.0.0,2.0.0)" written by hand. Comparing those as written
+    # would advise --force-evaluate for a lock file that is in sync, which repairs nothing.
+    Set-DriftFixture -Central '[1.0.0,2.0.0)' -Requested '[1.0.0, 2.0.0)'
+    if (@(Get-SolutionLockFileDrift -Root $diagnosis).Count -ne 0) { throw 'An interval range was reported as stale over its spacing' }
+    Set-DriftFixture -Central '[1.0.0,2.0.0)' -Requested '[1.0.0, 3.0.0)'
+    if (@(Get-SolutionLockFileDrift -Root $diagnosis).Count -ne 1) { throw 'A genuinely different interval was not reported as stale' }
+
+    # A malformed version or range must still be compared, not abort the diagnosis of the
+    # restore that is already failing, and an empty range disagrees with any central version
+    # rather than counting as unpinned.
+    Set-DriftFixture -Central ' ' -Requested '[1.0.0, )'
+    if (@(Get-SolutionLockFileDrift -Root $diagnosis).Count -ne 1) { throw 'A blank central version did not compare as stale' }
+    Set-DriftFixture -Central '2.0.0' -Requested ''
+    if (@(Get-SolutionLockFileDrift -Root $diagnosis).Count -ne 1) { throw 'An emptied requested range was not reported as stale' }
+
     # A restore that writes nothing to stdout must still return its own exit code: Tee-Object
     # creates its variable only when a record reaches it, and reading an unset one under
     # Set-StrictMode would replace that code with an error. The stand-in prints nothing and
@@ -88,9 +104,49 @@ try {
     [IO.File]::WriteAllText($silent, 'exit 7')
     & (Join-Path $PSScriptRoot 'Invoke-LockedRestore.ps1') -Dotnet $silent
     if ($LASTEXITCODE -ne 7) { throw "A silent restore did not return its own exit code (got $LASTEXITCODE)" }
+    # The stand-in's 7 would otherwise stand until something else happens to reset it:
+    # `shell: pwsh` ends a step with `exit $LASTEXITCODE`, so a run whose every assertion
+    # passed would still fail the job, and any `-ne 0` guard added below here would read the
+    # 7 as its own failure.
+    $global:LASTEXITCODE = 0
+
+    # A restore that fails on its error stream must still reach the diagnosis, and the exit
+    # code alone does not prove that: without the stream merge the wrapper still exits 1 and
+    # only the advice disappears, which is the regression this case exists to catch. So the
+    # advice itself is asserted, from a copy of the wrapper rooted at the drifted fixture.
+    Set-DriftFixture -Central '2.0.0' -Requested '[1.0.0, )'
+    $fixtureScripts = Join-Path $diagnosis 'scripts'
+    New-Item -ItemType Directory -Path $fixtureScripts -Force | Out-Null
+    foreach ($name in @('Invoke-LockedRestore.ps1', 'Get-LockFileDrift.ps1')) {
+        Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination $fixtureScripts
+    }
+    $noisy = Join-Path $diagnosis 'noisy.ps1'
+    [IO.File]::WriteAllText($noisy, 'Write-Error "x.csproj : error NU1004: CentralTransitive"; exit 1')
+    # Read the advice from a child host's stdout: Write-Host reaches a pipeline only on the
+    # newer host. Its stderr is deliberately left alone -- redirecting it would abort here
+    # under 'Stop', which is the very thing the wrapper has to work around.
+    $printed = Join-Path $diagnosis 'wrapper.out'
+    $wrapper = Join-Path $fixtureScripts 'Invoke-LockedRestore.ps1'
+    & (Get-Process -Id $PID).Path -NoProfile -File $wrapper -Dotnet $noisy > $printed
+    if ($LASTEXITCODE -ne 1) { throw "A restore that failed on stderr did not return its own exit code (got $LASTEXITCODE)" }
+    # ReadAllText, not Get-Content -Raw: an empty file makes the latter emit no object, and
+    # -notmatch against that empty collection filters rather than compares, so it returns an
+    # empty array -- falsy -- and the assertion below could never fail.
+    $advice = [IO.File]::ReadAllText($printed)
+    foreach ($expected in @('src/Lib/packages.lock.json is stale', 'dotnet restore wip.slnx --force-evaluate')) {
+        if ($advice -notmatch [regex]::Escape($expected)) {
+            throw "A restore that failed on stderr did not name '$expected': $advice"
+        }
+    }
+    $global:LASTEXITCODE = 0
 }
 finally {
-    Remove-Item -LiteralPath $diagnosis -Recurse -Force
+    $resolvedDiagnosis = [IO.Path]::GetFullPath($diagnosis)
+    if (-not $resolvedDiagnosis.StartsWith($tempRoot, [StringComparison]::OrdinalIgnoreCase) -or
+        [IO.Path]::GetFileName($resolvedDiagnosis) -notmatch '^wip-drift-[a-f0-9]{32}$') {
+        throw 'Refusing cleanup outside the allocated fixture'
+    }
+    Remove-Item -LiteralPath $resolvedDiagnosis -Recurse -Force
 }
 New-Item -ItemType Directory -Path $fixture | Out-Null
 try {

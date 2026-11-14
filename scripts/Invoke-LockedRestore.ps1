@@ -40,9 +40,24 @@ $output = @()
 Push-Location $repo
 try {
     # Tee rather than capture: the restore's own output still streams to the job log, and
-    # the copy is what decides whether NuGet reported a lock mismatch at all.
-    & $Dotnet restore $Solution --locked-mode | Tee-Object -Variable output
-    $code = $LASTEXITCODE
+    # the copy is what decides whether NuGet reported a lock mismatch at all. Both streams
+    # are teed, so the decision does not depend on which one MSBuild's logger writes NU1004
+    # to -- a diagnosis that disappeared when the error moved to stderr would be the same
+    # bare NU1004 this script exists to replace.
+    #
+    # Windows PowerShell turns every redirected stderr line into an error record, and 'Stop'
+    # would raise it before the advice could run. Measured: the restore aborts with the
+    # stderr text as a RemoteException. Lowered for this one call, so an unrelated failure
+    # elsewhere in the script still stops.
+    $preference = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        & $Dotnet restore $Solution --locked-mode 2>&1 | Tee-Object -Variable output
+        $code = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $preference
+    }
 }
 finally {
     Pop-Location

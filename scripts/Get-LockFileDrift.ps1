@@ -15,7 +15,9 @@
 
     The comparison is textual, against the range NuGet writes for a central version: a plain
     version V becomes "[V, )", and an explicit pin "[V]" becomes "[V, V]". Any other range
-    syntax is compared as written with whitespace collapsed. A package with no central
+    syntax is compared in NuGet's own spelling -- one space after each comma -- so an interval
+    written "[1.0.0,2.0.0)" in the props does not read as drift against the "[1.0.0, 2.0.0)"
+    recorded in the lock file. A package with no central
     version is skipped -- the implicit SDK references (Microsoft.DotNet.ILCompiler,
     Microsoft.NET.ILLink.Tasks) follow the SDK, and there is nothing for them to disagree
     with. So is a lock entry with no requested range: central management does not pin it.
@@ -36,15 +38,32 @@ function Get-CentralPackageVersion {
 
 <#
 .SYNOPSIS
+    A version range in the one spelling NuGet uses: no stray whitespace, one space per comma.
+
+.DESCRIPTION
+    Both sides of the comparison pass through here, so the props and the lock file are judged
+    on the range and not on how either chose to space it.
+#>
+function ConvertTo-NormalizedRange {
+    # AllowEmptyString: a malformed range is compared as the empty string it normalizes to,
+    # the way the textual comparison always did. Rejecting it here would abort the diagnosis
+    # of the restore that is already failing.
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string] $Range)
+
+    return (($Range -replace '\s+', '') -replace ',', ', ')
+}
+
+<#
+.SYNOPSIS
     The requested range NuGet records in a lock file for a central version.
 #>
 function ConvertTo-RequestedRange {
-    param([Parameter(Mandatory = $true)][string] $CentralVersion)
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string] $CentralVersion)
 
     $value = $CentralVersion.Trim()
     if ($value -match '^[^\[\](),\s]+$') { return "[$value, )" }
     if ($value -match '^\[\s*([^\[\](),\s]+)\s*\]$') { return "[$($Matches[1]), $($Matches[1])]" }
-    return ($value -replace '\s+', ' ')
+    return (ConvertTo-NormalizedRange -Range $value)
 }
 
 function Get-LockFileDrift {
@@ -64,11 +83,14 @@ function Get-LockFileDrift {
     foreach ($framework in $lock.dependencies.PSObject.Properties) {
         foreach ($entry in $framework.Value.PSObject.Properties) {
             $package = $entry.Value
+            # Absent or null: central management does not pin the entry. An empty range is
+            # not the same thing -- it disagrees with any central version, so it stays drift.
             if (-not $package.PSObject.Properties['requested']) { continue }
+            if ($null -eq $package.requested) { continue }
             if (-not $CentralVersion.ContainsKey($entry.Name)) { continue }
 
             $expected = ConvertTo-RequestedRange -CentralVersion $CentralVersion[$entry.Name]
-            if (($package.requested -replace '\s+', ' ') -ne $expected) {
+            if ((ConvertTo-NormalizedRange -Range $package.requested) -ne $expected) {
                 $drift += [pscustomobject]@{
                     LockFile  = $DisplayPath
                     Framework = $framework.Name
