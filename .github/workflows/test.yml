@@ -35,7 +35,8 @@ jobs:
           global-json-file: global.json
 
       - name: Restore locked dependencies
-        run: dotnet restore wip.slnx --locked-mode
+        shell: pwsh
+        run: ./scripts/Invoke-LockedRestore.ps1
 
       - name: Verify locked restore rejects dependency drift
         shell: pwsh
@@ -70,7 +71,8 @@ jobs:
       # compiler is the only thing that reports trim and reflection problems. TreatWarnings
       # AsErrors is on, so an IL warning fails here rather than reaching a release.
       - name: Restore locked dependencies
-        run: dotnet restore wip.slnx --locked-mode
+        shell: pwsh
+        run: ./scripts/Invoke-LockedRestore.ps1
 
       - name: Publish
         run: >

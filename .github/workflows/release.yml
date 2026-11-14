@@ -210,7 +210,8 @@ jobs:
           global-json-file: global.json
 
       - name: Restore locked dependencies
-        run: dotnet restore wip.slnx --locked-mode
+        shell: pwsh
+        run: ./scripts/Invoke-LockedRestore.ps1
 
       - name: Run tests
         run: dotnet test tests/Wip.Tests/Wip.Tests.csproj --configuration Release --no-restore
