@@ -49,6 +49,7 @@ public sealed class CommandResolver
     {
         if (configured != "auto")
         {
+            RejectRelativePath(configured);
             return TryGetFullPath(resolveExecutable(configured)) ?? throw NotFound([configured]);
         }
 
@@ -62,6 +63,53 @@ public sealed class CommandResolver
         }
 
         throw NotFound(candidates);
+    }
+
+    /// <summary>
+    /// A configured command must be a bare name, searched on PATH, or a fully qualified path.
+    /// Anything else with a separator in it, or rooted, is refused before any resolver sees
+    /// it, an injected one included.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The value comes from <c>wip.yml</c>, which is part of the project tree. A relative path
+    /// would be resolved against whatever directory wip was run from, so a <c>wip.yml</c> in a
+    /// freshly cloned repository could pick a binary inside that repository and have it run with
+    /// the user's privileges. A bare name is not affected: the PATH walk already skips entries
+    /// that are not fully qualified.
+    /// </para>
+    /// <para>
+    /// Refusing beats re-rooting against the project root. Re-rooting removes only the "depends
+    /// on where you ran wip from" part; the value would still come from the cloned tree and
+    /// still name a binary in it. <see cref="Path.IsPathFullyQualified(string)"/> rather than
+    /// <c>IsPathRooted</c>, because the drive-relative <c>C:wslc.exe</c> and the root-relative
+    /// <c>\wslc.exe</c> are rooted yet still depend on the current drive or directory.
+    /// </para>
+    /// <para>
+    /// Thrown as <see cref="CommandNotFoundException"/>, keeping it the only failure callers
+    /// have to handle; the message is what says why.
+    /// </para>
+    /// </remarks>
+    private void RejectRelativePath(string configured)
+    {
+        // Rooted catches C:wslc.exe, which has no separator, yet as a bare name would reach
+        // Path.Combine in the PATH walk and come back as itself.
+        var isPath = configured.Contains(Path.DirectorySeparatorChar)
+                     || configured.Contains(Path.AltDirectorySeparatorChar)
+                     || Path.IsPathRooted(configured);
+        if (!isPath || Path.IsPathFullyQualified(configured))
+        {
+            return;
+        }
+
+        throw new CommandNotFoundException(
+            $"""
+             {label} command "{configured}" is a relative path, which wip refuses.
+
+             Configure an absolute path, or a bare name to search for on PATH. A relative
+             path would be resolved against whatever directory wip was run from, so a wip.yml
+             in a cloned repository could choose a binary inside that repository.
+             """);
     }
 
     private static IReadOnlyList<string> BuildDefaultCandidates()

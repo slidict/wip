@@ -122,27 +122,85 @@ public sealed class CommandResolverTests
     }
 
     [Fact]
-    public void ExplicitRelativePathIsFrozenAsAbsolutePath()
+    public void RelativeConfiguredCommandIsRefusedEvenWhenTheFileExists()
     {
         using var directory = new TemporaryDirectory();
         var originalDirectory = Environment.CurrentDirectory;
         try
         {
+            // A real file at the relative location, so only the guard can make this throw.
             Environment.CurrentDirectory = directory.Path;
             var relative = Path.Combine("bin", "tool");
-            Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(relative))!);
-            File.WriteAllText(relative, string.Empty);
+            Directory.CreateDirectory(Path.Combine(directory.Path, "bin"));
+            File.WriteAllText(Path.Combine(directory.Path, relative), string.Empty);
 
-            var resolved = new CommandResolver([]).Resolve(relative);
-            Environment.CurrentDirectory = originalDirectory;
+            var refused = Assert.Throws<CommandNotFoundException>(() => new CommandResolver([]).Resolve(relative));
 
-            Assert.Equal(Path.Combine(directory.Path, "bin", "tool"), resolved);
-            Assert.True(File.Exists(resolved));
+            Assert.Contains($"\"{relative}\"", refused.Message);
+            Assert.Contains("absolute path", refused.Message);
         }
         finally
         {
             Environment.CurrentDirectory = originalDirectory;
         }
+    }
+
+    [Fact]
+    public void AbsoluteConfiguredCommandStillResolves()
+    {
+        using var directory = new TemporaryDirectory();
+        var executable = Path.Combine(directory.Path, "bin", "tool");
+        Directory.CreateDirectory(Path.Combine(directory.Path, "bin"));
+        File.WriteAllText(executable, string.Empty);
+
+        Assert.Equal(executable, new CommandResolver([]).Resolve(executable));
+    }
+
+    [Fact]
+    public void BareConfiguredNameStillResolvesOnPath()
+    {
+        using var directory = new TemporaryDirectory();
+        const string commandName = "wip-configured-bare-name-test";
+        var executable = Path.Combine(directory.Path, commandName);
+        File.WriteAllText(executable, string.Empty);
+
+        var originalPath = Environment.GetEnvironmentVariable("PATH");
+        try
+        {
+            Environment.SetEnvironmentVariable("PATH", directory.Path);
+
+            Assert.Equal(Path.GetFullPath(executable), new CommandResolver([]).Resolve(commandName));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PATH", originalPath);
+        }
+    }
+
+    [Theory]
+    [InlineData("C:wslc.exe")]
+    [InlineData(@"C:tools\wslc.exe")]
+    [InlineData(@"\wslc.exe")]
+    [InlineData("/wslc.exe")]
+    public void DriveRelativeAndRootRelativeConfiguredCommandsAreRefusedOnWindows(string configured)
+    {
+        Assert.SkipWhen(!OperatingSystem.IsWindows(), "drive- and root-relative paths exist only on Windows");
+
+        // Every value resolves to a file, so only the guard can make this throw.
+        var resolver = new CommandResolver([], resolveExecutable: _ => Path.Combine(Path.GetTempPath(), "wslc.exe"));
+
+        var refused = Assert.Throws<CommandNotFoundException>(() => resolver.Resolve(configured));
+        Assert.Contains($"\"{configured}\"", refused.Message);
+    }
+
+    [Theory]
+    [InlineData("./wslc")]
+    [InlineData("../wslc")]
+    public void InjectedResolverCannotRouteAroundTheGuard(string configured)
+    {
+        var resolver = new CommandResolver([], resolveExecutable: _ => Path.Combine(Path.GetTempPath(), "wslc"));
+
+        Assert.Throws<CommandNotFoundException>(() => resolver.Resolve(configured));
     }
 
     [Fact]
@@ -163,7 +221,9 @@ public sealed class CommandResolverTests
     {
         var resolver = new CommandResolver([]);
 
-        Assert.Throws<CommandNotFoundException>(() => resolver.Resolve(Path.Combine("bin", "to\0ol")));
+        // Absolute, so this reaches normalization rather than the relative-path guard.
+        Assert.Throws<CommandNotFoundException>(() =>
+            resolver.Resolve(Path.Combine(Path.GetTempPath(), "bin", "to\0ol")));
     }
 
     private sealed class TemporaryDirectory : IDisposable
