@@ -119,7 +119,7 @@ public class WslLauncherLiteralTests
             null,
             "pass the resolved path, as benchmark/scripts/common.ps1 does"),
         new("PowerShell command",
-            $"(^|[^-A-Za-z0-9_.\\\\/])wsl{Space}+-",
+            $"(^|[^-A-Za-z0-9_.\\\\/]){NamePattern}{Space}+-",
             BenchmarkScope,
             "call the resolved path with & (Get-WslLauncher), or Get-WslLauncherOrNull where it must not throw"),
     ];
@@ -148,6 +148,9 @@ public class WslLauncherLiteralTests
         // With the carriage return a CRLF checkout leaves: see TokenEnd.
         { "-FilePath argument", $"Start-Process -FilePath {Name}\r" },
         { "PowerShell command", $"        {Name} --terminate $distro 2>$null | Out-Null" },
+        // The suffixed spelling is the same invocation. The first version of this pattern
+        // wrote the name itself instead of NamePattern, and this walked straight past it.
+        { "PowerShell command", $"        {Name}.exe --terminate $distro 2>$null | Out-Null" },
         { "PowerShell command", $"$sections.Add((({Name} -d $WslDistro -- docker logs x 2>&1) -join 'n'))" },
     };
 
