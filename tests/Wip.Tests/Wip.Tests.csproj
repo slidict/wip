@@ -12,6 +12,9 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Declared rather than taken transitively: the command-line tests use the API, and a
+         CentralTransitive entry is one Dependabot does not refresh with the version bump. -->
+    <PackageReference Include="System.CommandLine" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="xunit.v3" />
     <PackageReference Include="xunit.runner.visualstudio" />

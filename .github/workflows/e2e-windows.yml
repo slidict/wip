@@ -44,7 +44,8 @@ jobs:
       # The published binary, not `dotnet run`: this is the artifact users install, and AOT
       # compilation is the one step the managed test host cannot speak for.
       - name: Restore locked dependencies
-        run: dotnet restore wip.slnx --locked-mode
+        shell: pwsh
+        run: ./scripts/Invoke-LockedRestore.ps1
 
       - name: Publish wip.exe
         run: >
