@@ -194,6 +194,77 @@ public sealed class CommandResolverTests
     }
 
     [Theory]
+    [InlineData("WSLC")]
+    [InlineData("compose command")]
+    [InlineData("Git")]
+    public void RefusalReadsCorrectlyForEveryLabel(string label)
+    {
+        var resolver = new CommandResolver([], label, resolveExecutable: _ => Path.Combine(Path.GetTempPath(), "x"));
+
+        var refused = Assert.Throws<CommandNotFoundException>(() => resolver.Resolve(Path.Combine("bin", "x")));
+
+        Assert.StartsWith($"{label} was configured as a relative path", refused.Message);
+        Assert.DoesNotContain("command command", refused.Message);
+    }
+
+    [Theory]
+    [InlineData(@"\\server\share\wslc.exe")]
+    [InlineData("//server/share/wslc.exe")]
+    [InlineData(@"\\?\C:\wslc.exe")]
+    [InlineData(@"\\.\C:\wslc.exe")]
+    public void NetworkAndDeviceConfiguredCommandsAreRefusedOnWindows(string configured)
+    {
+        Assert.SkipWhen(!OperatingSystem.IsWindows(), "UNC and device paths exist only on Windows");
+
+        // Every value resolves to a file, so only the guard can make this throw.
+        var resolver = new CommandResolver([], resolveExecutable: _ => Path.Combine(Path.GetTempPath(), "wslc.exe"));
+
+        var refused = Assert.Throws<CommandNotFoundException>(() => resolver.Resolve(configured));
+        Assert.Contains("network or device path", refused.Message);
+        Assert.Contains($"\"{configured}\"", refused.Message);
+    }
+
+    [Fact]
+    public void MappedDriveConfiguredCommandIsNotRefusedOnWindows()
+    {
+        Assert.SkipWhen(!OperatingSystem.IsWindows(), "drive letters exist only on Windows");
+
+        // Nothing resolves, so the outcome is not-found unless the guard refuses first.
+        var resolver = new CommandResolver([], resolveExecutable: _ => null);
+
+        var failure = Assert.Throws<CommandNotFoundException>(() => resolver.Resolve(@"Z:\tools\wslc.exe"));
+        Assert.StartsWith("WSLC was not found.", failure.Message);
+        Assert.DoesNotContain("refuses", failure.Message);
+    }
+
+    [Fact]
+    public void DoubleSlashConfiguredCommandIsUnchangedOnUnix()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "on Windows this is a UNC path");
+
+        var resolved = Path.Combine(Path.GetTempPath(), "wslc");
+        var resolver = new CommandResolver([], resolveExecutable: _ => resolved);
+
+        Assert.Equal(resolved, resolver.Resolve("//server/share/wslc"));
+    }
+
+    [Theory]
+    [InlineData(@"C:\", true)]
+    [InlineData("z:/", true)]
+    [InlineData(@"\\server\share\", false)]
+    [InlineData("//server/share/", false)]
+    [InlineData(@"\\?\C:\", false)]
+    [InlineData(@"\\.\C:\", false)]
+    [InlineData("C:", false)]
+    [InlineData("/", false)]
+    [InlineData("", false)]
+    [InlineData(null, false)]
+    public void OnlyADriveRootCountsAsLocal(string? root, bool expected)
+    {
+        Assert.Equal(expected, CommandResolver.IsDriveRoot(root));
+    }
+
+    [Theory]
     [InlineData("./wslc")]
     [InlineData("../wslc")]
     public void InjectedResolverCannotRouteAroundTheGuard(string configured)

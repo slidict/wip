@@ -50,6 +50,7 @@ public sealed class CommandResolver
         if (configured != "auto")
         {
             RejectRelativePath(configured);
+            RejectNonLocalPath(configured);
             return TryGetFullPath(resolveExecutable(configured)) ?? throw NotFound([configured]);
         }
 
@@ -104,13 +105,58 @@ public sealed class CommandResolver
 
         throw new CommandNotFoundException(
             $"""
-             {label} command "{configured}" is a relative path, which wip refuses.
+             {label} was configured as a relative path, which wip refuses: "{configured}"
 
              Configure an absolute path, or a bare name to search for on PATH. A relative
              path would be resolved against whatever directory wip was run from, so a wip.yml
              in a cloned repository could choose a binary inside that repository.
              """);
     }
+
+    /// <summary>
+    /// On Windows a configured path must also sit on a drive: UNC (<c>\\server\share\...</c>,
+    /// <c>//server/share/...</c>) and device paths (<c>\\?\...</c>, <c>\\.\...</c>) are
+    /// refused, although <see cref="Path.IsPathFullyQualified(string)"/> accepts them.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The threat is the one <see cref="RejectRelativePath"/> closes, only easier: a
+    /// <c>wip.yml</c> naming <c>\\host\share\wslc.exe</c> needs no knowledge of where the
+    /// victim cloned it, and the binary is fetched over SMB and run with the user's privileges.
+    /// </para>
+    /// <para>
+    /// A mapped network drive (<c>Z:\...</c>) is allowed on purpose. It looks exactly like a
+    /// local drive, it has to exist on the user's machine already, so the repository cannot
+    /// bring it along, and refusing it would break an operator who keeps tools there.
+    /// </para>
+    /// <para>
+    /// Unix has no UNC form, and a fully qualified path there already means one starting with
+    /// <c>/</c>, so nothing is added on Unix.
+    /// </para>
+    /// </remarks>
+    private void RejectNonLocalPath(string configured)
+    {
+        // A bare name has no root; RejectRelativePath has already refused any rooted value
+        // that is not fully qualified.
+        if (!OperatingSystem.IsWindows() || !Path.IsPathRooted(configured)
+            || IsDriveRoot(Path.GetPathRoot(configured)))
+        {
+            return;
+        }
+
+        throw new CommandNotFoundException(
+            $"""
+             {label} was configured as a network or device path, which wip refuses: "{configured}"
+
+             Configure an absolute path on a drive, such as C:\, or a bare name to search for
+             on PATH. A UNC or device path lets a wip.yml in a cloned repository run a binary
+             from another machine.
+             """);
+    }
+
+    /// <summary>True for a root shaped like <c>C:\</c> or <c>C:/</c>, the only root a configured path may have on Windows.</summary>
+    internal static bool IsDriveRoot(string? root) =>
+        root is { Length: 3 } && char.IsAsciiLetter(root[0]) && root[1] == ':' && root[2] is '\\' or '/';
 
     private static IReadOnlyList<string> BuildDefaultCandidates()
     {
