@@ -22,8 +22,18 @@ public static class ProcessProbe
     /// every caller is a diagnostic asking "does this work?", and a hung wslc should not hang
     /// <c>wip doctor</c> with it.
     /// </summary>
+    /// <exception cref="ArgumentException">
+    /// <paramref name="fileName"/> is not fully qualified. A bare name lets CreateProcess search
+    /// the current directory first; that is a defect in wip, not a machine state, so it is not
+    /// folded into false, where it would read as "WSL is not installed".
+    /// </exception>
     public static bool Succeeds(string fileName, IEnumerable<string> arguments, TimeSpan? timeout = null)
     {
+        if (!Path.IsPathFullyQualified(fileName))
+        {
+            throw new ArgumentException($"Executable must be a fully qualified path: {fileName}", nameof(fileName));
+        }
+
         try
         {
             var startInfo = new ProcessStartInfo(fileName)

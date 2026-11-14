@@ -318,7 +318,7 @@ public class ScanEngineTests
         public Action? BeforeGit;
         public bool WrongCommit;
         public bool SecondFile;
-        public RulesFetcher Fetcher => new(Path.Combine(Root, "cache"), Git);
+        public RulesFetcher Fetcher => new(Path.Combine(Root, "cache"), Git, resolveGit: () => Path.Combine(Root, "git"));
         private (int Code, string Output) Git(IReadOnlyList<string> argv,
             IReadOnlyDictionary<string, string> environment, TimeSpan timeout)
         {

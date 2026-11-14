@@ -12,8 +12,15 @@ internal sealed class RulesFetcher(
     string cacheDirectory,
     Func<IReadOnlyList<string>, IReadOnlyDictionary<string, string>, TimeSpan, (int Code, string Output)>? run = null,
     Action<string, string>? moveDirectory = null,
-    Action<TimeSpan>? delay = null)
+    Action<TimeSpan>? delay = null,
+    Func<string>? resolveGit = null)
 {
+    internal const string GitInstallHint = """
+        Install Git for Windows from https://git-scm.com/download/win, or with:
+
+          winget install --id Git.Git -e
+        """;
+
     internal const string TreeDirectoryName = "tree";
     // Version 1 allowed host-native EOL conversion. Refuse those entries rather than
     // reuse checkouts whose bytes may depend on the host that prepared them.
@@ -173,12 +180,18 @@ internal sealed class RulesFetcher(
         catch (UnauthorizedAccessException error) { throw new WipException("Pinned rules cache is inaccessible", error); }
     }
 
+    // Resolved once and only when git is first needed, so a cache hit never requires git.
+    private string? git;
+
     private string Git(string tree, string gitDirectory, string hooks, string configuration, IReadOnlyList<string> arguments, TimeSpan timeout)
     {
         // autocrlf=false alone does not stop attribute-driven native EOL conversion.
         // Measured blob: a LF b LF c LF; native checkout: a CRLF b CRLF c CRLF;
         // with core.eol=lf: a LF b LF c LF. Otherwise fingerprints depend on the host.
-        string[] command = ["git", "-c", "core.hooksPath=" + hooks, "-c", "core.autocrlf=false", "-c", "core.eol=lf",
+        try { git ??= (resolveGit ?? ResolveGit)(); }
+        catch (CommandNotFoundException error) { throw GitRequired(error); }
+        // Rooted, never bare: CommandRunner refuses a name CreateProcess would search the current directory for.
+        string[] command = [git, "-c", "core.hooksPath=" + hooks, "-c", "core.autocrlf=false", "-c", "core.eol=lf",
             "-c", "credential.helper=", "-c", "protocol.allow=never", "-c", "protocol.https.allow=always", "-C", tree, .. arguments];
         // Isolate checkout from host hooks, filters, config injection and repository context.
         var environment = new Dictionary<string, string>
@@ -200,6 +213,8 @@ internal sealed class RulesFetcher(
             throw new WipException($"Pinned rules git {arguments[0]} failed (exit {result.Code}); no unverified rules will be used");
         return result.Output;
     }
+
+    private static string ResolveGit() => new CommandResolver(["git"], "Git", GitInstallHint).Resolve();
 
     private static WipException GitRequired(Exception? error = null) => error is null
         ? new WipException("A runnable git installation is required to fetch and verify pinned rules")

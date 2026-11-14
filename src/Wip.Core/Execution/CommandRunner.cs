@@ -73,6 +73,10 @@ public sealed class CommandRunner
         RunWithOutcome(command, environment, interactive, workingDirectory, timeout).Code;
 
     /// <summary>Returns timeout enforcement separately from the child's exit code.</summary>
+    /// <exception cref="ArgumentException">
+    /// <paramref name="command"/> is empty, or its executable is not fully qualified: a bare
+    /// name lets CreateProcess search the current directory ahead of System32.
+    /// </exception>
     public (int Code, bool TimedOut) RunWithOutcome(
         IReadOnlyList<string> command,
         IReadOnlyDictionary<string, string>? environment = null,
@@ -80,6 +84,16 @@ public sealed class CommandRunner
         string? workingDirectory = null,
         TimeSpan? timeout = null)
     {
+        if (command.Count == 0)
+        {
+            throw new ArgumentException("Command must name an executable", nameof(command));
+        }
+
+        if (!Path.IsPathFullyQualified(command[0]))
+        {
+            throw new ArgumentException($"Executable must be a fully qualified path: {command[0]}", nameof(command));
+        }
+
         if (debug)
         {
             error.WriteLine($"+ {CommandDisplay.ForDebug(command)}");
