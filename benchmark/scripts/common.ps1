@@ -19,6 +19,15 @@ function Get-WslLauncher {
     return $script:resolvedWslLauncher
 }
 
+# The same resolution for the two best-effort paths: failure diagnostics and cleanup. Both run
+# to explain or undo a failure that has already happened, so a launcher that cannot be resolved
+# has to be skipped rather than thrown -- the cleanup runs from Invoke-Benchmark.ps1's finally
+# on every round, and a machine with no launcher has no docker-desktop distro to terminate
+# either. Everything that measures or records something uses Get-WslLauncher and fails loudly.
+function Get-WslLauncherOrNull {
+    try { return Get-WslLauncher } catch { return $null }
+}
+
 if (-not ('WipBench.Power' -as [type])) {
     Add-Type -Namespace WipBench -Name Power -MemberDefinition @'
 [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
@@ -168,8 +177,15 @@ function Stop-DockerDesktopInfra {
     Get-Process -Name 'Docker Desktop' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     Get-Process -Name 'com.docker.backend' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     Get-Process -Name 'com.docker.build' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-    foreach ($distro in @('docker-desktop', 'docker-desktop-data')) {
-        wsl --terminate $distro 2>$null | Out-Null
+    # Resolved, not a bare name. PowerShell resolves a bare command through $env:PATH, so
+    # whoever can write a PATH entry decides which launcher this runs -- a weaker version of
+    # the CreateProcess problem Resolve-WslLauncher exists for, but the same decision made by
+    # the same untrusted input. Best effort, like the Stop-Process calls above.
+    $launcher = Get-WslLauncherOrNull
+    if ($launcher) {
+        foreach ($distro in @('docker-desktop', 'docker-desktop-data')) {
+            & $launcher --terminate $distro 2>$null | Out-Null
+        }
     }
     $result = Wait-DockerState -WantReady $false -TimeoutSec $TimeoutSec
     # Normalized to .Stopped (matching Stop-WslcInfra) rather than Wait-DockerState's own

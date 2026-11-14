@@ -134,8 +134,17 @@ function Save-DockerDiagnostics {
     $sections.Add("--- docker port wip-bench ---`n" + ((docker port wip-bench 2>&1) -join "`n"))
     $sections.Add("--- netstat (18080/3000) ---`n" + ((netstat -ano 2>&1 | Select-String '18080|:3000') -join "`n"))
     if ($Config -like 'wsl-*') {
-        $sections.Add("--- (from inside WSL) docker logs wip-bench ---`n" + ((wsl -d $WslDistro -- docker logs wip-bench 2>&1) -join "`n"))
-        $sections.Add("--- (from inside WSL) curl -v http://127.0.0.1:18080/ ---`n" + ((wsl -d $WslDistro -- curl -v --max-time 3 'http://127.0.0.1:18080/' 2>&1) -join "`n"))
+        # Resolved rather than named: PowerShell takes a bare command from $env:PATH. This
+        # function only ever runs to explain a failure that already happened, so an
+        # unresolvable launcher is recorded here instead of throwing over the diagnostics.
+        $launcher = Get-WslLauncherOrNull
+        if ($launcher) {
+            $sections.Add("--- (from inside WSL) docker logs wip-bench ---`n" + ((& $launcher -d $WslDistro -- docker logs wip-bench 2>&1) -join "`n"))
+            $sections.Add("--- (from inside WSL) curl -v http://127.0.0.1:18080/ ---`n" + ((& $launcher -d $WslDistro -- curl -v --max-time 3 'http://127.0.0.1:18080/' 2>&1) -join "`n"))
+        }
+        else {
+            $sections.Add('--- (from inside WSL) skipped: the WSL launcher could not be resolved ---')
+        }
     }
     ($sections -join "`n`n") | Out-File -FilePath $OutPath -Encoding utf8
     Write-Log "app-ready failure diagnostics saved to $OutPath"
@@ -247,9 +256,9 @@ function Invoke-Preflight {
 
 function Get-WslVersionRaw {
     # wsl.exe writes UTF-16LE to stdout whenever it isn't attached to a real console (i.e.
-    # whenever its output is redirected/captured, as here) — decoding it with the pipeline's
-    # usual `(wsl --version) -join ' | '` (or even after setting [Console]::OutputEncoding)
-    # produces mojibake, because that path decodes with the console's encoding, not the child
+    # whenever its output is redirected/captured, as here) — decoding it through the
+    # PowerShell pipeline (or even after setting [Console]::OutputEncoding) produces
+    # mojibake, because that path decodes with the console's encoding, not the child
     # process's own. Stating the child's own encoding is what actually fixes it, and that is
     # what -StreamEncoding is for.
     #
