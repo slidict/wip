@@ -250,21 +250,14 @@ function Get-WslVersionRaw {
     # whenever its output is redirected/captured, as here) — decoding it with the pipeline's
     # usual `(wsl --version) -join ' | '` (or even after setting [Console]::OutputEncoding)
     # produces mojibake, because that path decodes with the console's encoding, not the child
-    # process's own. Setting ProcessStartInfo's StandardOutputEncoding explicitly is what
-    # actually fixes it.
-    $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName = 'wsl.exe'
-    $psi.Arguments = '--version'
-    $psi.RedirectStandardOutput = $true
-    $psi.RedirectStandardError = $true
-    $psi.StandardOutputEncoding = [System.Text.Encoding]::Unicode
-    $psi.StandardErrorEncoding = [System.Text.Encoding]::Unicode
-    $psi.UseShellExecute = $false
-    $p = [System.Diagnostics.Process]::Start($psi)
-    $out = $p.StandardOutput.ReadToEnd()
-    $errOut = $p.StandardError.ReadToEnd()
-    $p.WaitForExit()
-    (@($out, $errOut) | Where-Object { $_ } | ForEach-Object { $_.Trim() -split '\r?\n' }) -join ' | '
+    # process's own. Stating the child's own encoding is what actually fixes it, and that is
+    # what -StreamEncoding is for.
+    #
+    # The launcher is resolved rather than named, and Invoke-TimedProcess drains both pipes
+    # concurrently so neither can block the other. Nothing is printed on the way: this string
+    # belongs in environment.json, not in the run log.
+    $wsl = Invoke-TimedProcess -FilePath (Get-WslLauncher) -ArgumentList @('--version') -StreamEncoding ([System.Text.Encoding]::Unicode)
+    (@($wsl.StdOut, $wsl.StdErr) | Where-Object { $_ } | ForEach-Object { $_.Trim() -split '\r?\n' }) -join ' | '
 }
 
 function New-EnvironmentJson {

@@ -3,6 +3,22 @@
 
 $ErrorActionPreference = 'Continue'
 
+# Resolve-WslLauncher, and with it the rule for which wsl.exe is trusted, lives in one place
+# for this repository. Dot-sourced rather than reimplemented: see that file's help for why a
+# bare 'wsl.exe' lets the working directory win over System32, which for a benchmark run by
+# hand means whatever directory the operator happened to be in.
+. (Join-Path $PSScriptRoot '..\..\scripts\Show-Wsl.ps1')
+
+# Resolve-WslLauncher probes the filesystem and queries Appx every time it is called, and the
+# benchmark starts the launcher once per timed round. The installed launcher cannot move
+# mid-run, so it is resolved once and remembered. Still a function rather than a top-level
+# assignment: dot-sourcing this file must not fail on a machine without WSL, where only the
+# scripts that actually run wsl have any business throwing.
+function Get-WslLauncher {
+    if (-not $script:resolvedWslLauncher) { $script:resolvedWslLauncher = Resolve-WslLauncher }
+    return $script:resolvedWslLauncher
+}
+
 if (-not ('WipBench.Power' -as [type])) {
     Add-Type -Namespace WipBench -Name Power -MemberDefinition @'
 [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
@@ -308,7 +324,12 @@ function Invoke-TimedProcess {
     param(
         [string]$FilePath,
         [string[]]$ArgumentList,
-        [string]$WorkingDirectory = $null
+        [string]$WorkingDirectory = $null,
+        # Only for a child that does not write the console's encoding. wsl.exe writes UTF-16LE
+        # whenever its output is redirected rather than attached to a console, and the decoding
+        # happens here: by the time the text is returned the bytes are gone and no caller can
+        # undo a wrong guess. Unset for every other child, which all write the default.
+        [System.Text.Encoding]$StreamEncoding = $null
     )
     # Windows PowerShell 5.1 runs on .NET Framework, where ProcessStartInfo.ArgumentList is
     # present but left null (never auto-instantiated the way .NET Core does), so building it
@@ -320,6 +341,10 @@ function Invoke-TimedProcess {
     if ($WorkingDirectory) { $psi.WorkingDirectory = $WorkingDirectory }
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError = $true
+    if ($StreamEncoding) {
+        $psi.StandardOutputEncoding = $StreamEncoding
+        $psi.StandardErrorEncoding = $StreamEncoding
+    }
     $psi.UseShellExecute = $false
 
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
@@ -348,7 +373,7 @@ function Invoke-TimedWsl {
         [string]$Distro,
         [string]$BashCommand
     )
-    return Invoke-TimedProcess -FilePath 'wsl' -ArgumentList @('-d', $Distro, '--', 'bash', '-lc', $BashCommand)
+    return Invoke-TimedProcess -FilePath (Get-WslLauncher) -ArgumentList @('-d', $Distro, '--', 'bash', '-lc', $BashCommand)
 }
 
 function Start-HostSampler {
