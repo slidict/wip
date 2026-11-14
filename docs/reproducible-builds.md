@@ -19,11 +19,17 @@ select a single runtime for ordinary managed builds.
 v3 feed. CI and release jobs first run:
 
 ```powershell
-dotnet restore wip.slnx --locked-mode
+./scripts/Invoke-LockedRestore.ps1
 dotnet build wip.slnx --configuration Release --no-restore
 dotnet test tests/Wip.Tests/Wip.Tests.csproj --configuration Release --no-build --no-restore
 dotnet publish src/Wip.Cli/Wip.Cli.csproj --configuration Release --runtime win-x64 --no-restore --output artifacts/win-x64
 ```
+
+`scripts/Invoke-LockedRestore.ps1` is `dotnet restore wip.slnx --locked-mode` plus one
+thing: when that restore fails, it compares every lock file in the solution against
+`Directory.Packages.props` and names each stale one, the package and the command that
+repairs it. A failure with any other cause gets no advice, because `--force-evaluate`
+would rewrite the locks without fixing it. The exit code is the restore's own.
 
 Locked restore fails if project requests or project-reference dependencies no
 longer match the locks. Build, test, and publish do not silently restore a new
@@ -40,8 +46,9 @@ incomplete dependency PR pass.
 
 Dependabot can miss downstream project-reference locks with central package
 management ([upstream issue 13950](https://github.com/dependabot/dependabot-core/issues/13950)).
-If it updates only some locks, check out that PR's feature branch, review the
-central version changes, and regenerate **the whole solution** using the pinned SDK:
+If it updates only some locks, the restore step names which ones. Check out that PR's
+feature branch, review the central version changes, and regenerate **the whole solution**
+using the pinned SDK:
 
 ```powershell
 dotnet restore wip.slnx --force-evaluate
@@ -59,8 +66,10 @@ ILLink/ILCompiler dependencies and therefore require regenerated locks.
 
 `scripts/Test-LockedRestore.ps1` runs on both test hosts. In an isolated temporary
 solution it verifies the exact SDK, an unchanged locked restore, lock immutability,
-rejection of a changed direct dependency request specifically with `NU1004`, and
-an intentional whole-solution refresh followed by a successful locked restore.
+rejection of a changed direct dependency request specifically with `NU1004`, the
+diagnosis `scripts/Get-LockFileDrift.ps1` prints for a stale lock file (and its silence
+for an in-sync one, an explicit `[version]` pin and a package outside central management),
+and an intentional whole-solution refresh followed by a successful locked restore.
 The checked-out manifests and locks are not modified. Native AOT publish and the
 real-WSLC workflow exercise the shipping binary.
 
