@@ -80,6 +80,14 @@ try {
     Set-DriftFixture -Central '9.9.9' -Requested '[1.0.0, )' -Package 'Unmanaged'
     if (@(Get-SolutionLockFileDrift -Root $diagnosis).Count -ne 0) { throw 'A package with no central version was reported as stale' }
 
+    # An interval carried through from the props, where only the spacing differs: NuGet records
+    # "[1.0.0, 2.0.0)" for the "[1.0.0,2.0.0)" written by hand. Comparing those as written
+    # would advise --force-evaluate for a lock file that is in sync, which repairs nothing.
+    Set-DriftFixture -Central '[1.0.0,2.0.0)' -Requested '[1.0.0, 2.0.0)'
+    if (@(Get-SolutionLockFileDrift -Root $diagnosis).Count -ne 0) { throw 'An interval range was reported as stale over its spacing' }
+    Set-DriftFixture -Central '[1.0.0,2.0.0)' -Requested '[1.0.0, 3.0.0)'
+    if (@(Get-SolutionLockFileDrift -Root $diagnosis).Count -ne 1) { throw 'A genuinely different interval was not reported as stale' }
+
     # A restore that writes nothing to stdout must still return its own exit code: Tee-Object
     # creates its variable only when a record reaches it, and reading an unset one under
     # Set-StrictMode would replace that code with an error. The stand-in prints nothing and
@@ -88,9 +96,28 @@ try {
     [IO.File]::WriteAllText($silent, 'exit 7')
     & (Join-Path $PSScriptRoot 'Invoke-LockedRestore.ps1') -Dotnet $silent
     if ($LASTEXITCODE -ne 7) { throw "A silent restore did not return its own exit code (got $LASTEXITCODE)" }
+    # The stand-in's 7 would otherwise stand until something else happens to reset it:
+    # `shell: pwsh` ends a step with `exit $LASTEXITCODE`, so a run whose every assertion
+    # passed would still fail the job, and any `-ne 0` guard added below here would read the
+    # 7 as its own failure.
+    $global:LASTEXITCODE = 0
+
+    # A restore that fails on its error stream must still reach the diagnosis. Reading only
+    # stdout would lose it, and reading both under 'Stop' aborts on the first stderr line;
+    # either way the job is left with the bare NU1004 the wrapper exists to explain.
+    $noisy = Join-Path $diagnosis 'noisy.ps1'
+    [IO.File]::WriteAllText($noisy, 'Write-Error "x.csproj : error NU1004: CentralTransitive"; exit 1')
+    & (Join-Path $PSScriptRoot 'Invoke-LockedRestore.ps1') -Dotnet $noisy
+    if ($LASTEXITCODE -ne 1) { throw "A restore that failed on stderr did not return its own exit code (got $LASTEXITCODE)" }
+    $global:LASTEXITCODE = 0
 }
 finally {
-    Remove-Item -LiteralPath $diagnosis -Recurse -Force
+    $resolvedDiagnosis = [IO.Path]::GetFullPath($diagnosis)
+    if (-not $resolvedDiagnosis.StartsWith($tempRoot, [StringComparison]::OrdinalIgnoreCase) -or
+        [IO.Path]::GetFileName($resolvedDiagnosis) -notmatch '^wip-drift-[a-f0-9]{32}$') {
+        throw 'Refusing cleanup outside the allocated fixture'
+    }
+    Remove-Item -LiteralPath $resolvedDiagnosis -Recurse -Force
 }
 New-Item -ItemType Directory -Path $fixture | Out-Null
 try {

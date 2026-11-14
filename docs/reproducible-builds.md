@@ -30,8 +30,9 @@ thing: when that restore reports a lock mismatch (NU1004) **and** a lock file re
 disagrees with `Directory.Packages.props`, it names each stale one, the package and the
 command that repairs it. Both conditions are required — a failure that happens before
 NuGet evaluates the locks, such as SDK selection, gets no advice even if a lock file is
-stale at the same time, because `--force-evaluate` repairs nothing about it. The exit code
-is the restore's own.
+stale at the same time, because `--force-evaluate` repairs nothing about it. NU1004 is read
+from both of the restore's streams, so the diagnosis does not depend on which one MSBuild's
+logger writes the error to. The exit code is the restore's own.
 
 Locked restore fails if project requests or project-reference dependencies no
 longer match the locks. Build, test, and publish do not silently restore a new
@@ -70,8 +71,10 @@ ILLink/ILCompiler dependencies and therefore require regenerated locks.
 solution it verifies the exact SDK, an unchanged locked restore, lock immutability,
 rejection of a changed direct dependency request specifically with `NU1004`, the
 diagnosis `scripts/Get-LockFileDrift.ps1` prints for a stale lock file (and its silence
-for an in-sync one, an explicit `[version]` pin and a package outside central management),
-and an intentional whole-solution refresh followed by a successful locked restore.
+for an in-sync one, an explicit `[version]` pin, an interval range spaced differently from
+the one NuGet records, and a package outside central management), that a restore returns
+its own exit code whether it writes nothing or fails on its error stream, and an
+intentional whole-solution refresh followed by a successful locked restore.
 The checked-out manifests and locks are not modified. Native AOT publish and the
 real-WSLC workflow exercise the shipping binary.
 
