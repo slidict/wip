@@ -3,6 +3,31 @@
 
 $ErrorActionPreference = 'Continue'
 
+# Resolve-WslLauncher, and with it the rule for which wsl.exe is trusted, lives in one place
+# for this repository. Dot-sourced rather than reimplemented: see that file's help for why a
+# bare 'wsl.exe' lets the working directory win over System32, which for a benchmark run by
+# hand means whatever directory the operator happened to be in.
+. (Join-Path $PSScriptRoot '..\..\scripts\Show-Wsl.ps1')
+
+# Resolve-WslLauncher probes the filesystem and queries Appx every time it is called, and the
+# benchmark starts the launcher once per timed round. The installed launcher cannot move
+# mid-run, so it is resolved once and remembered. Still a function rather than a top-level
+# assignment: dot-sourcing this file must not fail on a machine without WSL, where only the
+# scripts that actually run wsl have any business throwing.
+function Get-WslLauncher {
+    if (-not $script:resolvedWslLauncher) { $script:resolvedWslLauncher = Resolve-WslLauncher }
+    return $script:resolvedWslLauncher
+}
+
+# The same resolution for the two best-effort paths: failure diagnostics and cleanup. Both run
+# to explain or undo a failure that has already happened, so a launcher that cannot be resolved
+# has to be skipped rather than thrown -- the cleanup runs from Invoke-Benchmark.ps1's finally
+# on every round, and a machine with no launcher has no docker-desktop distro to terminate
+# either. Everything that measures or records something uses Get-WslLauncher and fails loudly.
+function Get-WslLauncherOrNull {
+    try { return Get-WslLauncher } catch { return $null }
+}
+
 if (-not ('WipBench.Power' -as [type])) {
     Add-Type -Namespace WipBench -Name Power -MemberDefinition @'
 [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
@@ -152,8 +177,15 @@ function Stop-DockerDesktopInfra {
     Get-Process -Name 'Docker Desktop' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     Get-Process -Name 'com.docker.backend' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     Get-Process -Name 'com.docker.build' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-    foreach ($distro in @('docker-desktop', 'docker-desktop-data')) {
-        wsl --terminate $distro 2>$null | Out-Null
+    # Resolved, not a bare name. PowerShell resolves a bare command through $env:PATH, so
+    # whoever can write a PATH entry decides which launcher this runs -- a weaker version of
+    # the CreateProcess problem Resolve-WslLauncher exists for, but the same decision made by
+    # the same untrusted input. Best effort, like the Stop-Process calls above.
+    $launcher = Get-WslLauncherOrNull
+    if ($launcher) {
+        foreach ($distro in @('docker-desktop', 'docker-desktop-data')) {
+            & $launcher --terminate $distro 2>$null | Out-Null
+        }
     }
     $result = Wait-DockerState -WantReady $false -TimeoutSec $TimeoutSec
     # Normalized to .Stopped (matching Stop-WslcInfra) rather than Wait-DockerState's own
@@ -308,7 +340,12 @@ function Invoke-TimedProcess {
     param(
         [string]$FilePath,
         [string[]]$ArgumentList,
-        [string]$WorkingDirectory = $null
+        [string]$WorkingDirectory = $null,
+        # Only for a child that does not write the console's encoding. wsl.exe writes UTF-16LE
+        # whenever its output is redirected rather than attached to a console, and the decoding
+        # happens here: by the time the text is returned the bytes are gone and no caller can
+        # undo a wrong guess. Unset for every other child, which all write the default.
+        [System.Text.Encoding]$StreamEncoding = $null
     )
     # Windows PowerShell 5.1 runs on .NET Framework, where ProcessStartInfo.ArgumentList is
     # present but left null (never auto-instantiated the way .NET Core does), so building it
@@ -320,6 +357,10 @@ function Invoke-TimedProcess {
     if ($WorkingDirectory) { $psi.WorkingDirectory = $WorkingDirectory }
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError = $true
+    if ($StreamEncoding) {
+        $psi.StandardOutputEncoding = $StreamEncoding
+        $psi.StandardErrorEncoding = $StreamEncoding
+    }
     $psi.UseShellExecute = $false
 
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
@@ -348,7 +389,7 @@ function Invoke-TimedWsl {
         [string]$Distro,
         [string]$BashCommand
     )
-    return Invoke-TimedProcess -FilePath 'wsl' -ArgumentList @('-d', $Distro, '--', 'bash', '-lc', $BashCommand)
+    return Invoke-TimedProcess -FilePath (Get-WslLauncher) -ArgumentList @('-d', $Distro, '--', 'bash', '-lc', $BashCommand)
 }
 
 function Start-HostSampler {

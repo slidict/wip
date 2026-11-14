@@ -7,6 +7,13 @@
     Dot-sourced by the Update WSL, Verify wslc is available and Diagnostics steps of
     .github/workflows/e2e-windows.yml and by tests/e2e/run-e2e.ps1.
 
+    benchmark/scripts/common.ps1 dot-sources it for Resolve-WslLauncher alone, and keeps its
+    own process plumbing: the benchmark runs under Windows PowerShell 5.1, where the
+    ArgumentList used by Show-Wsl below is present but null, and it needs the elapsed time
+    anyway. The rule for which launcher is trusted is the part that must not be copied; how a
+    particular caller starts a process is not. Dot-sourcing defines Show-Wsl there too, so it
+    refuses to run on 5.1 rather than starting the launcher with no arguments at all.
+
     Three things here are deliberate and easy to undo by accident:
 
     * The launcher is named by absolute path. With UseShellExecute = $false a bare name
@@ -82,6 +89,15 @@ function Resolve-WslLauncher {
 
 function Show-Wsl([string[]] $WslArgs) {
     $psi = [System.Diagnostics.ProcessStartInfo]::new((Resolve-WslLauncher))
+    # .NET Framework leaves ArgumentList null instead of instantiating it, so on Windows
+    # PowerShell 5.1 the Add below fails -- and fails *non-terminatingly* wherever
+    # $ErrorActionPreference is 'Continue', which is how benchmark/scripts/common.ps1 (a
+    # dot-source consumer, for Resolve-WslLauncher) runs. Without this the child would then
+    # start with no arguments and answer with a usage message, which is the worst of the
+    # available outcomes. A 5.1 caller wants Resolve-WslLauncher and its own plumbing.
+    if ($null -eq $psi.ArgumentList) {
+        throw "Show-Wsl needs PowerShell 7 or later; this is $($PSVersionTable.PSEdition) $($PSVersionTable.PSVersion), where ProcessStartInfo.ArgumentList is null. Use Resolve-WslLauncher and start the process yourself, the way benchmark/scripts/common.ps1 does."
+    }
     foreach ($argument in $WslArgs) { $psi.ArgumentList.Add($argument) }
     $psi.UseShellExecute = $false
     $psi.RedirectStandardOutput = $true
