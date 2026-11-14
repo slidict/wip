@@ -15,19 +15,20 @@ relying on any of them.
   same way they were written, with `git show f466afa:<path> | grep -n`, which counts the exact
   bytes of the blob. A line number read off a rendered or converted copy of the file is not the
   same measurement and has already disagreed with the blob twice.
-- **Upstream naming and discovery claims** were read from the branch at `dcf514b5`:
+- **Upstream behaviour claims** were read from the branch at `dcf514b5`:
   `ComposeNormalizer.cpp` for the network and container name formats and the project-name
-  normalization, `ComposeSpec.cpp` for `name` / `container_name`, and `WSLCSession.cpp` for how
-  a project's containers are discovered. Files are named where each claim is used.
+  normalization, `ComposeSpec.cpp` for `name` / `container_name`, and `WSLCSession.cpp` for
+  discovery, the labels set at creation, and both collision paths. Each claim names its file,
+  and the `WSLCSession.cpp` line numbers are from the 4887-line blob at that revision.
 - **Release and branch state** is as recorded by the tracking check in #120 on 2026-11-14:
   `feature/compose` head `dcf514b5`, latest stable release `3.0.5` of 2026-11-03 shipping no
   `wslc compose`, and [#41526](https://github.com/microsoft/WSL/pull/41526) open and draft.
   Re-read that Issue rather than trusting this paragraph's date — it is the tracking record and
   this is a snapshot of it.
 
-Two claims are explicitly weaker than the rest and are marked where they appear: what upstream
-does when it meets an existing network that has the right name and none of its labels, and what
-it does when it meets an existing container name.
+Nothing here is left as inference. An earlier revision of this note hedged the two collision
+outcomes because they had not been read; both have since been read at the revision above and
+are stated with the code that decides them.
 
 ## The two schemes
 
@@ -37,7 +38,7 @@ it does when it meets an existing container name.
 | project name | not derived; `compose.project`, else the directory name, used as-is | `ComposeNormalizer::Normalize` prefers an explicit project name when one is supplied (`if (documents.ExplicitProjectName.has_value())`) and derives it from the directory's filename only otherwise — so **both** schemes have an override, and both inputs land in the same places |
 | project-name normalization | none | `NormalizeProjectName()`: lower-cased, every character except alphanumerics, `-` and `_` removed, leading non-alphanumerics stripped. It is **validated, not trimmed** — an empty or overlong result throws `E_INVALIDARG` (`result.empty() \|\| result.size() > WSLC_MAX_COMPOSE_PROJECT_NAME_LENGTH`), so a long directory name fails rather than being shortened |
 | container name | the compose service name, **verbatim** | `<project>-<service>-1` — `"{}-{}-1"`, and **only as a default**: it is applied `if (container.Name.empty())`, so a service's own `name` or `container_name` (`ComposeSpec.cpp` prefers `name`) overrides it |
-| ownership labels | **none** | `com.microsoft.wslc.compose.*` (WSLC-owned, not `com.docker.compose.*`) |
+| ownership labels | **none** | set at creation in `WSLCSession.cpp:2705`-`:2709`: `c_project` (the project name), `c_service` (the service name), `c_containerNumber` (`"1"`) and `c_metadataVersion`. WSLC-owned keys, not `com.docker.compose.*` |
 
 ### Where wip decides this
 
@@ -88,24 +89,31 @@ running, and nothing points at the first set any more.
 **A network-name collision that blocks instead.** The two schemes can also land on the *same*
 network name, because wip uses `compose.project` verbatim and upstream appends `_default`: a
 project in a directory named `foo` that sets `compose.project: foo_default` already occupies the
-name upstream will want. That network carries none of the WSLC labels, and upstream validates
-ownership and metadata-version labels on the network it finds, so the likely outcome is a
-refusal rather than a duplicate — `wslc compose` stops on a network it will not adopt.
+name upstream will want, carrying none of the labels upstream expects. That case is refused, not
+adopted, and it is refused before anything is created:
+
+- `WSLCSession::CreateComposeContainers` (`WSLCSession.cpp:2653`) calls
+  `DeleteNetworkImpl(networkName, spec.ProjectName)` and aborts on any failure other than
+  `WSLC_E_NETWORK_NOT_FOUND`, before it builds the new network.
+- `WSLCSession::DeleteNetworkImpl` (`:3808`, check at `:3836`-`:3840`) requires all three of
+  `c_project` (the expected project), `c_network` (`"default"`) and `c_metadataVersion` to match
+  on the network it found. If any is missing or different it throws
+  `HRESULT_FROM_WIN32(ERROR_ALREADY_EXISTS)` with `MessageWslcComposeNetworkConflict`.
+
+So a correctly labelled network is removed and recreated — that is upstream's adopt path — while
+wip's unlabelled one of the same name stops the whole operation.
 
 **A container-name collision, independently of the network.** Upstream generates
 `<project>-<service>-1` only when a service names nothing, so a `compose.yml` that sets
-`container_name` to the same string wip already uses — the service name — asks upstream to
-create a container that exists. Container names are unique, so that attempt fails rather than
-producing a second set, and it fails even when the two network names differ. This is a separate
-path from the one above and has to be checked separately during a migration.
+`container_name` to the string wip already uses — the service name, verbatim from
+`CommandBuilder.cs:84` — asks upstream to create a container that exists. That also fails rather
+than producing a second set: `CreateContainerImpl` (`WSLCSession.cpp:2763`) maps a Docker HTTP
+`409` to `HRESULT_FROM_WIN32(ERROR_ALREADY_EXISTS)` (`:2847`), and `CreateComposeContainers`
+retries only the image-not-found case, propagating everything else with `THROW_IF_FAILED`
+(`:2752`). It fails **even when the two network names differ**, so it has to be checked
+separately rather than assumed to be covered by the network case.
 
-Both collision *consequences* are the claims here taken on report rather than read. The
-collisions themselves follow from code: wip's verbatim names at `Config.cs:102` and
-`CommandBuilder.cs:84`, upstream's `_default` suffix and its acceptance of `container_name`.
-What was not verified in this repository is which branch upstream takes once it meets an
-existing unlabeled network or an existing container name. They are recorded anyway, because a
-refusal and a duplicate need different recovery and a reader meeting either should know both
-shapes are possible.
+Both paths were read at `dcf514b5`; neither consequence is inferred.
 
 ### Rejected
 
