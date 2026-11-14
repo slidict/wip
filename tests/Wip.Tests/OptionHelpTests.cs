@@ -64,6 +64,23 @@ public class OptionHelpTests
         Assert.Matches(@"(?i)\b(?:keep\w*|retain\w*|preserv\w*)\s+persistent\s+volumes\b|\bpersistent\s+volumes\s+(?:are\s+)?(?:kept|retained|preserved)\b", destroy.Description!);
     }
 
+    /// <summary>
+    /// System.CommandLine renders <c>[default: x]</c> itself for an option with a default, so a
+    /// description that also states the default in prose prints it twice. 2.0.14 rendered nothing,
+    /// which is how "(the default)" reached three descriptions unnoticed until the 3.0.0 bump.
+    /// </summary>
+    [Fact]
+    public void NoOptionDescriptionRestatesItsDefault()
+    {
+        var duplicated =
+            from command in Commands(Program.BuildRoot())
+            from option in command.Options
+            where option.Description?.Contains("the default", StringComparison.OrdinalIgnoreCase) == true
+            select $"{command.Name} {option.Name}";
+
+        Assert.Equal("", string.Join(", ", duplicated));
+    }
+
     private static IEnumerable<Command> Commands(Command command)
     {
         yield return command;

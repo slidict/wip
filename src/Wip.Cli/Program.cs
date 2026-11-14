@@ -666,7 +666,7 @@ internal static class Program
     {
         var follow = new Option<bool>("--follow", "-f")
         {
-            Description = "Keep streaming new log lines as they arrive (the default)",
+            Description = "Keep streaming new log lines as they arrive",
             DefaultValueFactory = _ => true,
         };
         var noFollow = new Option<bool>("--no-follow") { Description = "Print current logs and exit" };
@@ -726,7 +726,7 @@ internal static class Program
             {
                 Description =
                     "Attach wip's terminal to the command when wip has one, so a shell or REPL " +
-                    "works (the default)",
+                    "works",
                 DefaultValueFactory = _ => true,
             },
             new Option<bool>("--no-interactive")
