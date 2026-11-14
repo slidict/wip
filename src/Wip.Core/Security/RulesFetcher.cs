@@ -189,7 +189,8 @@ internal sealed class RulesFetcher(
         // Measured blob: a LF b LF c LF; native checkout: a CRLF b CRLF c CRLF;
         // with core.eol=lf: a LF b LF c LF. Otherwise fingerprints depend on the host.
         try { git ??= (resolveGit ?? ResolveGit)(); }
-        catch (CommandNotFoundException error) { throw GitRequired(error); }
+        // The resolver's message names where it looked and how to install git; nothing prints InnerException.
+        catch (CommandNotFoundException error) { throw new WipException($"{GitRequiredMessage}\n\n{error.Message}", error); }
         // Rooted, never bare: CommandRunner refuses a name CreateProcess would search the current directory for.
         string[] command = [git, "-c", "core.hooksPath=" + hooks, "-c", "core.autocrlf=false", "-c", "core.eol=lf",
             "-c", "credential.helper=", "-c", "protocol.allow=never", "-c", "protocol.https.allow=always", "-C", tree, .. arguments];
@@ -216,9 +217,11 @@ internal sealed class RulesFetcher(
 
     private static string ResolveGit() => new CommandResolver(["git"], "Git", GitInstallHint).Resolve();
 
+    private const string GitRequiredMessage = "A runnable git installation is required to fetch and verify pinned rules";
+
     private static WipException GitRequired(Exception? error = null) => error is null
-        ? new WipException("A runnable git installation is required to fetch and verify pinned rules")
-        : new WipException("A runnable git installation is required to fetch and verify pinned rules", error);
+        ? new WipException(GitRequiredMessage)
+        : new WipException(GitRequiredMessage, error);
 
     private static (int Code, string Output) RunGit(IReadOnlyList<string> command,
         IReadOnlyDictionary<string, string> environment, TimeSpan timeout)

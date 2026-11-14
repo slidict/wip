@@ -584,9 +584,13 @@ public sealed class RulesFetcherTests : IDisposable
     public void UnresolvableGitExplainsWhyGitIsRequired()
     {
         var fetcher = new RulesFetcher(root, (_, _, _) => throw new InvalidOperationException("git must not run"),
-            resolveGit: () => throw new CommandNotFoundException("Git was not found."));
+            resolveGit: () => new Wip.Execution.CommandResolver(["git"], "Git", RulesFetcher.GitInstallHint,
+                _ => null).Resolve());
         var failure = Assert.Throws<WipException>(() => fetcher.Fetch(Rules));
-        Assert.Contains("A runnable git installation is required", failure.Message);
+        Assert.StartsWith("A runnable git installation is required to fetch and verify pinned rules", failure.Message);
+        // Program.Report prints Message alone, so the hint has to be in it.
+        Assert.Contains("winget install --id Git.Git -e", failure.Message);
+        Assert.Contains("Git was not found.", failure.Message);
         Assert.IsType<CommandNotFoundException>(failure.InnerException);
     }
 
