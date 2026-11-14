@@ -68,8 +68,9 @@ public static class WslLauncher
     }
 
     /// <summary>
-    /// <c>wsl.exe</c> in each WSL package directory under <paramref name="windowsApps"/>, newest
-    /// name first so two installed versions do not pick at random; empty when it cannot be listed.
+    /// <c>wsl.exe</c> in each WSL package directory under <paramref name="windowsApps"/>, highest
+    /// name first -- an ordinal order, not a version-aware one, so two installed versions give the
+    /// same answer every time rather than the newer one; empty when it cannot be listed.
     /// </summary>
     internal static string[] PackageCandidates(string windowsApps, Func<string, string, string[]>? list = null)
     {
