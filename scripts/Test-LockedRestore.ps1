@@ -8,6 +8,63 @@ $repo = Split-Path $PSScriptRoot -Parent
 $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
 $fixture = Join-Path $tempRoot ('wip-lock-' + [Guid]::NewGuid().ToString('N'))
 $projects = @('src/Wip.Core', 'src/Wip.Cli', 'tests/Wip.Tests')
+# The diagnosis Invoke-LockedRestore.ps1 prints when the restore below fails. Checked against
+# fixture files rather than four more real restores: the rule is a text comparison, and the
+# NU1004 path is already exercised for real further down.
+. (Join-Path $PSScriptRoot 'Get-LockFileDrift.ps1')
+$diagnosis = Join-Path $tempRoot ('wip-drift-' + [Guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path (Join-Path $diagnosis 'src/Lib') -Force | Out-Null
+try {
+    function Set-DriftFixture {
+        param([string]$Central, [string]$Requested, [string]$Package = 'Pkg')
+        [IO.File]::WriteAllText((Join-Path $diagnosis 'Directory.Packages.props'), @"
+<Project>
+  <ItemGroup>
+    <PackageVersion Include="$Package" Version="$Central" />
+  </ItemGroup>
+</Project>
+"@)
+        [IO.File]::WriteAllText((Join-Path $diagnosis 'wip.slnx'), @"
+<Solution>
+  <Project Path="src/Lib/Lib.csproj" />
+</Solution>
+"@)
+        [IO.File]::WriteAllText((Join-Path $diagnosis 'src/Lib/packages.lock.json'), @"
+{
+  "version": 2,
+  "dependencies": {
+    "net10.0": {
+      "Pkg": { "type": "CentralTransitive", "requested": "$Requested", "resolved": "1.0.0" },
+      "Microsoft.DotNet.ILCompiler": { "type": "Direct", "requested": "[10.0.14, )", "resolved": "10.0.14" },
+      "Other": { "type": "Transitive", "resolved": "1.0.0" }
+    }
+  }
+}
+"@)
+    }
+
+    Set-DriftFixture -Central '2.0.0' -Requested '[1.0.0, )'
+    $drift = @(Get-SolutionLockFileDrift -Root $diagnosis)
+    if ($drift.Count -ne 1) { throw "Drift was not reported once (got $($drift.Count))" }
+    $report = Format-LockFileDriftReport -Drift $drift
+    foreach ($expected in @('src/Lib/packages.lock.json is stale', 'Pkg', '[1.0.0, )', '2.0.0',
+            'dotnet restore wip.slnx --force-evaluate')) {
+        if ($report -notmatch [regex]::Escape($expected)) { throw "Report did not name '$expected': $report" }
+    }
+
+    # An in-sync pair, an explicit [V] pin against the "[V, V]" NuGet writes for it, and a
+    # package with no central version must all stay silent: a restore that failed for another
+    # reason must not be answered with --force-evaluate.
+    Set-DriftFixture -Central '1.0.0' -Requested '[1.0.0, )'
+    if (@(Get-SolutionLockFileDrift -Root $diagnosis).Count -ne 0) { throw 'An in-sync lock file was reported as stale' }
+    Set-DriftFixture -Central '[1.0.0]' -Requested '[1.0.0, 1.0.0]'
+    if (@(Get-SolutionLockFileDrift -Root $diagnosis).Count -ne 0) { throw 'An explicit pin was reported as stale' }
+    Set-DriftFixture -Central '9.9.9' -Requested '[1.0.0, )' -Package 'Unmanaged'
+    if (@(Get-SolutionLockFileDrift -Root $diagnosis).Count -ne 0) { throw 'A package with no central version was reported as stale' }
+}
+finally {
+    Remove-Item -LiteralPath $diagnosis -Recurse -Force
+}
 New-Item -ItemType Directory -Path $fixture | Out-Null
 try {
     foreach ($name in @('Directory.Build.props', 'Directory.Packages.props', 'global.json', 'NuGet.Config', 'wip.slnx')) {
@@ -61,7 +118,7 @@ try {
         }
         & $Dotnet restore wip.slnx --locked-mode
         if ($LASTEXITCODE -ne 0) { throw 'Updated graph failed locked restore' }
-        Write-Output 'PASS: exact SDK, immutable locks, NU1004 on drift, and whole-solution lock refresh'
+        Write-Output 'PASS: exact SDK, immutable locks, NU1004 on drift, the stale-lock diagnosis, and whole-solution lock refresh'
     } finally { Pop-Location }
 } finally {
     $resolved = [IO.Path]::GetFullPath($fixture)
