@@ -12,6 +12,12 @@
           "Microsoft.TestPlatform.TestHost": "18.12.0"
         }
       },
+      "System.CommandLine": {
+        "type": "Direct",
+        "requested": "[3.0.0, )",
+        "resolved": "3.0.0",
+        "contentHash": "swNpSTl0iYJeBuvYYfaY+VxzZ5YC8wklwkqDCNOq2aTQqJzjauJfh/O3Zw93nwxspWrxvZTjT45f8VPR0ParEA=="
+      },
       "xunit.runner.visualstudio": {
         "type": "Direct",
         "requested": "[4.0.0, )",
@@ -175,12 +181,6 @@
         "dependencies": {
           "YamlDotNet": "[18.1.0, )"
         }
-      },
-      "System.CommandLine": {
-        "type": "CentralTransitive",
-        "requested": "[3.0.0, )",
-        "resolved": "3.0.0",
-        "contentHash": "swNpSTl0iYJeBuvYYfaY+VxzZ5YC8wklwkqDCNOq2aTQqJzjauJfh/O3Zw93nwxspWrxvZTjT45f8VPR0ParEA=="
       },
       "YamlDotNet": {
         "type": "CentralTransitive",
