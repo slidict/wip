@@ -55,15 +55,22 @@ internal sealed partial class CliContext
     internal static ISecurityScanner SelectScanner(string tool, ZapProfile? zapProfile, int timeoutSeconds)
     {
         var scanner = ScanEngine.Select(tool);
-        if (zapProfile is null) return scanner;
         if (scanner is not ZapScanner zap)
-            throw new ConfigException($"--zap-* options apply only to --tool zap, not --tool {tool}");
-        zapProfile.Validate();
-        if ((long)zapProfile.BoundedMinutes * 60 >= timeoutSeconds)
+        {
+            if (zapProfile is not null)
+                throw new ConfigException($"--zap-* options apply only to --tool zap, not --tool {tool}");
+            return scanner;
+        }
+        // The default bounds are checked too; without options the default instance is kept
+        // so the plan stays exactly the default one.
+        var effective = zapProfile ?? zap.Profile;
+        effective.Validate();
+        if ((long)effective.BoundedMinutes * 60 >= timeoutSeconds)
             throw new ConfigException(
-                $"--timeout {timeoutSeconds} seconds does not exceed the {zapProfile.BoundedMinutes} minutes the selected ZAP bounds " +
-                "can take; raise --timeout or lower the bounds, because a timed-out scan keeps no partial report");
-        return zap.WithProfile(zapProfile);
+                $"--timeout {timeoutSeconds} seconds does not exceed the {effective.BoundedMinutes} minutes the selected ZAP bounds " +
+                "can take, and the deadline must also cover ZAP's start-up and report generation; raise --timeout " +
+                "or lower the bounds, because a timed-out scan keeps no partial report");
+        return zapProfile is null ? zap : zap.WithProfile(zapProfile);
     }
 
     /// <summary>

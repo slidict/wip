@@ -68,6 +68,7 @@ public class OptionHelpTests
     /// System.CommandLine renders <c>[default: x]</c> itself for an option with a default, so a
     /// description that also states the default in prose prints it twice. 2.0.14 rendered nothing,
     /// which is how "(the default)" reached three descriptions unnoticed until the 3.0.0 bump.
+    /// Options without a default value keep stating it in prose, since help renders nothing then.
     /// </summary>
     [Fact]
     public void NoOptionDescriptionRestatesItsDefault()
@@ -75,7 +76,8 @@ public class OptionHelpTests
         var duplicated =
             from command in Commands(Program.BuildRoot())
             from option in command.Options
-            where option.Description?.Contains("the default", StringComparison.OrdinalIgnoreCase) == true
+            where option.HasDefaultValue
+            where option.Description?.Contains("default", StringComparison.OrdinalIgnoreCase) == true
             select $"{command.Name} {option.Name}";
 
         Assert.Equal("", string.Join(", ", duplicated));

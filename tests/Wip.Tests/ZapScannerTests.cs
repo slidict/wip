@@ -351,7 +351,9 @@ public class ZapScannerTests
     [Fact]
     public void TheDefaultPlanIsTheSameYamlAsBeforeTheBoundsBecameOptions()
     {
-        Assert.Equal(DefaultYaml + "\n", PlanYaml(Plan()));
+        // The plan's content is pinned, not its line endings: the raw literal is LF from the
+        // source file, while YamlWriter writes Environment.NewLine (CRLF on Windows).
+        Assert.Equal((DefaultYaml + "\n").ReplaceLineEndings("\n"), PlanYaml(Plan()).ReplaceLineEndings("\n"));
         Assert.Equal(PlanYaml(Plan()), PlanYaml(Plan(new ZapProfile())));
     }
 

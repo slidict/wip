@@ -385,9 +385,21 @@ public sealed class SecurityOutputTests
         var profile = new ZapProfile(SpiderMinutes: 20, ActiveScan: true, ActiveScanMinutes: 15);
         var error = Assert.Throws<ConfigException>(() => CliContext.SelectScanner("zap", profile, 1800));
         Assert.Contains("raise --timeout", error.Message);
+        Assert.Contains("start-up and report generation", error.Message);
 
         var scanner = Assert.IsType<ZapScanner>(CliContext.SelectScanner("zap", profile, 3600));
         Assert.Equal(profile, scanner.Profile);
+    }
+
+    [Fact]
+    public void TheDefaultZapBoundsMustFitTheDeadlineToo()
+    {
+        // Spider 1 min + passive wait 1 min = 120 s, as in the plan no option changes.
+        var error = Assert.Throws<ConfigException>(() => CliContext.SelectScanner("zap", null, 60));
+        Assert.Contains("does not exceed the 2 minutes", error.Message);
+
+        Assert.Same(ScanEngine.Select("zap"), CliContext.SelectScanner("zap", null, 121));
+        Assert.Same(ScanEngine.Select("nuclei"), CliContext.SelectScanner("nuclei", null, 60));
     }
 
     [Fact]

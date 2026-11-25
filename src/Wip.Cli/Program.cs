@@ -246,7 +246,7 @@ internal static class Program
             // Read from the engine rather than repeated here, so help cannot drift from the
             // deadline a scan would actually get.
             DefaultValueFactory = _ => (int)ScanEngine.DefaultScanTimeout.TotalSeconds,
-            Description = $"Scan deadline in seconds (default: {(int)ScanEngine.DefaultScanTimeout.TotalSeconds})",
+            Description = "Scan deadline in seconds",
         };
         var output = new Option<string?>("--output")
         {
@@ -257,11 +257,12 @@ internal static class Program
             Description = "Application revision metadata for the result (not inferred from the sandbox)",
         };
         // ZAP bounds. Defaults are read from the profile so help cannot drift from the plan, and
-        // ceilings are stated because ZapProfile.Validate refuses anything above them.
+        // ceilings are stated because ZapProfile.Validate refuses anything above them. Help
+        // renders the default itself.
         static Option<int> ZapBound(string name, string what, int defaultValue, int max) => new(name)
         {
             DefaultValueFactory = _ => defaultValue,
-            Description = $"ZAP only: {what} (default: {defaultValue}, allowed: 1-{max})",
+            Description = $"ZAP only: {what} (allowed: 1-{max})",
         };
         var spiderMinutes = ZapBound(ZapProfile.SpiderMinutesOption, "spider duration in minutes",
             ZapProfile.DefaultSpiderMinutes, ZapProfile.MaxSpiderMinutes);
@@ -344,7 +345,7 @@ internal static class Program
                     Arity = ArgumentArity.OneOrMore,
                     Description = "Command and its arguments to run inside the sandbox",
                 };
-                var timeout = new Option<int>("--timeout") { DefaultValueFactory = _ => 300, Description = "Execution deadline in seconds (default: 300)" };
+                var timeout = new Option<int>("--timeout") { DefaultValueFactory = _ => 300, Description = "Execution deadline in seconds" };
                 // One flag with four spellings, including the bundled -it people type out of
                 // docker habit. The two halves it bundles are not a choice the caller has to
                 // make: stdin is always attached, and a terminal is requested exactly when
@@ -618,7 +619,7 @@ internal static class Program
         };
         var interval = new Option<double>("--interval")
         {
-            Description = "Seconds between --watch polls (default: 5)",
+            Description = "Seconds between --watch polls",
             DefaultValueFactory = _ => 5,
         };
 
