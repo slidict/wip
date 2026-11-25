@@ -38,7 +38,7 @@ public class ZapScannerTests
         Assert.All(plan.Argv, argument => Assert.DoesNotContain(argument, char.IsControl));
         Assert.Equal("/tmp/wip-zap-report.json", plan.ReportPath);
         Assert.Equal("/tmp/wip-zap-unperformed.txt", plan.UnperformedChecksPath);
-        Assert.Contains("Checks not performed", plan.Argv[2]);
+        Assert.Contains("Checks not performed", JsonDocument.Parse(plan.Argv[7]).RootElement.GetString());
     }
 
     [Theory]
@@ -292,4 +292,193 @@ public class ZapScannerTests
         Assert.Equal(expectedConfidence, finding.Confidence);
     }
 
+
+    // Captured from the plan before the bounds became options. The default profile is what this
+    // repository's CI budget was sized for, so it must not drift with a later edit.
+    private const string DefaultYaml = """
+        ---
+        env:
+          contexts:
+          - name: wip
+            urls:
+            - http://app.test:8080/app
+            includePaths:
+            - ^http://app\.test:8080/app(?:/.*|\?.*)?$
+            excludePaths:
+            - ^(?!http://app\.test:8080/app(?:/.*|\?.*)?$).*
+          parameters:
+            failOnError: true
+            failOnWarning: false
+            continueOnFailure: false
+            progressToStdout: true
+        jobs:
+        - type: passiveScan-config
+          parameters:
+            scanOnlyInScope: true
+        - type: spider
+          parameters:
+            context: wip
+            url: http://app.test:8080/app
+            maxDuration: 1
+            maxDepth: 2
+            maxChildren: 10
+            threadCount: 2
+            postForm: false
+            processForm: false
+            parseRobotsTxt: false
+            parseSitemapXml: false
+        - type: passiveScan-wait
+          parameters:
+            maxDuration: 1
+        - type: report
+          parameters:
+            template: traditional-json
+            reportDir: /tmp
+            reportFile: wip-zap-report
+            displayReport: false
+        """;
+
+    private static ScanPlan Plan(ZapProfile profile, string target = "http://app.test:8080/app") =>
+        new ZapScanner(profile).Plan(new ScanTarget(target));
+
+    private static string PlanYaml(ScanPlan plan) => JsonDocument.Parse(plan.Argv[3]).RootElement.GetString()!;
+
+    private static string PlanCoverage(ScanPlan plan) => JsonDocument.Parse(plan.Argv[7]).RootElement.GetString()!;
+
+    private static OrderedDictionary<string, object?>[] Jobs(ScanPlan plan) =>
+        Sequence(Mapping(YamlLoader.LoadText(PlanYaml(plan), allowAliases: false))["jobs"]).Select(Mapping).ToArray();
+
+    [Fact]
+    public void TheDefaultPlanIsTheSameYamlAsBeforeTheBoundsBecameOptions()
+    {
+        Assert.Equal(DefaultYaml + "\n", PlanYaml(Plan()));
+        Assert.Equal(PlanYaml(Plan()), PlanYaml(Plan(new ZapProfile())));
+    }
+
+    [Fact]
+    public void RulesIdentifiersNameTheProfileWithoutItsBounds()
+    {
+        Assert.Equal(Image + "/wip-passive-v2", Plan().RulesVersion);
+        Assert.Equal(Image + "/wip-passive-v2", Plan(new ZapProfile(SpiderMinutes: 10, SpiderDepth: 5)).RulesVersion);
+        Assert.Equal(Image + "/wip-active-v1", Plan(new ZapProfile(ActiveScan: true)).RulesVersion);
+        Assert.Equal(Image + "/wip-active-v1", Plan(new ZapProfile(ActiveScan: true, ActiveScanMinutes: 30)).RulesVersion);
+    }
+
+    [Fact]
+    public void BoundsAtTheirLimitsAreAccepted()
+    {
+        Plan(new ZapProfile(1, 1, 1, 1, ActiveScan: true, ActiveScanMinutes: 1)).Validate("zap");
+        Plan(new ZapProfile(ZapProfile.MaxSpiderMinutes, ZapProfile.MaxSpiderDepth, ZapProfile.MaxSpiderChildren,
+            ZapProfile.MaxPassiveWaitMinutes, ActiveScan: true, ActiveScanMinutes: ZapProfile.MaxActiveScanMinutes)).Validate("zap");
+    }
+
+    [Theory]
+    [InlineData("--zap-spider-minutes", 0)]
+    [InlineData("--zap-spider-minutes", ZapProfile.MaxSpiderMinutes + 1)]
+    [InlineData("--zap-spider-depth", -1)]
+    [InlineData("--zap-spider-depth", ZapProfile.MaxSpiderDepth + 1)]
+    [InlineData("--zap-spider-children", 0)]
+    [InlineData("--zap-spider-children", ZapProfile.MaxSpiderChildren + 1)]
+    [InlineData("--zap-passive-wait-minutes", 0)]
+    [InlineData("--zap-passive-wait-minutes", ZapProfile.MaxPassiveWaitMinutes + 1)]
+    [InlineData("--zap-active-scan-minutes", 0)]
+    [InlineData("--zap-active-scan-minutes", ZapProfile.MaxActiveScanMinutes + 1)]
+    public void BoundsOutsideTheirRangeAreRefusedNamingTheOptionAndRange(string option, int value)
+    {
+        var (profile, max) = option switch
+        {
+            "--zap-spider-minutes" => (new ZapProfile(SpiderMinutes: value), ZapProfile.MaxSpiderMinutes),
+            "--zap-spider-depth" => (new ZapProfile(SpiderDepth: value), ZapProfile.MaxSpiderDepth),
+            "--zap-spider-children" => (new ZapProfile(SpiderChildren: value), ZapProfile.MaxSpiderChildren),
+            "--zap-passive-wait-minutes" => (new ZapProfile(PassiveWaitMinutes: value), ZapProfile.MaxPassiveWaitMinutes),
+            _ => (new ZapProfile(ActiveScan: true, ActiveScanMinutes: value), ZapProfile.MaxActiveScanMinutes),
+        };
+
+        var error = Assert.Throws<ConfigException>(() => Plan(profile));
+
+        Assert.Contains(option, error.Message);
+        Assert.Contains($"between 1 and {max}", error.Message);
+    }
+
+    // Checked with the active scan off as well, so an out-of-range value is never accepted silently.
+    [Fact]
+    public void AnOutOfRangeActiveScanDurationIsRefusedEvenWithoutTheActiveScan()
+    {
+        var error = Assert.Throws<ConfigException>(() => Plan(new ZapProfile(ActiveScanMinutes: -5)));
+        Assert.Contains("--zap-active-scan-minutes", error.Message);
+    }
+
+    [Fact]
+    public void CallerBoundsReachTheSpiderAndPassiveWait()
+    {
+        var jobs = Jobs(Plan(new ZapProfile(SpiderMinutes: 15, SpiderDepth: 6, SpiderChildren: 50, PassiveWaitMinutes: 10)));
+        var spider = Mapping(jobs.Single(job => Equals(job["type"], "spider"))["parameters"]);
+        var wait = Mapping(jobs.Single(job => Equals(job["type"], "passiveScan-wait"))["parameters"]);
+
+        Assert.Equal("15", RubyValue.ToStringValue(spider["maxDuration"]));
+        Assert.Equal("6", RubyValue.ToStringValue(spider["maxDepth"]));
+        Assert.Equal("50", RubyValue.ToStringValue(spider["maxChildren"]));
+        Assert.Equal("10", RubyValue.ToStringValue(wait["maxDuration"]));
+        Assert.DoesNotContain(jobs, job => Equals(job["type"], "activeScan"));
+    }
+
+    [Fact]
+    public void TheActiveScanJobRunsOnlyWhenAskedForAndIsBoundedInsideTheContext()
+    {
+        Assert.Equal(["passiveScan-config", "spider", "passiveScan-wait", "report"],
+            Jobs(Plan()).Select(job => job["type"]));
+
+        var jobs = Jobs(Plan(new ZapProfile(ActiveScan: true, ActiveScanMinutes: 20)));
+        Assert.Equal(["passiveScan-config", "spider", "activeScan", "passiveScan-wait", "report"],
+            jobs.Select(job => job["type"]));
+        var active = Mapping(jobs.Single(job => Equals(job["type"], "activeScan"))["parameters"]);
+        Assert.Equal("wip", active["context"]);
+        Assert.Equal("20", RubyValue.ToStringValue(active["maxScanDurationInMins"]));
+        Assert.DoesNotContain(jobs, job => Equals(job["type"], "spiderAjax"));
+    }
+
+    [Fact]
+    public void TheActiveScanKeepsEverythingThatConfinesTheRun()
+    {
+        var passive = Plan();
+        var active = Plan(new ZapProfile(ActiveScan: true));
+        var passiveEnv = Mapping(YamlLoader.LoadText(PlanYaml(passive), allowAliases: false))["env"];
+        var activeEnv = Mapping(YamlLoader.LoadText(PlanYaml(active), allowAliases: false))["env"];
+
+        Assert.Equal(YamlWriter.Dump(passiveEnv), YamlWriter.Dump(activeEnv));
+        Assert.Equal(passive.Argv[2], active.Argv[2]);
+        Assert.Contains("'-silent'", active.Argv[2]);
+        Assert.Contains("'-addonuninstall','oast'", active.Argv[2]);
+        Assert.Throws<ConfigException>(() => Plan(new ZapProfile(ActiveScan: true), "http://user:secret@app.test/"));
+        Assert.Throws<ConfigException>(() => Plan(new ZapProfile(ActiveScan: true), "http://app.test/#main"));
+    }
+
+    [Fact]
+    public void ThePassiveCoverageRecordStatesTheBoundsUsedAndListsActiveScanningAsNotPerformed()
+    {
+        Assert.Equal(
+            "Checks not performed by this profile: active scanning, authenticated paths, browser/Ajax crawling, form submission, and out-of-band callbacks.\n" +
+            "Crawl coverage is bounded to 1 minute, depth 2, 10 children per node, and the selected URL subtree; passive scanning waits at most 1 minute. " +
+            "Findings do not prove these omitted checks passed.\n" +
+            "Native ZAP automation output follows unchanged:\n",
+            PlanCoverage(Plan()));
+
+        var coverage = PlanCoverage(Plan(new ZapProfile(SpiderMinutes: 15, SpiderDepth: 6, SpiderChildren: 50, PassiveWaitMinutes: 10)));
+        Assert.Contains("bounded to 15 minutes, depth 6, 50 children per node", coverage);
+        Assert.Contains("passive scanning waits at most 10 minutes", coverage);
+        Assert.Contains("Checks not performed by this profile: active scanning,", coverage);
+    }
+
+    [Fact]
+    public void TheActiveCoverageRecordNoLongerListsActiveScanningAsNotPerformed()
+    {
+        var coverage = PlanCoverage(Plan(new ZapProfile(ActiveScan: true, ActiveScanMinutes: 20)));
+
+        Assert.StartsWith(
+            "Checks not performed by this profile: authenticated paths, browser/Ajax crawling, form submission, and out-of-band callbacks.\n",
+            coverage);
+        Assert.Contains("active scanning of the crawled in-scope requests stops after at most 20 minutes", coverage);
+        Assert.Contains("Findings do not prove these omitted checks passed.", coverage);
+        Assert.EndsWith("Native ZAP automation output follows unchanged:\n", coverage);
+    }
 }

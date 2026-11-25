@@ -5,24 +5,37 @@ using Wip.Yaml;
 
 namespace Wip.Security;
 
-/// <summary>A bounded, unauthenticated traditional-spider and passive-scan profile.</summary>
-internal sealed class ZapScanner : ISecurityScanner
+/// <summary>
+/// A bounded, unauthenticated traditional-spider and passive-scan profile, with an opt-in
+/// bounded active scan. The bounds come from <see cref="ZapProfile"/>.
+/// </summary>
+internal sealed class ZapScanner(ZapProfile? profile = null) : ISecurityScanner
 {
     internal const string ImageReference = "ghcr.io/zaproxy/zaproxy@sha256:5ccfff9a411743ab2615136a2edd7416bec9ce41572fa94e935df38c14adb2b6";
     private const string PlanPath = "/tmp/wip-zap-plan.yaml";
     private const string ReportPath = "/tmp/wip-zap-report.json";
     private const string UnperformedPath = "/tmp/wip-zap-unperformed.txt";
 
-    // This fixed Python program receives a JSON-quoted YAML document as data, not shell
-    // syntax. Quoting keeps every argv element free of control characters. The writable
-    // /tmp paths work with the image's non-root zap user, without a host mount.
-    private const string Wrapper = """import json,pathlib,subprocess,sys; pathlib.Path(sys.argv[3]).unlink(missing_ok=True); pathlib.Path(sys.argv[4]).unlink(missing_ok=True); pathlib.Path(sys.argv[2]).write_text(json.loads(sys.argv[1]),encoding='utf-8'); raw=open(sys.argv[4],'w',encoding='utf-8'); raw.write('Checks not performed by this profile: active scanning, authenticated paths, browser/Ajax crawling, form submission, and out-of-band callbacks.\nCrawl coverage is bounded to one minute, depth two, ten children per node, and the selected URL subtree; passive scanning waits at most one minute. Findings do not prove these omitted checks passed.\nNative ZAP automation output follows unchanged:\n'); raw.flush(); code=subprocess.call(['/zap/zap.sh','-cmd','-silent','-addonuninstall','oast','-autorun',sys.argv[2]],stdout=raw,stderr=subprocess.STDOUT); raw.close(); sys.exit(code)""";
+    // This fixed Python program receives a JSON-quoted YAML document and a JSON-quoted
+    // coverage header as data, not shell syntax. Quoting keeps every argv element free of
+    // control characters. The writable /tmp paths work with the image's non-root zap user,
+    // without a host mount.
+    private const string Wrapper = """import json,pathlib,subprocess,sys; pathlib.Path(sys.argv[3]).unlink(missing_ok=True); pathlib.Path(sys.argv[4]).unlink(missing_ok=True); pathlib.Path(sys.argv[2]).write_text(json.loads(sys.argv[1]),encoding='utf-8'); raw=open(sys.argv[4],'w',encoding='utf-8'); raw.write(json.loads(sys.argv[5])); raw.flush(); code=subprocess.call(['/zap/zap.sh','-cmd','-silent','-addonuninstall','oast','-autorun',sys.argv[2]],stdout=raw,stderr=subprocess.STDOUT); raw.close(); sys.exit(code)""";
+
+    private readonly ZapProfile profile = profile ?? ZapProfile.Default;
 
     public string Name => "zap";
+
+    /// <summary>The profile this instance plans with.</summary>
+    internal ZapProfile Profile => profile;
+
+    /// <summary>The same scanner with caller-selected bounds; validated when the plan is built.</summary>
+    internal ZapScanner WithProfile(ZapProfile selected) => new(selected);
 
     public ScanPlan Plan(ScanTarget target)
     {
         target.Validate();
+        profile.Validate();
         if (!Uri.TryCreate(target.Address, UriKind.Absolute, out var uri) ||
             uri.Scheme is not ("http" or "https") || uri.UserInfo.Length != 0)
             throw new ConfigException("ZAP requires an unauthenticated HTTP or HTTPS target URL");
@@ -43,7 +56,8 @@ internal sealed class ZapScanner : ISecurityScanner
         // Official AF environment documentation specifies urls/includePaths/excludePaths:
         // https://www.zaproxy.org/docs/desktop/addons/automation-framework/environment/
         // The complement exclusion prevents default URL inclusion from broadening a path
-        // prefix to a sibling, port, scheme, or host. No browser or active-scan job runs.
+        // prefix to a sibling, port, scheme, or host. No browser job runs, and the active scan
+        // runs only when the profile asks for it -- inside this same context.
         // Spider.start disables automatic redirects and filters seeds before dispatch;
         // DefaultFetchFilter rejects URLs outside the context (including redirect targets):
         // https://github.com/zaproxy/zap-extensions/blob/main/addOns/spider/src/main/java/org/zaproxy/addon/spider/Spider.java
@@ -53,8 +67,11 @@ internal sealed class ZapScanner : ISecurityScanner
                 ("includePaths", List("^" + scope + "$")), ("excludePaths", List("^(?!" + scope + "$).*"))))),
             ("parameters", Map(("failOnError", true), ("failOnWarning", false), ("continueOnFailure", false), ("progressToStdout", true))));
 
-        // Documented spider limits and form switches keep this profile bounded and passive:
+        // Documented spider limits and form switches keep this profile bounded:
         // https://www.zaproxy.org/docs/desktop/addons/spider/automation/
+        // The opt-in active scan is bounded by maxScanDurationInMins and confined to the same
+        // context, so it attacks only requests the in-scope crawl found:
+        // https://www.zaproxy.org/docs/desktop/addons/active-scanner/automation/
         // Report parameters select the unmodified traditional JSON artifact under /tmp:
         // https://www.zaproxy.org/docs/desktop/addons/report-generation/automation/
         // https://www.zaproxy.org/docs/desktop/addons/passive-scanner/job-pscanconf/
@@ -62,11 +79,16 @@ internal sealed class ZapScanner : ISecurityScanner
         var jobs = List(
             Map(("type", "passiveScan-config"), ("parameters", Map(("scanOnlyInScope", true)))),
             Map(("type", "spider"), ("parameters", Map(("context", "wip"), ("url", url),
-                ("maxDuration", 1), ("maxDepth", 2), ("maxChildren", 10), ("threadCount", 2),
-                ("postForm", false), ("processForm", false), ("parseRobotsTxt", false), ("parseSitemapXml", false)))),
-            Map(("type", "passiveScan-wait"), ("parameters", Map(("maxDuration", 1)))),
-            Map(("type", "report"), ("parameters", Map(("template", "traditional-json"),
-                ("reportDir", "/tmp"), ("reportFile", "wip-zap-report"), ("displayReport", false)))));
+                ("maxDuration", profile.SpiderMinutes), ("maxDepth", profile.SpiderDepth),
+                ("maxChildren", profile.SpiderChildren), ("threadCount", 2),
+                ("postForm", false), ("processForm", false), ("parseRobotsTxt", false), ("parseSitemapXml", false)))));
+        // Before the passive wait, so the wait also covers the responses the attacks produced.
+        if (profile.ActiveScan)
+            jobs.Add(Map(("type", "activeScan"), ("parameters", Map(("context", "wip"),
+                ("maxScanDurationInMins", profile.ActiveScanMinutes), ("threadPerHost", 2)))));
+        jobs.Add(Map(("type", "passiveScan-wait"), ("parameters", Map(("maxDuration", profile.PassiveWaitMinutes)))));
+        jobs.Add(Map(("type", "report"), ("parameters", Map(("template", "traditional-json"),
+            ("reportDir", "/tmp"), ("reportFile", "wip-zap-report"), ("displayReport", false)))));
         var yaml = YamlWriter.Dump(Map(("env", environment), ("jobs", jobs)));
 
         // ZAP's core command-line reference documents -cmd, -silent (no unsolicited calls),
@@ -76,9 +98,32 @@ internal sealed class ZapScanner : ISecurityScanner
         // Removing the oast add-on disables its external callback services altogether.
         // No add-on install/update is requested, so rules remain those in the image digest.
         return new(new PinnedImage(ImageReference),
-            ["python3", "-c", Wrapper, Quote(yaml), PlanPath, ReportPath, UnperformedPath],
-            ReportPath, ImageReference + "/wip-passive-v1", UnperformedPath);
+            ["python3", "-c", Wrapper, Quote(yaml), PlanPath, ReportPath, UnperformedPath, Quote(Coverage(profile))],
+            ReportPath, ImageReference + "/" + profile.Identifier, UnperformedPath);
     }
+
+    /// <summary>
+    /// The header of the raw coverage record, stating the bounds this plan actually uses. The
+    /// native Automation Framework output is appended below it unchanged.
+    /// </summary>
+    internal static string Coverage(ZapProfile profile)
+    {
+        var omitted = profile.ActiveScan
+            ? "authenticated paths, browser/Ajax crawling, form submission, and out-of-band callbacks"
+            : "active scanning, authenticated paths, browser/Ajax crawling, form submission, and out-of-band callbacks";
+        var active = profile.ActiveScan
+            ? $"; active scanning of the crawled in-scope requests stops after at most {Minutes(profile.ActiveScanMinutes)}, " +
+              "so rules can be left unfinished"
+            : "";
+        return $"Checks not performed by this profile: {omitted}.\n" +
+               $"Crawl coverage is bounded to {Minutes(profile.SpiderMinutes)}, depth {profile.SpiderDepth}, " +
+               $"{profile.SpiderChildren} children per node, and the selected URL subtree{active}; " +
+               $"passive scanning waits at most {Minutes(profile.PassiveWaitMinutes)}. " +
+               "Findings do not prove these omitted checks passed.\n" +
+               "Native ZAP automation output follows unchanged:\n";
+    }
+
+    private static string Minutes(int value) => value == 1 ? "1 minute" : $"{value} minutes";
 
     /// <summary>Reads the native traditional-json report without touching execution resources.</summary>
     public IReadOnlyList<ScanFinding> ConvertReport(string report)

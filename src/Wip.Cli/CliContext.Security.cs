@@ -19,9 +19,10 @@ internal sealed partial class CliContext
     /// failure in preparation therefore stops before anything is executed in the sandbox.
     /// </remarks>
     internal int SecurityScan(string sandbox, string tool, string target, int timeoutSeconds,
-        string? outputDirectory = null, string? commit = null)
+        string? outputDirectory = null, string? commit = null, ZapProfile? zapProfile = null)
     {
         ValidateSecurityTimeout(timeoutSeconds);
+        var scanner = SelectScanner(tool, zapProfile, timeoutSeconds);
         // Before Prepare, which requests a pinned image of about a gigabyte. The engine
         // checks this again for callers that reach Run directly.
         if (outputDirectory is not null) ScanResultStore.RequireUsable(outputDirectory);
@@ -37,7 +38,6 @@ internal sealed partial class CliContext
             rulesFetcher: rulesFetcher,
             mapRulesSource: source => WslPath.ForWslc(Path.GetFullPath(source), "the pinned scanner rules source"));
 
-        var scanner = ScanEngine.Select(tool);
         var scanTarget = new ScanTarget(target);
         var plan = engine.Prepare(scanner, sandbox, scanTarget);
         var outcome = engine.Run(scanner, sandbox, plan, scanTarget, TimeSpan.FromSeconds(timeoutSeconds),
@@ -45,6 +45,25 @@ internal sealed partial class CliContext
 
         var output = ReportOutput(Console.IsOutputRedirected, Console.OpenStandardOutput, Console.Out);
         return WriteScanOutcome(outcome, plan.ReportPath, output, Console.Error, Console.IsOutputRedirected, Console.IsErrorRedirected);
+    }
+
+    /// <summary>
+    /// The scanner <paramref name="tool"/> selects, carrying the caller's ZAP bounds when any
+    /// were given. Bounds for another tool are refused rather than ignored, and so is a deadline
+    /// the bounded jobs cannot fit in: a run that times out keeps no partial report.
+    /// </summary>
+    internal static ISecurityScanner SelectScanner(string tool, ZapProfile? zapProfile, int timeoutSeconds)
+    {
+        var scanner = ScanEngine.Select(tool);
+        if (zapProfile is null) return scanner;
+        if (scanner is not ZapScanner zap)
+            throw new ConfigException($"--zap-* options apply only to --tool zap, not --tool {tool}");
+        zapProfile.Validate();
+        if ((long)zapProfile.BoundedMinutes * 60 >= timeoutSeconds)
+            throw new ConfigException(
+                $"--timeout {timeoutSeconds} seconds does not exceed the {zapProfile.BoundedMinutes} minutes the selected ZAP bounds " +
+                "can take; raise --timeout or lower the bounds, because a timed-out scan keeps no partial report");
+        return zap.WithProfile(zapProfile);
     }
 
     /// <summary>

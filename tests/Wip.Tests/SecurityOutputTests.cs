@@ -334,4 +334,66 @@ public sealed class SecurityOutputTests
         Assert.Equal(17, result.Code);
         Assert.Equal(text, result.Output);
     }
+
+    private static (ParseResult Parsed, ZapProfile? Profile) ParseZap(params string[] options)
+    {
+        var parsed = Program.Parse(Program.BuildRoot(),
+            ["security", "scan", "scanner", "--tool", "zap", "--target", "http://app/", .. options]);
+        Assert.Empty(parsed.Errors);
+        var all = parsed.CommandResult.Command.Options;
+        Option<int> Bound(string name) => Assert.IsType<Option<int>>(all.Single(option => option.Name == name));
+        var profile = Program.ZapProfileFrom(parsed, Bound(ZapProfile.SpiderMinutesOption), Bound(ZapProfile.SpiderDepthOption),
+            Bound(ZapProfile.SpiderChildrenOption), Bound(ZapProfile.PassiveWaitMinutesOption),
+            Assert.IsType<Option<bool>>(all.Single(option => option.Name == ZapProfile.ActiveScanOption)),
+            Bound(ZapProfile.ActiveScanMinutesOption));
+        return (parsed, profile);
+    }
+
+    [Fact]
+    public void NoZapOptionsKeepTheDefaultScanner()
+    {
+        Assert.Null(ParseZap().Profile);
+        Assert.Same(ScanEngine.Select("zap"), CliContext.SelectScanner("zap", null, 1800));
+    }
+
+    [Fact]
+    public void ZapOptionsBuildTheCallersProfile()
+    {
+        Assert.Equal(new ZapProfile(SpiderMinutes: 10, SpiderDepth: 4), ParseZap("--zap-spider-minutes", "10", "--zap-spider-depth", "4").Profile);
+        Assert.Equal(new ZapProfile(ActiveScan: true), ParseZap("--zap-active-scan").Profile);
+        Assert.Equal(new ZapProfile(ActiveScan: true, ActiveScanMinutes: 20),
+            ParseZap("--zap-active-scan", "--zap-active-scan-minutes", "20").Profile);
+    }
+
+    [Fact]
+    public void AnActiveScanDurationWithoutTheActiveScanIsRefused()
+    {
+        var error = Assert.Throws<ConfigException>(() => ParseZap("--zap-active-scan-minutes", "20"));
+        Assert.Contains("--zap-active-scan-minutes requires --zap-active-scan", error.Message);
+    }
+
+    [Fact]
+    public void ZapBoundsAreRefusedForAnotherTool()
+    {
+        var error = Assert.Throws<ConfigException>(() => CliContext.SelectScanner("nuclei", new ZapProfile(SpiderDepth: 3), 1800));
+        Assert.Contains("apply only to --tool zap", error.Message);
+    }
+
+    [Fact]
+    public void ZapBoundsThatCannotFitTheDeadlineAreRefused()
+    {
+        var profile = new ZapProfile(SpiderMinutes: 20, ActiveScan: true, ActiveScanMinutes: 15);
+        var error = Assert.Throws<ConfigException>(() => CliContext.SelectScanner("zap", profile, 1800));
+        Assert.Contains("raise --timeout", error.Message);
+
+        var scanner = Assert.IsType<ZapScanner>(CliContext.SelectScanner("zap", profile, 3600));
+        Assert.Equal(profile, scanner.Profile);
+    }
+
+    [Fact]
+    public void ZapBoundsAreValidatedBeforeTheDeadlineIsCompared()
+    {
+        var error = Assert.Throws<ConfigException>(() => CliContext.SelectScanner("zap", new ZapProfile(SpiderMinutes: 0), 1800));
+        Assert.Contains("--zap-spider-minutes must be between 1 and 30", error.Message);
+    }
 }
