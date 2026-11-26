@@ -246,7 +246,7 @@ internal static class Program
             // Read from the engine rather than repeated here, so help cannot drift from the
             // deadline a scan would actually get.
             DefaultValueFactory = _ => (int)ScanEngine.DefaultScanTimeout.TotalSeconds,
-            Description = $"Scan deadline in seconds (default: {(int)ScanEngine.DefaultScanTimeout.TotalSeconds})",
+            Description = "Scan deadline in seconds",
         };
         var output = new Option<string?>("--output")
         {
@@ -256,6 +256,29 @@ internal static class Program
         {
             Description = "Application revision metadata for the result (not inferred from the sandbox)",
         };
+        // ZAP bounds. Defaults are read from the profile so help cannot drift from the plan, and
+        // ceilings are stated because ZapProfile.Validate refuses anything above them. Help
+        // renders the default itself.
+        static Option<int> ZapBound(string name, string what, int defaultValue, int max) => new(name)
+        {
+            DefaultValueFactory = _ => defaultValue,
+            Description = $"ZAP only: {what} (allowed: 1-{max})",
+        };
+        var spiderMinutes = ZapBound(ZapProfile.SpiderMinutesOption, "spider duration in minutes",
+            ZapProfile.DefaultSpiderMinutes, ZapProfile.MaxSpiderMinutes);
+        var spiderDepth = ZapBound(ZapProfile.SpiderDepthOption, "spider depth",
+            ZapProfile.DefaultSpiderDepth, ZapProfile.MaxSpiderDepth);
+        var spiderChildren = ZapBound(ZapProfile.SpiderChildrenOption, "spider children per node",
+            ZapProfile.DefaultSpiderChildren, ZapProfile.MaxSpiderChildren);
+        var passiveWait = ZapBound(ZapProfile.PassiveWaitMinutesOption, "passive-scan wait in minutes",
+            ZapProfile.DefaultPassiveWaitMinutes, ZapProfile.MaxPassiveWaitMinutes);
+        var activeScan = new Option<bool>(ZapProfile.ActiveScanOption)
+        {
+            Description = "ZAP only: also run a bounded active scan, which sends attack requests designed to provoke faults; " +
+                          "use only against a target you own",
+        };
+        var activeMinutes = ZapBound(ZapProfile.ActiveScanMinutesOption, $"active-scan duration in minutes, with {ZapProfile.ActiveScanOption}",
+            ZapProfile.DefaultActiveScanMinutes, ZapProfile.MaxActiveScanMinutes);
         var scan = new Command("scan", "Prepare and run one tool against one target inside the sandbox")
         {
             sandboxName,
@@ -264,12 +287,38 @@ internal static class Program
             timeout,
             output,
             commit,
+            spiderMinutes,
+            spiderDepth,
+            spiderChildren,
+            passiveWait,
+            activeScan,
+            activeMinutes,
         };
         scan.SetAction(parsed => context(parsed).SecurityScan(
             parsed.GetValue(sandboxName)!, parsed.GetValue(tool)!, parsed.GetValue(target)!, parsed.GetValue(timeout),
-            parsed.GetValue(output), parsed.GetValue(commit)));
+            parsed.GetValue(output), parsed.GetValue(commit),
+            ZapProfileFrom(parsed, spiderMinutes, spiderDepth, spiderChildren, passiveWait, activeScan, activeMinutes)));
         security.Subcommands.Add(scan);
         return security;
+    }
+
+    /// <summary>
+    /// The caller's ZAP bounds, or null when none was given, so the plan stays the default one
+    /// and the options stay off for other tools. An active-scan duration without the active
+    /// scan is refused: silently dropping it would leave a caller believing an attack ran.
+    /// </summary>
+    internal static ZapProfile? ZapProfileFrom(ParseResult parsed, Option<int> spiderMinutes, Option<int> spiderDepth,
+        Option<int> spiderChildren, Option<int> passiveWait, Option<bool> activeScan, Option<int> activeMinutes)
+    {
+        static bool Given(ParseResult parsed, Option option) => parsed.GetResult(option) is { Implicit: false };
+        var active = parsed.GetValue(activeScan);
+        if (!active && !Given(parsed, activeMinutes) &&
+            !new Option[] { spiderMinutes, spiderDepth, spiderChildren, passiveWait }.Any(option => Given(parsed, option)))
+            return null;
+        if (!active && Given(parsed, activeMinutes))
+            throw new ConfigException($"{ZapProfile.ActiveScanMinutesOption} requires {ZapProfile.ActiveScanOption}");
+        return new ZapProfile(parsed.GetValue(spiderMinutes), parsed.GetValue(spiderDepth), parsed.GetValue(spiderChildren),
+            parsed.GetValue(passiveWait), active, parsed.GetValue(activeMinutes));
     }
 
     private static IEnumerable<Command> BuildCommands(Func<ParseResult, CliContext> context)
@@ -296,7 +345,7 @@ internal static class Program
                     Arity = ArgumentArity.OneOrMore,
                     Description = "Command and its arguments to run inside the sandbox",
                 };
-                var timeout = new Option<int>("--timeout") { DefaultValueFactory = _ => 300, Description = "Execution deadline in seconds (default: 300)" };
+                var timeout = new Option<int>("--timeout") { DefaultValueFactory = _ => 300, Description = "Execution deadline in seconds" };
                 // One flag with four spellings, including the bundled -it people type out of
                 // docker habit. The two halves it bundles are not a choice the caller has to
                 // make: stdin is always attached, and a terminal is requested exactly when
@@ -570,7 +619,7 @@ internal static class Program
         };
         var interval = new Option<double>("--interval")
         {
-            Description = "Seconds between --watch polls (default: 5)",
+            Description = "Seconds between --watch polls",
             DefaultValueFactory = _ => 5,
         };
 

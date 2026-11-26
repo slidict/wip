@@ -12,7 +12,11 @@ to wip itself; configuration cannot load arbitrary scanners or plugins.
 ```sh
 wip security tools
 wip security scan <sandbox> --tool <name> --target <address> [--timeout <seconds>] [--output <dir>] [--commit <sha>]
+                  [--zap-spider-minutes <n>] [--zap-spider-depth <n>] [--zap-spider-children <n>]
+                  [--zap-passive-wait-minutes <n>] [--zap-active-scan [--zap-active-scan-minutes <n>]]
 ```
+
+The `--zap-*` options apply only to `--tool zap`; see [ZAP bounds](#zap-bounds).
 
 The sandbox and its internal network remain declared in `wip.yml`. The target is an address
 or alias reachable inside that network, such as another sandbox's network alias. The command
@@ -164,20 +168,29 @@ The adapter passes Python source and arguments as separate argv elements. The fi
 writes an [Automation Framework](https://www.zaproxy.org/docs/automate/automation-framework/)
 plan, then invokes `/zap/zap.sh -cmd -silent -addonuninstall oast -autorun <plan>`.
 The context confines the traditional spider to the supplied HTTP(S) origin and path subtree.
-Crawling is bounded to one minute, depth two and ten children; passive scanning waits at most
-one more minute. Form submission, robots.txt and sitemap discovery are disabled to avoid
-leaving the declared subtree. It does not run active scans or a browser spider. Silent mode disables
+By default crawling is bounded to one minute, depth two and ten children; passive scanning
+waits at most one more minute. [ZAP bounds](#zap-bounds) describes how a caller changes those
+bounds and opts into an active scan. Form submission, robots.txt and sitemap discovery are
+disabled to avoid leaving the declared subtree. It does not run a browser spider, and it runs
+an active scan only when asked for one. Silent mode disables
 unsolicited update/telemetry requests, and removal of the OAST add-on disables out-of-band
 callbacks. The declared internal network remains the enforcement boundary for egress.
 
 The report job writes ZAP's native `traditional-json` report. The rules identifier combines
-the immutable image digest with the reviewed `wip-passive-v1` profile; rules and add-ons come
-from that image rather than a scan-time update. Completed runs retain ZAP's own exit code:
+the immutable image digest with the reviewed profile name: `<image>/wip-passive-v2` without
+`--zap-active-scan`, and `<image>/wip-active-v1` with it. The name identifies the profile and
+not its numeric bounds; the coverage record carries those. `wip-passive-v1` was the identifier
+while the bounds were fixed; `wip-passive-v2` produces the same plan by default but can carry
+caller-selected bounds, so results recorded under the two are not claimed to be comparable.
+Rules and add-ons come from that image rather than a scan-time update. Completed runs retain ZAP's own exit code:
 Automation Framework returns zero on completion, one on errors, or two on warnings. A completed passive
 scan with no alerts does not establish that active or authenticated checks passed.
 
-`/tmp/wip-zap-unperformed.txt` retains the profile's omitted checks and crawl limits together
-with the native Automation Framework log. The engine collects that sidecar separately and
+`/tmp/wip-zap-unperformed.txt` retains the profile's omitted checks and the crawl, active-scan
+and passive-wait bounds the plan actually used, generated from the plan, together with the
+native Automation Framework log. Active scanning is listed among the checks not performed
+unless the active scan ran; authenticated paths, browser/Ajax crawling, form submission and
+out-of-band callbacks are listed in both cases. The engine collects that sidecar separately and
 the CLI writes it to stderr under `Unperformed checks (raw):`; stdout remains the original
 JSON report. Sidecars use the same collection deadline and retention limit as reports;
 missing, unreadable or oversized diagnostics are reported explicitly. Raw artifacts remain
@@ -193,6 +206,43 @@ Scheduled and manually triggered runs additionally scan a single internal HTTP p
 real adapter. The pinned image is about 1.12 GiB compressed, so its download and registry
 availability are deliberately kept off unrelated pull requests. The real scenario has a
 bounded pull and short scan inside the workflow's 45-minute job budget.
+
+### ZAP bounds
+
+The defaults are the profile this repository's own CI was sized for (see above), so a caller
+who passes no `--zap-*` option gets exactly that plan. Every bound has a ceiling, and zero and
+negative values are refused: ZAP reads zero as unlimited, and an application with generated
+URLs (pagination, locale prefixes, per-record pages) can keep an unlimited spider walking
+effectively forever. A value outside its range fails before the image pull, with an error
+naming the option and the allowed range.
+
+| Option | ZAP parameter | Default | Allowed |
+| --- | --- | --- | --- |
+| `--zap-spider-minutes` | spider `maxDuration` | 1 | 1-30 |
+| `--zap-spider-depth` | spider `maxDepth` | 2 | 1-10 |
+| `--zap-spider-children` | spider `maxChildren` | 10 | 1-100 |
+| `--zap-passive-wait-minutes` | `passiveScan-wait` `maxDuration` | 1 | 1-30 |
+| `--zap-active-scan-minutes` | `activeScan` `maxScanDurationInMins` | 5 | 1-60 |
+
+`--zap-active-scan` adds an `activeScan` job after the spider and before the passive wait, so
+the wait also covers the responses the attacks produced. It is off by default; without it the
+plan is byte-for-byte the passive one. `--zap-active-scan-minutes` without
+`--zap-active-scan` is refused rather than ignored. The job runs in the same `wip` context, so
+it attacks only requests the in-scope crawl found, with two threads per host. Its duration is
+the only time bound; no separate per-rule bound is set, so a scan that reaches its limit can
+leave later rules unfinished, which the coverage record states.
+
+**An active scan submits requests designed to provoke faults** -- injection payloads, path
+traversal, malformed input -- and can change or corrupt the target's data. Use it only against
+a target you own, preferably one whose data you can discard. It changes nothing that confines
+the run: the context include and complement-exclude paths, `-silent`, removal of the `oast`
+add-on, and the internal network as the egress boundary all stay as they are. Authenticated
+targets and URL fragments are still refused.
+
+The bounded jobs can take up to the sum of the spider, active-scan and passive-wait minutes,
+plus ZAP start-up and the report. When any `--zap-*` option is given, `--timeout` must exceed
+that sum, because a timed-out scan keeps no partial report; raise `--timeout` (default 1800
+seconds) together with the bounds.
 
 ## Result document and persisted artifacts
 
@@ -541,5 +591,7 @@ capture and report output behavior.
 
 Registry tests verify that `zap` resolves to the built-in adapter. Adapter tests check the
 pinned image, scope and callback controls, report paths and raw omitted-check information.
+They also pin the default plan's YAML, check each bound at and outside its range, the job list
+with and without the active scan, the generated coverage text and the rules identifiers.
 Fake-backend tests do not verify actual WSLC process termination or scanner behavior; the
 lightweight and scheduled real-ZAP scenarios cover those runtime paths separately.
