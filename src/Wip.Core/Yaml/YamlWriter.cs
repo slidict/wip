@@ -73,11 +73,23 @@ public static class YamlWriter
                 WriteScalar(emitter, text);
                 return;
 
+            case QuotedScalar quoted:
+                Emit(emitter, quoted.Text, ScalarStyle.SingleQuoted);
+                return;
+
             default:
                 Emit(emitter, RubyValue.ToStringValue(value), ScalarStyle.Plain);
                 return;
         }
     }
+
+    /// <summary>
+    /// A string written single-quoted whatever <see cref="YamlScalarResolver"/> thinks of it,
+    /// for documents read by another YAML implementation whose typing differs from wip's, such
+    /// as YAML 1.1 reading <c>12:30</c> as an integer. The emitter falls back to double quotes
+    /// only when single quotes cannot hold the text; either way it stays a quoted string.
+    /// </summary>
+    public sealed record QuotedScalar(string Text);
 
     private static void WriteScalar(IEmitter emitter, string text)
     {

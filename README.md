@@ -304,13 +304,13 @@ on the same isolated network.
 
 | `--tool` | Pinned image (`image:`) | Keepalive `command:` | What it runs | Omitted (reported as unperformed) |
 |---|---|---|---|---|
-| `zap` | `ghcr.io/zaproxy/zaproxy@sha256:5ccfff9a411743ab2615136a2edd7416bec9ce41572fa94e935df38c14adb2b6` | `[sleep, infinity]` | Bounded traditional spider (by default 1 min, depth 2, 10 children, confined to the target HTTP(S) URL subtree; no form submission, `robots.txt`, or sitemap parsing; OAST callbacks removed) and passive scan (by default up to 1 min); the bounds can be raised to the [documented ceilings](docs/security-scan-engine.md#zap-bounds) | Active scanning (unless `--zap-active-scan` is given), authenticated paths ([#277](https://github.com/slidict/wip/issues/277)), browser/Ajax crawling, form submission, out-of-band callbacks |
+| `zap` | `ghcr.io/zaproxy/zaproxy@sha256:5ccfff9a411743ab2615136a2edd7416bec9ce41572fa94e935df38c14adb2b6` | `[sleep, infinity]` | Bounded traditional spider (by default 1 min, depth 2, 10 children, confined to the target HTTP(S) URL subtree; no form submission, `robots.txt`, or sitemap parsing; OAST callbacks removed) and passive scan (by default up to 1 min); the bounds can be raised to the [documented ceilings](docs/security-scan-engine.md#zap-bounds) | Active scanning (unless `--zap-active-scan` is given), authenticated paths (unless the [ZAP login](docs/security-scan-engine.md#zap-login) options are given), browser/Ajax crawling, form submission, out-of-band callbacks |
 
 **"Unperformed" is reported separately from "no findings."** Every scan records which checks
 and crawl scope were omitted (printed to stderr under `Unperformed checks (raw):` and written to
 `unperformed-checks.txt` and `result.json`'s `coverage` field when `--output` is given;
 incomplete runs omit `findings` altogether and exit nonzero). A completed `zap` scan with zero
-findings only reflects the unauthenticated, bounded scope that ran (passive, or with
+findings only reflects the bounded scope that ran (unauthenticated unless a ZAP login was given; passive, or with
 `--zap-active-scan` also a time-bounded active scan that can leave rules unfinished) — a clean
 report is not proof that omitted or unfinished checks passed, or that the target is safe.
 

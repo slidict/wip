@@ -483,4 +483,213 @@ public class ZapScannerTests
         Assert.Contains("Findings do not prove these omitted checks passed.", coverage);
         Assert.EndsWith("Native ZAP automation output follows unchanged:\n", coverage);
     }
+
+    private static readonly ZapLogin Login = new("http://app.test:8080/app/login",
+        "email={%username%}&password={%password%}", "scanner@example.test", "test-password",
+        LoggedInRegex: "Sign out", LoggedOutRegex: "Sign in");
+
+    private static OrderedDictionary<string, object?> Context(ScanPlan plan) =>
+        Mapping(Sequence(Mapping(Mapping(YamlLoader.LoadText(PlanYaml(plan), allowAliases: false))["env"])["contexts"])[0]);
+
+    private static OrderedDictionary<string, object?> JobParameters(ScanPlan plan, string type) =>
+        Mapping(Jobs(plan).Single(job => Equals(job["type"], type))["parameters"]);
+
+    [Fact]
+    public void WithoutALoginThePlanHasNoAuthenticationOrUser()
+    {
+        var plan = Plan(new ZapProfile(ActiveScan: true));
+        var context = Context(plan);
+
+        Assert.Equal(["name", "urls", "includePaths", "excludePaths"], context.Keys);
+        Assert.False(JobParameters(plan, "spider").ContainsKey("user"));
+        Assert.False(JobParameters(plan, "activeScan").ContainsKey("user"));
+    }
+
+    [Fact]
+    public void ALoginAddsFormAuthenticationCookieSessionAndOneUserToTheContext()
+    {
+        var context = Context(Plan(new ZapProfile(Login: Login)));
+
+        var authentication = Mapping(context["authentication"]);
+        Assert.Equal("form", authentication["method"]);
+        var parameters = Mapping(authentication["parameters"]);
+        Assert.Equal("http://app.test:8080/app/login", parameters["loginRequestUrl"]);
+        Assert.Equal("email={%username%}&password={%password%}", parameters["loginRequestBody"]);
+        var verification = Mapping(authentication["verification"]);
+        Assert.Equal("response", verification["method"]);
+        Assert.Equal("Sign out", verification["loggedInRegex"]);
+        Assert.Equal("Sign in", verification["loggedOutRegex"]);
+        Assert.Equal("cookie", Mapping(context["sessionManagement"])["method"]);
+        var user = Mapping(Assert.Single(Sequence(context["users"])));
+        Assert.Equal(ZapLogin.UserName, user["name"]);
+        var credentials = Mapping(user["credentials"]);
+        Assert.Equal("scanner@example.test", credentials["username"]);
+        Assert.Equal("test-password", credentials["password"]);
+    }
+
+    [Fact]
+    public void OnlyTheGivenIndicatorIsWrittenAndAnEmptyPasswordIsKept()
+    {
+        var login = Login with { Password = "", LoggedOutRegex = null };
+        var context = Context(Plan(new ZapProfile(Login: login)));
+
+        var verification = Mapping(Mapping(context["authentication"])["verification"]);
+        Assert.Equal(["method", "loggedInRegex"], verification.Keys);
+        var credentials = Mapping(Mapping(Assert.Single(Sequence(context["users"])))["credentials"]);
+        Assert.Equal("", RubyValue.ToStringValue(credentials["password"]));
+    }
+
+    [Fact]
+    public void TheSpiderAndTheActiveScanRunAsTheLoginUser()
+    {
+        var plan = Plan(new ZapProfile(ActiveScan: true, Login: Login));
+
+        Assert.Equal(ZapLogin.UserName, JobParameters(plan, "spider")["user"]);
+        Assert.Equal(ZapLogin.UserName, JobParameters(plan, "activeScan")["user"]);
+        Assert.Equal("wip", JobParameters(plan, "activeScan")["context"]);
+        Assert.Equal(ZapLogin.UserName, JobParameters(Plan(new ZapProfile(Login: Login)), "spider")["user"]);
+    }
+
+    [Fact]
+    public void ALoginKeepsEverythingThatConfinesTheRun()
+    {
+        var plain = Plan(new ZapProfile(ActiveScan: true));
+        var login = Plan(new ZapProfile(ActiveScan: true, Login: Login));
+        var plainContext = Context(plain);
+        var loginContext = Context(login);
+
+        foreach (var key in new[] { "name", "urls", "includePaths", "excludePaths" })
+            Assert.Equal(YamlWriter.Dump(plainContext[key]), YamlWriter.Dump(loginContext[key]));
+        Assert.Equal(plain.Argv[2], login.Argv[2]);
+        Assert.Contains("'-silent'", login.Argv[2]);
+        Assert.Contains("'-addonuninstall','oast'", login.Argv[2]);
+        Assert.All(login.Argv, argument => Assert.DoesNotContain(argument, char.IsControl));
+        Assert.Throws<ConfigException>(() => Plan(new ZapProfile(Login: Login), "http://user:secret@app.test:8080/app"));
+        Assert.Throws<ConfigException>(() => Plan(new ZapProfile(Login: Login), "http://app.test:8080/app#main"));
+    }
+
+    [Theory]
+    [InlineData("http://other.test:8080/app/login")]
+    [InlineData("http://app.test:9090/app/login")]
+    [InlineData("https://app.test:8080/app/login")]
+    [InlineData("http://app.test:8080/application/login")]
+    [InlineData("http://app.test:8080/login")]
+    public void ALoginUrlOutsideTheContextIsRefused(string loginUrl)
+    {
+        var error = Assert.Throws<ConfigException>(() => Plan(new ZapProfile(Login: Login with { LoginUrl = loginUrl })));
+        Assert.Contains("--zap-login-url", error.Message);
+        Assert.Contains("outside the scanned context", error.Message);
+    }
+
+    [Theory]
+    [InlineData("login")]
+    [InlineData("ftp://app.test:8080/app/login")]
+    [InlineData("http://u:p@app.test:8080/app/login")]
+    [InlineData("http://app.test:8080/app/login#form")]
+    public void ALoginUrlThatIsNotAPlainHttpUrlIsRefused(string loginUrl)
+    {
+        var error = Assert.Throws<ConfigException>(() => Plan(new ZapProfile(Login: Login with { LoginUrl = loginUrl })));
+        Assert.Contains("--zap-login-url must be an HTTP or HTTPS URL", error.Message);
+    }
+
+    [Fact]
+    public void ALoginUrlInsideTheContextIsAccepted()
+    {
+        Plan(new ZapProfile(Login: Login with { LoginUrl = "http://app.test:8080/app?login=1" })).Validate("zap");
+        Plan(new ZapProfile(Login: Login with { LoginUrl = "http://APP.test:8080/app/session" })).Validate("zap");
+    }
+
+    [Theory]
+    [InlineData("--zap-login-url")]
+    [InlineData("--zap-login-body")]
+    [InlineData("--zap-login-username")]
+    [InlineData("--zap-logged-in-regex")]
+    [InlineData("--zap-logged-out-regex")]
+    [InlineData("indicator")]
+    [InlineData("--zap-login-password")]
+    public void AnIncompleteOrInvalidLoginIsRefusedNamingTheFlag(string option)
+    {
+        var (login, expected) = option switch
+        {
+            "--zap-login-url" => (Login with { LoginUrl = "" }, "requires --zap-login-url"),
+            "--zap-login-body" => (Login with { LoginBody = "" }, "requires --zap-login-body"),
+            "--zap-login-username" => (Login with { Username = "" }, "requires --zap-login-username"),
+            "--zap-logged-in-regex" => (Login with { LoggedInRegex = "(" }, "--zap-logged-in-regex is not a valid regular expression"),
+            "--zap-logged-out-regex" => (Login with { LoggedOutRegex = "" }, "--zap-logged-out-regex must not be empty"),
+            "indicator" => (Login with { LoggedInRegex = null, LoggedOutRegex = null }, "--zap-logged-in-regex or --zap-logged-out-regex"),
+            _ => (Login with { Password = null! }, "--zap-login-password"),
+        };
+
+        var error = Assert.Throws<ConfigException>(() => Plan(new ZapProfile(Login: login)));
+        Assert.Contains(expected, error.Message);
+    }
+
+    [Fact]
+    public void ALoginGetsItsOwnRulesIdentifiers()
+    {
+        Assert.Equal(Image + "/wip-passive-auth-v1", Plan(new ZapProfile(Login: Login)).RulesVersion);
+        Assert.Equal(Image + "/wip-active-auth-v1", Plan(new ZapProfile(ActiveScan: true, Login: Login)).RulesVersion);
+        Assert.Equal(Image + "/wip-passive-v2", Plan().RulesVersion);
+        Assert.Equal(Image + "/wip-active-v1", Plan(new ZapProfile(ActiveScan: true)).RulesVersion);
+    }
+
+    [Fact]
+    public void TheLoginCoverageRecordNamesTheLoginAndNoLongerListsAuthenticatedPaths()
+    {
+        var coverage = PlanCoverage(Plan(new ZapProfile(Login: Login)));
+
+        Assert.StartsWith(
+            "Checks not performed by this profile: active scanning, browser/Ajax crawling, " +
+            "form submission other than the configured login request, and out-of-band callbacks.\n",
+            coverage);
+        Assert.Contains("configured to log in by form at http://app.test:8080/app/login; " +
+            "a response matching the logged-in regex Sign out counts as logged in; " +
+            "a response matching the logged-out regex Sign in counts as logged out; " +
+            "a response matching neither is accepted but recorded as unknown. ", coverage);
+        Assert.Contains("Pages ZAP could not reach as that user are not evidence", coverage);
+        Assert.DoesNotContain("verified", coverage);
+        Assert.DoesNotContain("test-password", coverage);
+        Assert.DoesNotContain("scanner@example.test", coverage);
+        Assert.EndsWith("Native ZAP automation output follows unchanged:\n", coverage);
+
+        var active = PlanCoverage(Plan(new ZapProfile(ActiveScan: true, Login: Login with { LoggedInRegex = null })));
+        Assert.StartsWith(
+            "Checks not performed by this profile: browser/Ajax crawling, " +
+            "form submission other than the configured login request, and out-of-band callbacks.\n", active);
+        Assert.Contains("; a response matching the logged-out regex Sign in counts as logged out; " +
+            "a response without the logged-out marker is accepted but recorded as unknown. ", active);
+        Assert.DoesNotContain("logged-in regex", active);
+        Assert.DoesNotContain("verified", active);
+
+        var loggedInOnly = PlanCoverage(Plan(new ZapProfile(Login: Login with { LoggedOutRegex = null })));
+        Assert.Contains("; a response matching the logged-in regex Sign out counts as logged in; " +
+            "any other response counts as logged out. ", loggedInOnly);
+        Assert.DoesNotContain("unknown", loggedInOnly);
+    }
+
+    [Theory]
+    [InlineData("12:30")]
+    [InlineData("2024-01-02")]
+    [InlineData("1e3")]
+    [InlineData("yes")]
+    [InlineData("~")]
+    [InlineData("")]
+    [InlineData("it's")]
+    public void EveryLoginValueIsWrittenQuotedWhateverWipsResolverThinks(string value)
+    {
+        // Only the password may be empty; the other values must be non-empty to validate.
+        var other = value.Length == 0 ? "x" : value;
+        var login = new ZapLogin("http://app.test:8080/app/login", other, other, value,
+            LoggedInRegex: other, LoggedOutRegex: other);
+        var yaml = PlanYaml(Plan(new ZapProfile(Login: login))).ReplaceLineEndings("\n");
+        static string Quoted(string text) => "'" + text.Replace("'", "''") + "'";
+
+        Assert.Contains($"password: {Quoted(value)}\n", yaml);
+        foreach (var key in new[] { "loginRequestBody", "username", "loggedInRegex", "loggedOutRegex" })
+            Assert.Contains($"{key}: {Quoted(other)}\n", yaml);
+        Assert.Contains("loginRequestUrl: 'http://app.test:8080/app/login'\n", yaml);
+
+        var credentials = Mapping(Mapping(Assert.Single(Sequence(Context(Plan(new ZapProfile(Login: login)))["users"])))["credentials"]);
+        Assert.Equal(value, credentials["password"]);
+    }
 }

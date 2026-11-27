@@ -279,6 +279,22 @@ internal static class Program
         };
         var activeMinutes = ZapBound(ZapProfile.ActiveScanMinutesOption, $"active-scan duration in minutes, with {ZapProfile.ActiveScanOption}",
             ZapProfile.DefaultActiveScanMinutes, ZapProfile.MaxActiveScanMinutes);
+        // ZAP form login. The values reach the plan inside the scanner sandbox, the scanner
+        // process's argv and --debug output, so they are for test accounts of a sandboxed target only.
+        const string loginRule = $"a login needs {ZapLogin.LoginUrlOption}, {ZapLogin.LoginBodyOption}, " +
+            $"{ZapLogin.UsernameOption} and {ZapLogin.LoggedInRegexOption} or {ZapLogin.LoggedOutRegexOption}; " +
+            $"{ZapLogin.PasswordOption} is optional; test accounts only";
+        static Option<string?> ZapLoginOption(string name, string what) => new(name)
+        {
+            Description = $"ZAP only: {what} ({loginRule})",
+        };
+        var login = new ZapLoginOptions(
+            ZapLoginOption(ZapLogin.LoginUrlOption, "URL the login form is POSTed to, inside the --target scope"),
+            ZapLoginOption(ZapLogin.LoginBodyOption, "form-urlencoded login body; {%username%} and {%password%} are replaced"),
+            ZapLoginOption(ZapLogin.UsernameOption, "login username"),
+            ZapLoginOption(ZapLogin.PasswordOption, "login password (may be empty)"),
+            ZapLoginOption(ZapLogin.LoggedInRegexOption, "regex a logged-in response matches"),
+            ZapLoginOption(ZapLogin.LoggedOutRegexOption, "regex a logged-out response matches"));
         var scan = new Command("scan", "Prepare and run one tool against one target inside the sandbox")
         {
             sandboxName,
@@ -294,10 +310,12 @@ internal static class Program
             activeScan,
             activeMinutes,
         };
+        foreach (var option in login.All) scan.Options.Add(option);
         scan.SetAction(parsed => context(parsed).SecurityScan(
             parsed.GetValue(sandboxName)!, parsed.GetValue(tool)!, parsed.GetValue(target)!, parsed.GetValue(timeout),
             parsed.GetValue(output), parsed.GetValue(commit),
-            ZapProfileFrom(parsed, spiderMinutes, spiderDepth, spiderChildren, passiveWait, activeScan, activeMinutes)));
+            ZapProfileFrom(parsed, spiderMinutes, spiderDepth, spiderChildren, passiveWait, activeScan, activeMinutes, login,
+                parsed.GetValue(tool))));
         security.Subcommands.Add(scan);
         return security;
     }
@@ -306,19 +324,57 @@ internal static class Program
     /// The caller's ZAP bounds, or null when none was given, so the plan stays the default one
     /// and the options stay off for other tools. An active-scan duration without the active
     /// scan is refused: silently dropping it would leave a caller believing an attack ran.
+    /// With <paramref name="tool"/>, any <c>--zap-*</c> option for another tool is refused
+    /// first, so that error is not hidden behind a ZAP-specific one.
     /// </summary>
     internal static ZapProfile? ZapProfileFrom(ParseResult parsed, Option<int> spiderMinutes, Option<int> spiderDepth,
-        Option<int> spiderChildren, Option<int> passiveWait, Option<bool> activeScan, Option<int> activeMinutes)
+        Option<int> spiderChildren, Option<int> passiveWait, Option<bool> activeScan, Option<int> activeMinutes,
+        ZapLoginOptions? loginOptions = null, string? tool = null)
     {
         static bool Given(ParseResult parsed, Option option) => parsed.GetResult(option) is { Implicit: false };
+        if (tool is not null && ScanEngine.Select(tool) is not ZapScanner &&
+            new Option[] { spiderMinutes, spiderDepth, spiderChildren, passiveWait, activeScan, activeMinutes }
+                .Concat(loginOptions?.All ?? []).Any(option => Given(parsed, option)))
+            throw CliContext.ZapOptionsForAnotherTool(tool);
         var active = parsed.GetValue(activeScan);
-        if (!active && !Given(parsed, activeMinutes) &&
+        var login = loginOptions is null ? null : ZapLoginFrom(parsed, loginOptions);
+        if (login is null && !active && !Given(parsed, activeMinutes) &&
             !new Option[] { spiderMinutes, spiderDepth, spiderChildren, passiveWait }.Any(option => Given(parsed, option)))
             return null;
         if (!active && Given(parsed, activeMinutes))
             throw new ConfigException($"{ZapProfile.ActiveScanMinutesOption} requires {ZapProfile.ActiveScanOption}");
         return new ZapProfile(parsed.GetValue(spiderMinutes), parsed.GetValue(spiderDepth), parsed.GetValue(spiderChildren),
-            parsed.GetValue(passiveWait), active, parsed.GetValue(activeMinutes));
+            parsed.GetValue(passiveWait), active, parsed.GetValue(activeMinutes), login);
+    }
+
+    /// <summary>The <c>--zap-login-*</c> and indicator options of <c>security scan</c>.</summary>
+    internal sealed record ZapLoginOptions(Option<string?> LoginUrl, Option<string?> LoginBody, Option<string?> Username,
+        Option<string?> Password, Option<string?> LoggedInRegex, Option<string?> LoggedOutRegex)
+    {
+        internal Option<string?>[] All => [LoginUrl, LoginBody, Username, Password, LoggedInRegex, LoggedOutRegex];
+    }
+
+    /// <summary>
+    /// The caller's form login, or null when no login option was given. All or nothing: a
+    /// partial login is refused naming the missing flag, because a scan that silently ran
+    /// unauthenticated would be read as covering the pages behind the login.
+    /// </summary>
+    internal static ZapLogin? ZapLoginFrom(ParseResult parsed, ZapLoginOptions options)
+    {
+        if (!options.All.Any(option => parsed.GetResult(option) is { Implicit: false })) return null;
+        string Required(Option<string?> option) => parsed.GetValue(option) ??
+            throw new ConfigException($"{option.Name} is required when any ZAP login option is given");
+        var url = Required(options.LoginUrl);
+        var body = Required(options.LoginBody);
+        var username = Required(options.Username);
+        var loggedIn = parsed.GetValue(options.LoggedInRegex);
+        var loggedOut = parsed.GetValue(options.LoggedOutRegex);
+        if (loggedIn is null && loggedOut is null)
+            throw new ConfigException(
+                $"{ZapLogin.LoggedInRegexOption} or {ZapLogin.LoggedOutRegexOption} is required when any ZAP login option is given");
+        var login = new ZapLogin(url, body, username, parsed.GetValue(options.Password) ?? "", loggedIn, loggedOut);
+        login.Validate();
+        return login;
     }
 
     private static IEnumerable<Command> BuildCommands(Func<ParseResult, CliContext> context)

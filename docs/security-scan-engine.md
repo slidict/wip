@@ -14,9 +14,12 @@ wip security tools
 wip security scan <sandbox> --tool <name> --target <address> [--timeout <seconds>] [--output <dir>] [--commit <sha>]
                   [--zap-spider-minutes <n>] [--zap-spider-depth <n>] [--zap-spider-children <n>]
                   [--zap-passive-wait-minutes <n>] [--zap-active-scan [--zap-active-scan-minutes <n>]]
+                  [--zap-login-url <url> --zap-login-body <body> --zap-login-username <value>
+                   [--zap-login-password <value>] [--zap-logged-in-regex <regex>] [--zap-logged-out-regex <regex>]]
 ```
 
-The `--zap-*` options apply only to `--tool zap`; see [ZAP bounds](#zap-bounds).
+The `--zap-*` options apply only to `--tool zap`; see [ZAP bounds](#zap-bounds) and
+[ZAP login](#zap-login).
 
 The sandbox and its internal network remain declared in `wip.yml`. The target is an address
 or alias reachable inside that network, such as another sandbox's network alias. The command
@@ -178,7 +181,9 @@ callbacks. The declared internal network remains the enforcement boundary for eg
 
 The report job writes ZAP's native `traditional-json` report. The rules identifier combines
 the immutable image digest with the reviewed profile name: `<image>/wip-passive-v2` without
-`--zap-active-scan`, and `<image>/wip-active-v1` with it. The name identifies the profile and
+`--zap-active-scan`, and `<image>/wip-active-v1` with it. With a [ZAP login](#zap-login) they are
+`<image>/wip-passive-auth-v1` and `<image>/wip-active-auth-v1`, so authenticated and
+unauthenticated results are never claimed comparable. The name identifies the profile and
 not its numeric bounds; the coverage record carries those. `wip-passive-v1` was the identifier
 while the bounds were fixed; `wip-passive-v2` produces the same plan by default but can carry
 caller-selected bounds, so results recorded under the two are not claimed to be comparable.
@@ -189,16 +194,18 @@ scan with no alerts does not establish that active or authenticated checks passe
 `/tmp/wip-zap-unperformed.txt` retains the profile's omitted checks and the crawl, active-scan
 and passive-wait bounds the plan actually used, generated from the plan, together with the
 native Automation Framework log. Active scanning is listed among the checks not performed
-unless the active scan ran; authenticated paths, browser/Ajax crawling, form submission and
-out-of-band callbacks are listed in both cases. The engine collects that sidecar separately and
+unless the active scan ran, and authenticated paths unless a login was given; browser/Ajax
+crawling, form submission (with a login, form submission other than the configured login
+request) and out-of-band callbacks are always listed. With a login, the record names the login
+URL and states how the configured regexes classify responses; it is written before the scan,
+so it describes the configuration rather than a verified session. It also states that pages
+ZAP could not reach as that user are not evidence. The engine collects that sidecar separately and
 the CLI writes it to stderr under `Unperformed checks (raw):`; stdout remains the original
 JSON report. Sidecars use the same collection deadline and retention limit as reports;
 missing, unreadable or oversized diagnostics are reported explicitly. Raw artifacts remain
 available alongside the versioned normalized result described below.
 
-Only unauthenticated targets are supported here. Credentials are not accepted through argv;
-[authenticated scanning](https://github.com/slidict/wip/issues/277) requires a separate secret
-transport design.
+Without the [ZAP login](#zap-login) options the scan is unauthenticated.
 
 Pull requests run the small [scan engine fixture](../tests/e2e/README.md#security-scans)
 instead of downloading ZAP. It checks real-WSLC isolation and report/omission collection.
@@ -236,13 +243,62 @@ leave later rules unfinished, which the coverage record states.
 traversal, malformed input -- and can change or corrupt the target's data. Use it only against
 a target you own, preferably one whose data you can discard. It changes nothing that confines
 the run: the context include and complement-exclude paths, `-silent`, removal of the `oast`
-add-on, and the internal network as the egress boundary all stay as they are. Authenticated
-targets and URL fragments are still refused.
+add-on, and the internal network as the egress boundary all stay as they are. A target URL
+with user-info or a fragment is still refused.
 
 The bounded jobs can take up to the sum of the spider, active-scan and passive-wait minutes,
 plus ZAP start-up and the report. When any `--zap-*` option is given, `--timeout` must exceed
 that sum, because a timed-out scan keeps no partial report; raise `--timeout` (default 1800
 seconds) together with the bounds.
+
+### ZAP login
+
+These options let the spider and the active scan run as one user behind a login, with ZAP's
+standard Automation Framework authentication: the `wip` context gets
+[`authentication`](https://www.zaproxy.org/docs/desktop/addons/automation-framework/environment/)
+method `form`, `verification` method `response`, `sessionManagement` method `cookie` and one
+user, and the `spider` and `activeScan` jobs set `user` to it. Nothing in it is specific to an
+application.
+
+| Option | ZAP parameter | Required |
+| --- | --- | --- |
+| `--zap-login-url` | `authentication.parameters.loginRequestUrl` | yes |
+| `--zap-login-body` | `authentication.parameters.loginRequestBody` (`application/x-www-form-urlencoded`) | yes |
+| `--zap-login-username` | `users[].credentials.username` | yes |
+| `--zap-login-password` | `users[].credentials.password` | no (empty when omitted) |
+| `--zap-logged-in-regex` | `verification.loggedInRegex` | at least one of the two |
+| `--zap-logged-out-regex` | `verification.loggedOutRegex` | at least one of the two |
+
+ZAP replaces `{%username%}` and `{%password%}` in the body with the user's credentials. The
+options are all or nothing: giving any of them without the required ones is refused before the
+image pull, with an error naming the missing flag. Indicators must be non-empty and compile as
+regular expressions (checked with .NET; ZAP compiles them with Java). The login URL must be an
+HTTP(S) URL without user-info or a fragment, inside the context built from `--target`, so the
+login request stays in the same scope as the scan.
+
+ZAP's `response` verification checks every response against the regexes
+([verification strategies](https://www.zaproxy.org/docs/desktop/start/features/authstrategies/),
+[context authentication](https://www.zaproxy.org/docs/desktop/ui/dialogs/session/context-auth/)).
+A response matching the logged-in regex counts as logged in, and one matching the logged-out
+regex counts as logged out. What happens to a response matching neither is not stated there;
+in ZAP's
+[`VerificationMethod`](https://github.com/zaproxy/zaproxy/blob/main/zap/src/main/java/org/zaproxy/zap/authentication/VerificationMethod.java)
+it depends on the regexes given:
+
+- **Only a logged-in regex:** a response without the marker is treated as logged out, and ZAP
+  logs in again ([form-based login supports re-authentication](https://www.zaproxy.org/docs/desktop/start/features/authmethods/)).
+  Pages that never carry the marker, such as assets and error pages, can therefore trigger
+  repeated logins.
+- **Only a logged-out regex:** a response without the marker is accepted, but recorded as
+  unknown rather than logged in.
+- **Both:** a response matching neither is accepted and recorded as unknown, so pages without
+  the logged-in marker do not trigger logins. Give both when the application has both markers.
+
+**The values appear in the plan written inside the scanner sandbox (`/tmp/wip-zap-plan.yaml`),
+in the scanner process's argv, and in `--debug` output.** They are not handled as secrets, so
+use only test accounts of a sandboxed target. Every login value is written to the plan as a
+quoted string, because ZAP reads the plan as YAML 1.1, where a plain `12:30` is a number and
+`2024-01-02` a date.
 
 ## Result document and persisted artifacts
 

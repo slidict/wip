@@ -408,4 +408,113 @@ public sealed class SecurityOutputTests
         var error = Assert.Throws<ConfigException>(() => CliContext.SelectScanner("zap", new ZapProfile(SpiderMinutes: 0), 1800));
         Assert.Contains("--zap-spider-minutes must be between 1 and 30", error.Message);
     }
+
+    private static ZapProfile? ParseZapLogin(params string[] options) => ParseZapLoginFor("zap", options);
+
+    private static ZapProfile? ParseZapLoginFor(string tool, params string[] options)
+    {
+        var parsed = Program.Parse(Program.BuildRoot(),
+            ["security", "scan", "scanner", "--tool", tool, "--target", "http://app/", .. options]);
+        Assert.Empty(parsed.Errors);
+        var all = parsed.CommandResult.Command.Options;
+        Option<int> Bound(string name) => Assert.IsType<Option<int>>(all.Single(option => option.Name == name));
+        Option<string?> Text(string name) => Assert.IsType<Option<string?>>(all.Single(option => option.Name == name));
+        return Program.ZapProfileFrom(parsed, Bound(ZapProfile.SpiderMinutesOption), Bound(ZapProfile.SpiderDepthOption),
+            Bound(ZapProfile.SpiderChildrenOption), Bound(ZapProfile.PassiveWaitMinutesOption),
+            Assert.IsType<Option<bool>>(all.Single(option => option.Name == ZapProfile.ActiveScanOption)),
+            Bound(ZapProfile.ActiveScanMinutesOption),
+            new Program.ZapLoginOptions(Text(ZapLogin.LoginUrlOption), Text(ZapLogin.LoginBodyOption),
+                Text(ZapLogin.UsernameOption), Text(ZapLogin.PasswordOption),
+                Text(ZapLogin.LoggedInRegexOption), Text(ZapLogin.LoggedOutRegexOption)), tool);
+    }
+
+    private static readonly string[] LoginArgs =
+    [
+        "--zap-login-url", "http://app/login", "--zap-login-body", "user={%username%}&pass={%password%}",
+        "--zap-login-username", "tester", "--zap-login-password", "pw", "--zap-logged-in-regex", "Sign out",
+    ];
+
+    [Fact]
+    public void NoZapLoginOptionsKeepTheDefaultScanner()
+    {
+        Assert.Null(ParseZapLogin());
+        Assert.Equal(new ZapProfile(ActiveScan: true), ParseZapLogin("--zap-active-scan"));
+    }
+
+    [Fact]
+    public void ZapLoginOptionsBuildTheCallersLogin()
+    {
+        Assert.Equal(new ZapProfile(Login: new ZapLogin("http://app/login", "user={%username%}&pass={%password%}",
+            "tester", "pw", LoggedInRegex: "Sign out")), ParseZapLogin(LoginArgs));
+
+        var profile = ParseZapLogin([.. LoginArgs.Take(6), "--zap-logged-out-regex", "Sign in", "--zap-active-scan"]);
+        Assert.Equal(new ZapProfile(ActiveScan: true, Login: new ZapLogin("http://app/login",
+            "user={%username%}&pass={%password%}", "tester", "", LoggedOutRegex: "Sign in")), profile);
+    }
+
+    [Theory]
+    [InlineData("--zap-login-url")]
+    [InlineData("--zap-login-body")]
+    [InlineData("--zap-login-username")]
+    public void APartialZapLoginIsRefusedNamingTheMissingFlag(string missing)
+    {
+        var options = new List<string>();
+        for (var i = 0; i < LoginArgs.Length; i += 2)
+            if (LoginArgs[i] != missing) options.AddRange([LoginArgs[i], LoginArgs[i + 1]]);
+
+        var error = Assert.Throws<ConfigException>(() => ParseZapLogin([.. options]));
+        Assert.Contains($"{missing} is required", error.Message);
+    }
+
+    [Fact]
+    public void AZapLoginWithoutAnIndicatorIsRefused()
+    {
+        var error = Assert.Throws<ConfigException>(() => ParseZapLogin([.. LoginArgs.Take(8)]));
+        Assert.Contains("--zap-logged-in-regex or --zap-logged-out-regex is required", error.Message);
+
+        var single = Assert.Throws<ConfigException>(() => ParseZapLogin("--zap-login-password", "pw"));
+        Assert.Contains("--zap-login-url is required", single.Message);
+    }
+
+    [Fact]
+    public void AZapLoginIndicatorThatDoesNotCompileIsRefused()
+    {
+        var error = Assert.Throws<ConfigException>(() => ParseZapLogin([.. LoginArgs.Take(8), "--zap-logged-out-regex", "[a-"]));
+        Assert.Contains("--zap-logged-out-regex is not a valid regular expression", error.Message);
+    }
+
+    [Fact]
+    public void ZapLoginOptionsAreRefusedForAnotherTool()
+    {
+        var error = Assert.Throws<ConfigException>(() => CliContext.SelectScanner("nuclei", ParseZapLogin(LoginArgs), 1800));
+        Assert.Contains("apply only to --tool zap", error.Message);
+    }
+
+    [Theory]
+    [InlineData("--zap-login-password", "pw")]
+    [InlineData("--zap-login-url", "http://app/login")]
+    [InlineData("--zap-logged-in-regex", "(")]
+    [InlineData("--zap-active-scan-minutes", "20")]
+    public void ZapOptionsForAnotherToolAreRefusedBeforeAnyZapSpecificCheck(string option, string value)
+    {
+        var error = Assert.Throws<ConfigException>(() => ParseZapLoginFor("nuclei", option, value));
+        Assert.Equal("--zap-* options apply only to --tool zap, not --tool nuclei", error.Message);
+        Assert.Null(ParseZapLoginFor("nuclei"));
+    }
+
+    [Fact]
+    public void ZapLoginOptionsAreListedInTheScanHelp()
+    {
+        var scan = Program.Parse(Program.BuildRoot(), ["security", "scan", "scanner", "--tool", "zap", "--target", "http://app/"])
+            .CommandResult.Command;
+        foreach (var name in new[] { ZapLogin.LoginUrlOption, ZapLogin.LoginBodyOption, ZapLogin.UsernameOption,
+                     ZapLogin.PasswordOption, ZapLogin.LoggedInRegexOption, ZapLogin.LoggedOutRegexOption })
+        {
+            var description = scan.Options.Single(option => option.Name == name).Description!;
+            Assert.StartsWith("ZAP only:", description);
+            Assert.Contains("a login needs --zap-login-url, --zap-login-body, --zap-login-username and " +
+                "--zap-logged-in-regex or --zap-logged-out-regex; --zap-login-password is optional", description);
+            Assert.DoesNotContain("with the other", description);
+        }
+    }
 }
