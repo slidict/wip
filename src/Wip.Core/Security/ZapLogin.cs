@@ -1,5 +1,3 @@
-using System.Text.RegularExpressions;
-
 namespace Wip.Security;
 
 /// <summary>
@@ -56,19 +54,15 @@ internal sealed record ZapLogin(
     }
 
     // An empty pattern matches every response, so the session check would always pass or always fail.
-    // ZAP compiles the pattern with Java; .NET catches the malformed ones before any image pull.
+    // ZAP compiles the pattern with Java and reports a malformed one itself; .NET would reject
+    // Java-valid patterns such as \Qa.b\E or a++. Control characters would break the coverage
+    // record, which carries the patterns.
     private static void RequirePattern(string option, string? pattern)
     {
         if (pattern is null) return;
         if (pattern.Length == 0)
             throw new ConfigException($"{option} must not be empty");
-        try
-        {
-            _ = new Regex(pattern, RegexOptions.None, TimeSpan.FromSeconds(1));
-        }
-        catch (ArgumentException error)
-        {
-            throw new ConfigException($"{option} is not a valid regular expression: {error.Message}");
-        }
+        if (pattern.Any(char.IsControl))
+            throw new ConfigException($"{option} must not contain control characters");
     }
 }

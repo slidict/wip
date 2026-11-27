@@ -158,6 +158,7 @@ internal sealed class ZapScanner(ZapProfile? profile = null) : ISecurityScanner
                       (profile.Login is null ? "authenticated paths, " : "") +
                       "browser/Ajax crawling, " +
                       (profile.Login is null ? "form submission" : "form submission other than the configured login request") +
+                      (profile.Login is null ? "" : ", confirmation that the login succeeded") +
                       ", and out-of-band callbacks";
         var active = profile.ActiveScan
             ? $"; active scanning of the crawled in-scope requests stops after at most {Minutes(profile.ActiveScanMinutes)}, " +
@@ -189,7 +190,8 @@ internal sealed class ZapScanner(ZapProfile? profile = null) : ISecurityScanner
             : "a response matching neither is accepted but recorded as unknown");
         return "The spider and any active scan run as one user configured to log in by form at " +
                $"{new Uri(login.LoginUrl).AbsoluteUri}; {string.Join("; ", rules)}. " +
-               "Pages ZAP could not reach as that user are not evidence. ";
+               "Authenticated paths count as covered only where ZAP actually reached them as that user; " +
+               "pages ZAP could not reach as that user are not evidence. ";
     }
 
     private static string Minutes(int value) => value == 1 ? "1 minute" : $"{value} minutes";

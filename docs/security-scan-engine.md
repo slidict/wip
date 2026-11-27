@@ -196,11 +196,14 @@ and passive-wait bounds the plan actually used, generated from the plan, togethe
 native Automation Framework log. Active scanning is listed among the checks not performed
 unless the active scan ran, and authenticated paths unless a login was given; browser/Ajax
 crawling, form submission (with a login, form submission other than the configured login
-request) and out-of-band callbacks are always listed. With a login, the record names the login
-URL and states how the configured regexes classify responses; it is written before the scan,
-so it describes the configuration rather than a verified session. It also states that pages
-ZAP could not reach as that user are not evidence. The engine collects that sidecar separately and
-the CLI writes it to stderr under `Unperformed checks (raw):`; stdout remains the original
+request) and out-of-band callbacks are always listed. With a login, confirmation that the login
+succeeded is listed too: wip does not check it, and a failed login still completes with the
+same record. The record names the login URL and states how the configured regexes classify
+responses; it is written before the scan, so it describes the configuration rather than a
+verified session. It also states that authenticated paths count as covered only where ZAP
+actually reached them as that user, and that pages ZAP could not reach as that user are not
+evidence. The engine collects that sidecar separately and the CLI writes it to stderr under
+`Unperformed checks (raw):`; stdout remains the original
 JSON report. Sidecars use the same collection deadline and retention limit as reports;
 missing, unreadable or oversized diagnostics are reported explicitly. Raw artifacts remain
 available alongside the versioned normalized result described below.
@@ -271,10 +274,11 @@ application.
 
 ZAP replaces `{%username%}` and `{%password%}` in the body with the user's credentials. The
 options are all or nothing: giving any of them without the required ones is refused before the
-image pull, with an error naming the missing flag. Indicators must be non-empty and compile as
-regular expressions (checked with .NET; ZAP compiles them with Java). The login URL must be an
-HTTP(S) URL without user-info or a fragment, inside the context built from `--target`, so the
-login request stays in the same scope as the scan.
+image pull, with an error naming the missing flag. Indicators must be non-empty and contain no
+control characters. wip does not compile them: ZAP compiles them with Java and reports a
+malformed pattern itself. The login URL must be an HTTP(S) URL without user-info or a fragment,
+inside the context built from `--target`, so the login request stays in the same scope as the
+scan.
 
 ZAP's `response` verification checks every response against the regexes
 ([verification strategies](https://www.zaproxy.org/docs/desktop/start/features/authstrategies/),
