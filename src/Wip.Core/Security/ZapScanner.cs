@@ -6,8 +6,8 @@ using Wip.Yaml;
 namespace Wip.Security;
 
 /// <summary>
-/// A bounded, unauthenticated traditional-spider and passive-scan profile, with an opt-in
-/// bounded active scan. The bounds come from <see cref="ZapProfile"/>.
+/// A bounded traditional-spider and passive-scan profile, with an opt-in bounded active scan
+/// and an opt-in form login. The bounds and the login come from <see cref="ZapProfile"/>.
 /// </summary>
 internal sealed class ZapScanner(ZapProfile? profile = null) : ISecurityScanner
 {
@@ -62,9 +62,11 @@ internal sealed class ZapScanner(ZapProfile? profile = null) : ISecurityScanner
         // DefaultFetchFilter rejects URLs outside the context (including redirect targets):
         // https://github.com/zaproxy/zap-extensions/blob/main/addOns/spider/src/main/java/org/zaproxy/addon/spider/Spider.java
         // https://github.com/zaproxy/zap-extensions/blob/main/addOns/spider/src/main/java/org/zaproxy/addon/spider/filters/DefaultFetchFilter.java
+        var context = Map(("name", "wip"), ("urls", List(url)),
+            ("includePaths", List("^" + scope + "$")), ("excludePaths", List("^(?!" + scope + "$).*")));
+        if (profile.Login is { } login) AddLogin(context, login, scope);
         var environment = Map(
-            ("contexts", List(Map(("name", "wip"), ("urls", List(url)),
-                ("includePaths", List("^" + scope + "$")), ("excludePaths", List("^(?!" + scope + "$).*"))))),
+            ("contexts", List(context)),
             ("parameters", Map(("failOnError", true), ("failOnWarning", false), ("continueOnFailure", false), ("progressToStdout", true))));
 
         // Documented spider limits and form switches keep this profile bounded:
@@ -76,16 +78,25 @@ internal sealed class ZapScanner(ZapProfile? profile = null) : ISecurityScanner
         // https://www.zaproxy.org/docs/desktop/addons/report-generation/automation/
         // https://www.zaproxy.org/docs/desktop/addons/passive-scanner/job-pscanconf/
         // https://www.zaproxy.org/docs/desktop/addons/passive-scanner/job-pscanwait/
+        var spider = Map(("context", "wip"), ("url", url),
+            ("maxDuration", profile.SpiderMinutes), ("maxDepth", profile.SpiderDepth),
+            ("maxChildren", profile.SpiderChildren), ("threadCount", 2),
+            ("postForm", false), ("processForm", false), ("parseRobotsTxt", false), ("parseSitemapXml", false));
         var jobs = List(
             Map(("type", "passiveScan-config"), ("parameters", Map(("scanOnlyInScope", true)))),
-            Map(("type", "spider"), ("parameters", Map(("context", "wip"), ("url", url),
-                ("maxDuration", profile.SpiderMinutes), ("maxDepth", profile.SpiderDepth),
-                ("maxChildren", profile.SpiderChildren), ("threadCount", 2),
-                ("postForm", false), ("processForm", false), ("parseRobotsTxt", false), ("parseSitemapXml", false)))));
+            Map(("type", "spider"), ("parameters", spider)));
+        // Spider and activeScan both take an optional `user` defined in the env:
+        // https://www.zaproxy.org/docs/desktop/addons/spider/automation/
+        // https://www.zaproxy.org/docs/desktop/addons/automation-framework/job-ascan/
+        if (profile.Login is not null) spider["user"] = ZapLogin.UserName;
         // Before the passive wait, so the wait also covers the responses the attacks produced.
         if (profile.ActiveScan)
-            jobs.Add(Map(("type", "activeScan"), ("parameters", Map(("context", "wip"),
-                ("maxScanDurationInMins", profile.ActiveScanMinutes), ("threadPerHost", 2)))));
+        {
+            var parameters = Map(("context", "wip"),
+                ("maxScanDurationInMins", profile.ActiveScanMinutes), ("threadPerHost", 2));
+            if (profile.Login is not null) parameters["user"] = ZapLogin.UserName;
+            jobs.Add(Map(("type", "activeScan"), ("parameters", parameters)));
+        }
         jobs.Add(Map(("type", "passiveScan-wait"), ("parameters", Map(("maxDuration", profile.PassiveWaitMinutes)))));
         jobs.Add(Map(("type", "report"), ("parameters", Map(("template", "traditional-json"),
             ("reportDir", "/tmp"), ("reportFile", "wip-zap-report"), ("displayReport", false)))));
@@ -103,14 +114,45 @@ internal sealed class ZapScanner(ZapProfile? profile = null) : ISecurityScanner
     }
 
     /// <summary>
+    /// Adds standard form-based authentication, its verification, cookie session management
+    /// and one user to the context. Every key is from the AF environment documentation:
+    /// https://www.zaproxy.org/docs/desktop/addons/automation-framework/environment/
+    /// ZAP replaces {%username%} and {%password%} in the login request body:
+    /// https://www.zaproxy.org/docs/desktop/ui/dialogs/session/context-auth/
+    /// The login URL must be inside the context, so logging in sends nothing outside the scope.
+    /// </summary>
+    private static void AddLogin(OrderedDictionary<string, object?> context, ZapLogin login, string scope)
+    {
+        if (!Uri.TryCreate(login.LoginUrl, UriKind.Absolute, out var uri) ||
+            uri.Scheme is not ("http" or "https") || uri.UserInfo.Length != 0 || uri.Fragment.Length != 0)
+            throw new ConfigException(
+                $"{ZapLogin.LoginUrlOption} must be an HTTP or HTTPS URL without user-info or a fragment");
+        var loginUrl = uri.AbsoluteUri;
+        if (!Regex.IsMatch(loginUrl, "^" + scope + "$"))
+            throw new ConfigException(
+                $"{ZapLogin.LoginUrlOption} {loginUrl} is outside the scanned context built from --target; " +
+                "the login request must stay inside the same scope");
+
+        var verification = Map(("method", "response"));
+        if (login.LoggedInRegex is not null) verification["loggedInRegex"] = login.LoggedInRegex;
+        if (login.LoggedOutRegex is not null) verification["loggedOutRegex"] = login.LoggedOutRegex;
+        context["authentication"] = Map(("method", "form"),
+            ("parameters", Map(("loginRequestUrl", loginUrl), ("loginRequestBody", login.LoginBody))),
+            ("verification", verification));
+        context["sessionManagement"] = Map(("method", "cookie"));
+        context["users"] = List(Map(("name", ZapLogin.UserName),
+            ("credentials", Map(("username", login.Username), ("password", login.Password)))));
+    }
+
+    /// <summary>
     /// The header of the raw coverage record, stating the bounds this plan actually uses. The
     /// native Automation Framework output is appended below it unchanged.
     /// </summary>
     internal static string Coverage(ZapProfile profile)
     {
-        var omitted = profile.ActiveScan
-            ? "authenticated paths, browser/Ajax crawling, form submission, and out-of-band callbacks"
-            : "active scanning, authenticated paths, browser/Ajax crawling, form submission, and out-of-band callbacks";
+        var omitted = (profile.ActiveScan ? "" : "active scanning, ") +
+                      (profile.Login is null ? "authenticated paths, " : "") +
+                      "browser/Ajax crawling, form submission, and out-of-band callbacks";
         var active = profile.ActiveScan
             ? $"; active scanning of the crawled in-scope requests stops after at most {Minutes(profile.ActiveScanMinutes)}, " +
               "so rules can be left unfinished"
@@ -119,8 +161,19 @@ internal sealed class ZapScanner(ZapProfile? profile = null) : ISecurityScanner
                $"Crawl coverage is bounded to {Minutes(profile.SpiderMinutes)}, depth {profile.SpiderDepth}, " +
                $"{profile.SpiderChildren} children per node, and the selected URL subtree{active}; " +
                $"passive scanning waits at most {Minutes(profile.PassiveWaitMinutes)}. " +
+               (profile.Login is { } login ? LoginCoverage(login) : "") +
                "Findings do not prove these omitted checks passed.\n" +
                "Native ZAP automation output follows unchanged:\n";
+    }
+
+    private static string LoginCoverage(ZapLogin login)
+    {
+        var indicators = new List<string>();
+        if (login.LoggedInRegex is not null) indicators.Add($"logged-in indicator {login.LoggedInRegex}");
+        if (login.LoggedOutRegex is not null) indicators.Add($"logged-out indicator {login.LoggedOutRegex}");
+        return "The spider and any active scan run as one user logged in by form at " +
+               $"{new Uri(login.LoginUrl).AbsoluteUri}, verified by the {string.Join(" and the ", indicators)}; " +
+               "pages ZAP could not reach as that user are not evidence. ";
     }
 
     private static string Minutes(int value) => value == 1 ? "1 minute" : $"{value} minutes";

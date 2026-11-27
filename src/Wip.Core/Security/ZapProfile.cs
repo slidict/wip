@@ -18,13 +18,15 @@ namespace Wip.Security;
 /// <c>activeScan</c> <c>maxScanDurationInMins</c>. Validated even when the active scan is
 /// off, so an out-of-range value is never accepted silently.
 /// </param>
+/// <param name="Login">The form login the spider and the active scan run as, or null for none.</param>
 internal sealed record ZapProfile(
     int SpiderMinutes = ZapProfile.DefaultSpiderMinutes,
     int SpiderDepth = ZapProfile.DefaultSpiderDepth,
     int SpiderChildren = ZapProfile.DefaultSpiderChildren,
     int PassiveWaitMinutes = ZapProfile.DefaultPassiveWaitMinutes,
     bool ActiveScan = false,
-    int ActiveScanMinutes = ZapProfile.DefaultActiveScanMinutes)
+    int ActiveScanMinutes = ZapProfile.DefaultActiveScanMinutes,
+    ZapLogin? Login = null)
 {
     internal const int DefaultSpiderMinutes = 1;
     internal const int DefaultSpiderDepth = 2;
@@ -48,8 +50,17 @@ internal sealed record ZapProfile(
 
     internal static ZapProfile Default { get; } = new();
 
-    /// <summary>The rules identifier suffix: it names the profile, not its numeric bounds.</summary>
-    internal string Identifier => ActiveScan ? "wip-active-v1" : "wip-passive-v2";
+    /// <summary>
+    /// The rules identifier suffix: it names the profile, not its numeric bounds. A login gets
+    /// its own names, so authenticated and unauthenticated results are never claimed comparable.
+    /// </summary>
+    internal string Identifier => (ActiveScan, Login is null) switch
+    {
+        (true, true) => "wip-active-v1",
+        (true, false) => "wip-active-auth-v1",
+        (false, true) => "wip-passive-v2",
+        (false, false) => "wip-passive-auth-v1",
+    };
 
     /// <summary>
     /// The longest the bounded jobs can take, in minutes, excluding ZAP start-up and the
@@ -64,6 +75,7 @@ internal sealed record ZapProfile(
         Require(SpiderChildrenOption, SpiderChildren, MaxSpiderChildren);
         Require(PassiveWaitMinutesOption, PassiveWaitMinutes, MaxPassiveWaitMinutes);
         Require(ActiveScanMinutesOption, ActiveScanMinutes, MaxActiveScanMinutes);
+        Login?.Validate();
     }
 
     private static void Require(string option, int value, int max)
