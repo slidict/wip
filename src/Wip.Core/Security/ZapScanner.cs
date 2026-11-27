@@ -187,7 +187,7 @@ internal sealed class ZapScanner(ZapProfile? profile = null) : ISecurityScanner
         rules.Add(login.LoggedOutRegex is null ? "any other response counts as logged out"
             : login.LoggedInRegex is null ? "a response without the logged-out marker is accepted but recorded as unknown"
             : "a response matching neither is accepted but recorded as unknown");
-        return "The spider and any active scan run as one user logged in by form at " +
+        return "The spider and any active scan run as one user configured to log in by form at " +
                $"{new Uri(login.LoginUrl).AbsoluteUri}; {string.Join("; ", rules)}. " +
                "Pages ZAP could not reach as that user are not evidence. ";
     }

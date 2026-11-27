@@ -642,7 +642,7 @@ public class ZapScannerTests
             "Checks not performed by this profile: active scanning, browser/Ajax crawling, " +
             "form submission other than the configured login request, and out-of-band callbacks.\n",
             coverage);
-        Assert.Contains("logged in by form at http://app.test:8080/app/login; " +
+        Assert.Contains("configured to log in by form at http://app.test:8080/app/login; " +
             "a response matching the logged-in regex Sign out counts as logged in; " +
             "a response matching the logged-out regex Sign in counts as logged out; " +
             "a response matching neither is accepted but recorded as unknown. ", coverage);
