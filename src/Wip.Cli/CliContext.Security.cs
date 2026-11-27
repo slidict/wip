@@ -58,7 +58,7 @@ internal sealed partial class CliContext
         if (scanner is not ZapScanner zap)
         {
             if (zapProfile is not null)
-                throw new ConfigException($"--zap-* options apply only to --tool zap, not --tool {tool}");
+                throw ZapOptionsForAnotherTool(tool);
             return scanner;
         }
         // The default bounds are checked too; without options the default instance is kept
@@ -72,6 +72,10 @@ internal sealed partial class CliContext
                 "or lower the bounds, because a timed-out scan keeps no partial report");
         return zapProfile is null ? zap : zap.WithProfile(zapProfile);
     }
+
+    /// <summary>The error for a <c>--zap-*</c> option given with another tool.</summary>
+    internal static ConfigException ZapOptionsForAnotherTool(string tool) =>
+        new($"--zap-* options apply only to --tool zap, not --tool {tool}");
 
     /// <summary>
     /// UTF-8 without a BOM when stdout is redirected, so the report reaches the file as the

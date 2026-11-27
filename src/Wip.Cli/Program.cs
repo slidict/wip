@@ -279,11 +279,14 @@ internal static class Program
         };
         var activeMinutes = ZapBound(ZapProfile.ActiveScanMinutesOption, $"active-scan duration in minutes, with {ZapProfile.ActiveScanOption}",
             ZapProfile.DefaultActiveScanMinutes, ZapProfile.MaxActiveScanMinutes);
-        // ZAP form login. The values are written into the plan, argv and provenance, so they are
-        // for test accounts of a sandboxed target only.
+        // ZAP form login. The values reach the plan inside the scanner sandbox, the scanner
+        // process's argv and --debug output, so they are for test accounts of a sandboxed target only.
+        const string loginRule = $"a login needs {ZapLogin.LoginUrlOption}, {ZapLogin.LoginBodyOption}, " +
+            $"{ZapLogin.UsernameOption} and {ZapLogin.LoggedInRegexOption} or {ZapLogin.LoggedOutRegexOption}; " +
+            $"{ZapLogin.PasswordOption} is optional; test accounts only";
         static Option<string?> ZapLoginOption(string name, string what) => new(name)
         {
-            Description = $"ZAP only: {what}; with the other --zap-login-* options (test accounts only)",
+            Description = $"ZAP only: {what} ({loginRule})",
         };
         var login = new ZapLoginOptions(
             ZapLoginOption(ZapLogin.LoginUrlOption, "URL the login form is POSTed to, inside the --target scope"),
@@ -311,7 +314,8 @@ internal static class Program
         scan.SetAction(parsed => context(parsed).SecurityScan(
             parsed.GetValue(sandboxName)!, parsed.GetValue(tool)!, parsed.GetValue(target)!, parsed.GetValue(timeout),
             parsed.GetValue(output), parsed.GetValue(commit),
-            ZapProfileFrom(parsed, spiderMinutes, spiderDepth, spiderChildren, passiveWait, activeScan, activeMinutes, login)));
+            ZapProfileFrom(parsed, spiderMinutes, spiderDepth, spiderChildren, passiveWait, activeScan, activeMinutes, login,
+                parsed.GetValue(tool))));
         security.Subcommands.Add(scan);
         return security;
     }
@@ -320,12 +324,18 @@ internal static class Program
     /// The caller's ZAP bounds, or null when none was given, so the plan stays the default one
     /// and the options stay off for other tools. An active-scan duration without the active
     /// scan is refused: silently dropping it would leave a caller believing an attack ran.
+    /// With <paramref name="tool"/>, any <c>--zap-*</c> option for another tool is refused
+    /// first, so that error is not hidden behind a ZAP-specific one.
     /// </summary>
     internal static ZapProfile? ZapProfileFrom(ParseResult parsed, Option<int> spiderMinutes, Option<int> spiderDepth,
         Option<int> spiderChildren, Option<int> passiveWait, Option<bool> activeScan, Option<int> activeMinutes,
-        ZapLoginOptions? loginOptions = null)
+        ZapLoginOptions? loginOptions = null, string? tool = null)
     {
         static bool Given(ParseResult parsed, Option option) => parsed.GetResult(option) is { Implicit: false };
+        if (tool is not null && ScanEngine.Select(tool) is not ZapScanner &&
+            new Option[] { spiderMinutes, spiderDepth, spiderChildren, passiveWait, activeScan, activeMinutes }
+                .Concat(loginOptions?.All ?? []).Any(option => Given(parsed, option)))
+            throw CliContext.ZapOptionsForAnotherTool(tool);
         var active = parsed.GetValue(activeScan);
         var login = loginOptions is null ? null : ZapLoginFrom(parsed, loginOptions);
         if (login is null && !active && !Given(parsed, activeMinutes) &&

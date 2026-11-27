@@ -4,9 +4,9 @@ namespace Wip.Security;
 
 /// <summary>
 /// One test user that ZAP logs in with standard form-based authentication, so the spider and
-/// the active scan run as that user. The values are written into the plan, so they reach argv
-/// and the provenance of the run: they are meant for test accounts of a sandboxed target, not
-/// for secrets.
+/// the active scan run as that user. The values are written into the plan inside the scanner
+/// sandbox (<c>/tmp/wip-zap-plan.yaml</c>), the scanner process's argv and <c>--debug</c>
+/// output: they are meant for test accounts of a sandboxed target, not for secrets.
 /// </summary>
 /// <param name="LoginUrl">The URL ZAP POSTs the login form to; it must be inside the scan's context.</param>
 /// <param name="LoginBody">

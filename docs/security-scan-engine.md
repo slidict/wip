@@ -195,9 +195,11 @@ scan with no alerts does not establish that active or authenticated checks passe
 and passive-wait bounds the plan actually used, generated from the plan, together with the
 native Automation Framework log. Active scanning is listed among the checks not performed
 unless the active scan ran, and authenticated paths unless a login was given; browser/Ajax
-crawling, form submission and out-of-band callbacks are always listed. With a login, the record
-names the login URL and the indicators used, and states that pages ZAP could not reach as that
-user are not evidence. The engine collects that sidecar separately and
+crawling, form submission (with a login, form submission other than the configured login
+request) and out-of-band callbacks are always listed. With a login, the record names the login
+URL and states how the configured regexes classify responses; it is written before the scan,
+so it describes the configuration rather than a verified session. It also states that pages
+ZAP could not reach as that user are not evidence. The engine collects that sidecar separately and
 the CLI writes it to stderr under `Unperformed checks (raw):`; stdout remains the original
 JSON report. Sidecars use the same collection deadline and retention limit as reports;
 missing, unreadable or oversized diagnostics are reported explicitly. Raw artifacts remain
@@ -274,8 +276,29 @@ regular expressions (checked with .NET; ZAP compiles them with Java). The login 
 HTTP(S) URL without user-info or a fragment, inside the context built from `--target`, so the
 login request stays in the same scope as the scan.
 
-**The values appear in the plan, the scanner's argv and the run's provenance.** They are not
-handled as secrets, so use only test accounts of a sandboxed target.
+ZAP's `response` verification checks every response against the regexes
+([verification strategies](https://www.zaproxy.org/docs/desktop/start/features/authstrategies/),
+[context authentication](https://www.zaproxy.org/docs/desktop/ui/dialogs/session/context-auth/)).
+A response matching the logged-in regex counts as logged in, and one matching the logged-out
+regex counts as logged out. What happens to a response matching neither is not stated there;
+in ZAP's
+[`VerificationMethod`](https://github.com/zaproxy/zaproxy/blob/main/zap/src/main/java/org/zaproxy/zap/authentication/VerificationMethod.java)
+it depends on the regexes given:
+
+- **Only a logged-in regex:** a response without the marker is treated as logged out, and ZAP
+  logs in again ([form-based login supports re-authentication](https://www.zaproxy.org/docs/desktop/start/features/authmethods/)).
+  Pages that never carry the marker, such as assets and error pages, can therefore trigger
+  repeated logins.
+- **Only a logged-out regex:** a response without the marker is accepted, but recorded as
+  unknown rather than logged in.
+- **Both:** a response matching neither is accepted and recorded as unknown, so pages without
+  the logged-in marker do not trigger logins. Give both when the application has both markers.
+
+**The values appear in the plan written inside the scanner sandbox (`/tmp/wip-zap-plan.yaml`),
+in the scanner process's argv, and in `--debug` output.** They are not handled as secrets, so
+use only test accounts of a sandboxed target. Every login value is written to the plan as a
+quoted string, because ZAP reads the plan as YAML 1.1, where a plain `12:30` is a number and
+`2024-01-02` a date.
 
 ## Result document and persisted artifacts
 

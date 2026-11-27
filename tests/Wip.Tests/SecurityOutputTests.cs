@@ -409,10 +409,12 @@ public sealed class SecurityOutputTests
         Assert.Contains("--zap-spider-minutes must be between 1 and 30", error.Message);
     }
 
-    private static ZapProfile? ParseZapLogin(params string[] options)
+    private static ZapProfile? ParseZapLogin(params string[] options) => ParseZapLoginFor("zap", options);
+
+    private static ZapProfile? ParseZapLoginFor(string tool, params string[] options)
     {
         var parsed = Program.Parse(Program.BuildRoot(),
-            ["security", "scan", "scanner", "--tool", "zap", "--target", "http://app/", .. options]);
+            ["security", "scan", "scanner", "--tool", tool, "--target", "http://app/", .. options]);
         Assert.Empty(parsed.Errors);
         var all = parsed.CommandResult.Command.Options;
         Option<int> Bound(string name) => Assert.IsType<Option<int>>(all.Single(option => option.Name == name));
@@ -423,7 +425,7 @@ public sealed class SecurityOutputTests
             Bound(ZapProfile.ActiveScanMinutesOption),
             new Program.ZapLoginOptions(Text(ZapLogin.LoginUrlOption), Text(ZapLogin.LoginBodyOption),
                 Text(ZapLogin.UsernameOption), Text(ZapLogin.PasswordOption),
-                Text(ZapLogin.LoggedInRegexOption), Text(ZapLogin.LoggedOutRegexOption)));
+                Text(ZapLogin.LoggedInRegexOption), Text(ZapLogin.LoggedOutRegexOption)), tool);
     }
 
     private static readonly string[] LoginArgs =
@@ -488,6 +490,18 @@ public sealed class SecurityOutputTests
         Assert.Contains("apply only to --tool zap", error.Message);
     }
 
+    [Theory]
+    [InlineData("--zap-login-password", "pw")]
+    [InlineData("--zap-login-url", "http://app/login")]
+    [InlineData("--zap-logged-in-regex", "(")]
+    [InlineData("--zap-active-scan-minutes", "20")]
+    public void ZapOptionsForAnotherToolAreRefusedBeforeAnyZapSpecificCheck(string option, string value)
+    {
+        var error = Assert.Throws<ConfigException>(() => ParseZapLoginFor("nuclei", option, value));
+        Assert.Equal("--zap-* options apply only to --tool zap, not --tool nuclei", error.Message);
+        Assert.Null(ParseZapLoginFor("nuclei"));
+    }
+
     [Fact]
     public void ZapLoginOptionsAreListedInTheScanHelp()
     {
@@ -495,6 +509,12 @@ public sealed class SecurityOutputTests
             .CommandResult.Command;
         foreach (var name in new[] { ZapLogin.LoginUrlOption, ZapLogin.LoginBodyOption, ZapLogin.UsernameOption,
                      ZapLogin.PasswordOption, ZapLogin.LoggedInRegexOption, ZapLogin.LoggedOutRegexOption })
-            Assert.StartsWith("ZAP only:", scan.Options.Single(option => option.Name == name).Description);
+        {
+            var description = scan.Options.Single(option => option.Name == name).Description!;
+            Assert.StartsWith("ZAP only:", description);
+            Assert.Contains("a login needs --zap-login-url, --zap-login-body, --zap-login-username and " +
+                "--zap-logged-in-regex or --zap-logged-out-regex; --zap-login-password is optional", description);
+            Assert.DoesNotContain("with the other", description);
+        }
     }
 }

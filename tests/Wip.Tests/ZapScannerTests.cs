@@ -639,18 +639,57 @@ public class ZapScannerTests
         var coverage = PlanCoverage(Plan(new ZapProfile(Login: Login)));
 
         Assert.StartsWith(
-            "Checks not performed by this profile: active scanning, browser/Ajax crawling, form submission, and out-of-band callbacks.\n",
+            "Checks not performed by this profile: active scanning, browser/Ajax crawling, " +
+            "form submission other than the configured login request, and out-of-band callbacks.\n",
             coverage);
-        Assert.Contains("logged in by form at http://app.test:8080/app/login", coverage);
-        Assert.Contains("verified by the logged-in indicator Sign out and the logged-out indicator Sign in", coverage);
-        Assert.Contains("pages ZAP could not reach as that user are not evidence", coverage);
+        Assert.Contains("logged in by form at http://app.test:8080/app/login; " +
+            "a response matching the logged-in regex Sign out counts as logged in; " +
+            "a response matching the logged-out regex Sign in counts as logged out; " +
+            "a response matching neither is accepted but recorded as unknown. ", coverage);
+        Assert.Contains("Pages ZAP could not reach as that user are not evidence", coverage);
+        Assert.DoesNotContain("verified", coverage);
         Assert.DoesNotContain("test-password", coverage);
         Assert.DoesNotContain("scanner@example.test", coverage);
         Assert.EndsWith("Native ZAP automation output follows unchanged:\n", coverage);
 
         var active = PlanCoverage(Plan(new ZapProfile(ActiveScan: true, Login: Login with { LoggedInRegex = null })));
         Assert.StartsWith(
-            "Checks not performed by this profile: browser/Ajax crawling, form submission, and out-of-band callbacks.\n", active);
-        Assert.Contains("verified by the logged-out indicator Sign in;", active);
+            "Checks not performed by this profile: browser/Ajax crawling, " +
+            "form submission other than the configured login request, and out-of-band callbacks.\n", active);
+        Assert.Contains("; a response matching the logged-out regex Sign in counts as logged out; " +
+            "a response without the logged-out marker is accepted but recorded as unknown. ", active);
+        Assert.DoesNotContain("logged-in regex", active);
+        Assert.DoesNotContain("verified", active);
+
+        var loggedInOnly = PlanCoverage(Plan(new ZapProfile(Login: Login with { LoggedOutRegex = null })));
+        Assert.Contains("; a response matching the logged-in regex Sign out counts as logged in; " +
+            "any other response counts as logged out. ", loggedInOnly);
+        Assert.DoesNotContain("unknown", loggedInOnly);
+    }
+
+    [Theory]
+    [InlineData("12:30")]
+    [InlineData("2024-01-02")]
+    [InlineData("1e3")]
+    [InlineData("yes")]
+    [InlineData("~")]
+    [InlineData("")]
+    [InlineData("it's")]
+    public void EveryLoginValueIsWrittenQuotedWhateverWipsResolverThinks(string value)
+    {
+        // Only the password may be empty; the other values must be non-empty to validate.
+        var other = value.Length == 0 ? "x" : value;
+        var login = new ZapLogin("http://app.test:8080/app/login", other, other, value,
+            LoggedInRegex: other, LoggedOutRegex: other);
+        var yaml = PlanYaml(Plan(new ZapProfile(Login: login))).ReplaceLineEndings("\n");
+        static string Quoted(string text) => "'" + text.Replace("'", "''") + "'";
+
+        Assert.Contains($"password: {Quoted(value)}\n", yaml);
+        foreach (var key in new[] { "loginRequestBody", "username", "loggedInRegex", "loggedOutRegex" })
+            Assert.Contains($"{key}: {Quoted(other)}\n", yaml);
+        Assert.Contains("loginRequestUrl: 'http://app.test:8080/app/login'\n", yaml);
+
+        var credentials = Mapping(Mapping(Assert.Single(Sequence(Context(Plan(new ZapProfile(Login: login)))["users"])))["credentials"]);
+        Assert.Equal(value, credentials["password"]);
     }
 }

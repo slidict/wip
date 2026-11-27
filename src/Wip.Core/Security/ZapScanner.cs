@@ -120,6 +120,9 @@ internal sealed class ZapScanner(ZapProfile? profile = null) : ISecurityScanner
     /// ZAP replaces {%username%} and {%password%} in the login request body:
     /// https://www.zaproxy.org/docs/desktop/ui/dialogs/session/context-auth/
     /// The login URL must be inside the context, so logging in sends nothing outside the scope.
+    /// ZAP loads the plan with SnakeYAML (YAML 1.1), which types plain scalars differently from
+    /// wip's resolver (`12:30` as an integer, `2024-01-02` as a date), so every login value is
+    /// written quoted.
     /// </summary>
     private static void AddLogin(OrderedDictionary<string, object?> context, ZapLogin login, string scope)
     {
@@ -133,15 +136,16 @@ internal sealed class ZapScanner(ZapProfile? profile = null) : ISecurityScanner
                 $"{ZapLogin.LoginUrlOption} {loginUrl} is outside the scanned context built from --target; " +
                 "the login request must stay inside the same scope");
 
+        static YamlWriter.QuotedScalar Quoted(string text) => new(text);
         var verification = Map(("method", "response"));
-        if (login.LoggedInRegex is not null) verification["loggedInRegex"] = login.LoggedInRegex;
-        if (login.LoggedOutRegex is not null) verification["loggedOutRegex"] = login.LoggedOutRegex;
+        if (login.LoggedInRegex is not null) verification["loggedInRegex"] = Quoted(login.LoggedInRegex);
+        if (login.LoggedOutRegex is not null) verification["loggedOutRegex"] = Quoted(login.LoggedOutRegex);
         context["authentication"] = Map(("method", "form"),
-            ("parameters", Map(("loginRequestUrl", loginUrl), ("loginRequestBody", login.LoginBody))),
+            ("parameters", Map(("loginRequestUrl", Quoted(loginUrl)), ("loginRequestBody", Quoted(login.LoginBody)))),
             ("verification", verification));
         context["sessionManagement"] = Map(("method", "cookie"));
         context["users"] = List(Map(("name", ZapLogin.UserName),
-            ("credentials", Map(("username", login.Username), ("password", login.Password)))));
+            ("credentials", Map(("username", Quoted(login.Username)), ("password", Quoted(login.Password))))));
     }
 
     /// <summary>
@@ -152,7 +156,9 @@ internal sealed class ZapScanner(ZapProfile? profile = null) : ISecurityScanner
     {
         var omitted = (profile.ActiveScan ? "" : "active scanning, ") +
                       (profile.Login is null ? "authenticated paths, " : "") +
-                      "browser/Ajax crawling, form submission, and out-of-band callbacks";
+                      "browser/Ajax crawling, " +
+                      (profile.Login is null ? "form submission" : "form submission other than the configured login request") +
+                      ", and out-of-band callbacks";
         var active = profile.ActiveScan
             ? $"; active scanning of the crawled in-scope requests stops after at most {Minutes(profile.ActiveScanMinutes)}, " +
               "so rules can be left unfinished"
@@ -168,12 +174,22 @@ internal sealed class ZapScanner(ZapProfile? profile = null) : ISecurityScanner
 
     private static string LoginCoverage(ZapLogin login)
     {
-        var indicators = new List<string>();
-        if (login.LoggedInRegex is not null) indicators.Add($"logged-in indicator {login.LoggedInRegex}");
-        if (login.LoggedOutRegex is not null) indicators.Add($"logged-out indicator {login.LoggedOutRegex}");
+        // Written before the scan runs, so it states the configured rule, not an observed session.
+        // ZAP's response verification (VerificationMethod.evaluateAuthRequest): a logged-in match
+        // counts as logged in; otherwise, with a logged-out regex, a response without its marker is
+        // accepted but recorded as unknown, and without one the response counts as logged out.
+        // https://github.com/zaproxy/zaproxy/blob/main/zap/src/main/java/org/zaproxy/zap/authentication/VerificationMethod.java
+        var rules = new List<string>();
+        if (login.LoggedInRegex is not null)
+            rules.Add($"a response matching the logged-in regex {login.LoggedInRegex} counts as logged in");
+        if (login.LoggedOutRegex is not null)
+            rules.Add($"a response matching the logged-out regex {login.LoggedOutRegex} counts as logged out");
+        rules.Add(login.LoggedOutRegex is null ? "any other response counts as logged out"
+            : login.LoggedInRegex is null ? "a response without the logged-out marker is accepted but recorded as unknown"
+            : "a response matching neither is accepted but recorded as unknown");
         return "The spider and any active scan run as one user logged in by form at " +
-               $"{new Uri(login.LoginUrl).AbsoluteUri}, verified by the {string.Join(" and the ", indicators)}; " +
-               "pages ZAP could not reach as that user are not evidence. ";
+               $"{new Uri(login.LoginUrl).AbsoluteUri}; {string.Join("; ", rules)}. " +
+               "Pages ZAP could not reach as that user are not evidence. ";
     }
 
     private static string Minutes(int value) => value == 1 ? "1 minute" : $"{value} minutes";
