@@ -197,11 +197,11 @@ native Automation Framework log. Active scanning is listed among the checks not 
 unless the active scan ran, and authenticated paths unless a login was given; browser/Ajax
 crawling, form submission (with a login, form submission other than the configured login
 request) and out-of-band callbacks are always listed. With a login, confirmation that the login
-succeeded is listed too: wip does not check it, and a failed login still completes with the
-same record. The record names the login URL and states how the configured regexes classify
+succeeded is listed too: wip does not check it, and a login the application refuses still
+completes with the same record. The record names the login URL and states how the configured regexes classify
 responses; it is written before the scan, so it describes the configuration rather than a
-verified session. It also states that authenticated paths count as covered only where ZAP
-actually reached them as that user, and that pages ZAP could not reach as that user are not
+verified session. The regexes are written as JSON strings. It also states that which paths ZAP
+reached as that user is not recorded, and that pages ZAP could not reach as that user are not
 evidence. The engine collects that sidecar separately and the CLI writes it to stderr under
 `Unperformed checks (raw):`; stdout remains the original
 JSON report. Sidecars use the same collection deadline and retention limit as reports;
@@ -275,8 +275,10 @@ application.
 ZAP replaces `{%username%}` and `{%password%}` in the body with the user's credentials. The
 options are all or nothing: giving any of them without the required ones is refused before the
 image pull, with an error naming the missing flag. Indicators must be non-empty and contain no
-control characters. wip does not compile them: ZAP compiles them with Java and reports a
-malformed pattern itself. The login URL must be an HTTP(S) URL without user-info or a fragment,
+control, format or line separator characters. wip does not compile them, since .NET rejects
+Java-valid patterns such as `\Qa.b\E`. ZAP compiles them with Java: a malformed one stops the plan
+with `Invalid verification loggedInRegex` before any job runs and ZAP exits 1, so no report is
+written and the scan ends `incomplete` (`report-missing`). The login URL must be an HTTP(S) URL without user-info or a fragment,
 inside the context built from `--target`, so the login request stays in the same scope as the
 scan.
 
