@@ -48,5 +48,5 @@ differs from `mode: compose`.
    `wip down` stops and removes the whole stack.
 
 See the [Configuration Reference](https://github.com/slidict/wip/wiki/Configuration-Reference)
-and the compose.yml service-key table in the
-[main README](../../README.md#architecture) for which Compose keys are read.
+and [Compose File Support](https://github.com/slidict/wip/wiki/Compose-File-Support) for which
+Compose keys are read.

@@ -49,8 +49,9 @@ key, every command's flags, guides, and troubleshooting — see the
 - **`wip init --ai`** — describe your stack in natural language and get a validated `wip.yml`
   back, via any local OpenAI-compatible server (Ollama, LM Studio). See
   [AI-Assisted Initialization](https://github.com/slidict/wip/wiki/AI-Assisted-Initialization).
-- **Healthcheck-aware startup** — `wip up` waits on a dependency's `healthcheck:` before starting
-  whatever depends on it, in every mode. See
+- **Healthcheck-aware startup** — under `mode: container` and `mode: compose-native`, `wip up`
+  waits on a dependency's `healthcheck:` before starting whatever depends on it; under
+  `mode: compose`, the compose tool handles it. See
   [Healthchecks](https://github.com/slidict/wip/wiki/Healthchecks).
 - **Works from WSL2 shells, not just PowerShell** — `wip.exe` runs on Windows and drives `wslc`
   directly, but is meant to be typed from wherever you work. See
