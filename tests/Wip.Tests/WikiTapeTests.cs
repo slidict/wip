@@ -14,6 +14,7 @@ public class WikiTapeTests
     public static readonly string[] Slugs =
     [
         "getting-started", "wip-up", "wip-build", "wip-shell", "wip-logs", "wip-sync", "wip-sandbox", "wip-security-scan",
+        "wip-init", "wip-ps", "wip-config", "wip-volume", "wip-doctor",
     ];
 
     // Settings the tapes share with docs/demo.tape so every recording looks the same.

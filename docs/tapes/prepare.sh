@@ -3,7 +3,7 @@
 set -euo pipefail
 slug=${1:?Usage: bash docs/tapes/prepare.sh SLUG}
 case "$slug" in
-  getting-started|wip-up|wip-build|wip-shell|wip-logs|wip-sync|wip-sandbox|wip-security-scan) ;;
+  getting-started|wip-up|wip-build|wip-shell|wip-logs|wip-sync|wip-sandbox|wip-security-scan|wip-init|wip-ps|wip-config|wip-volume|wip-doctor) ;;
   *) echo 'Unknown tape' >&2; exit 1 ;;
 esac
 if [[ ! -f .wip-tapes-recording ]]; then
@@ -44,7 +44,15 @@ cp recording.yml wip.yml
 printf '%s\n' "$network" > context/payload/take.txt
 case "$slug" in
   getting-started) mv wip.yml starter.yml ;;
-  wip-shell|wip-logs|wip-sync) wip up -d ;;
+  wip-shell|wip-logs|wip-sync|wip-ps) wip up -d ;;
+  wip-init|wip-config|wip-volume|wip-doctor)
+    # These takes need no stack. Remove the source volume created during warmup.
+    wslc volume remove wip-tapes-src
+    ;;
+esac
+case "$slug" in
+  wip-init) mktemp -d ./wip-init.XXXXXX > .init-directory ;;
+  wip-volume) wip volume destroy scratch ;;
   wip-security-scan)
     # Clear the previous run first. A prep that fails after target is recreated would
     # otherwise leave the old IPAM address behind, and the take would record a scan of an

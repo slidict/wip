@@ -1,6 +1,6 @@
 # Wiki terminal recordings
 
-These eight VHS tapes record real commands with a shared fixture on Windows,
+These thirteen VHS tapes record real commands with a shared fixture on Windows,
 wip's shipping target. The tape shell is PowerShell. GIF rendering runs on the
 recording host; these revised tapes have not been rendered in this environment.
 
@@ -21,7 +21,7 @@ For example, install the recording tools with Scoop: `scoop install vhs ttyd ffm
 Also install `wip` itself and a working WSLC backend. Check `wip version` and
 `wip doctor` before recording. PowerShell must be available for the tapes.
 Run `prepare.sh` and the command blocks below from Git Bash or another Bash
-with standard utilities (`cp`, `sed`, `date`, `mkdir`, `mv`, `touch`).
+with standard utilities (`cp`, `sed`, `date`, `mkdir`, `mktemp`, `mv`, `touch`).
 Use an English terminal and backend.
 
 ## Prepare the recording directory
@@ -82,12 +82,22 @@ bash docs/tapes/prepare.sh wip-sandbox
 vhs docs/tapes/wip-sandbox.tape
 bash docs/tapes/prepare.sh wip-security-scan
 vhs docs/tapes/wip-security-scan.tape
+bash docs/tapes/prepare.sh wip-init
+vhs docs/tapes/wip-init.tape
+bash docs/tapes/prepare.sh wip-ps
+vhs docs/tapes/wip-ps.tape
+bash docs/tapes/prepare.sh wip-config
+vhs docs/tapes/wip-config.tape
+bash docs/tapes/prepare.sh wip-volume
+vhs docs/tapes/wip-volume.tape
+bash docs/tapes/prepare.sh wip-doctor
+vhs docs/tapes/wip-doctor.tape
 ```
 
-Or generate all eight sequentially, stopping on failure:
+Or generate all thirteen sequentially, stopping on failure:
 
 ```bash
-for slug in getting-started wip-up wip-build wip-shell wip-logs wip-sync wip-sandbox wip-security-scan; do
+for slug in getting-started wip-up wip-build wip-shell wip-logs wip-sync wip-sandbox wip-security-scan wip-init wip-ps wip-config wip-volume wip-doctor; do
   bash docs/tapes/prepare.sh "$slug" || break
   vhs "docs/tapes/$slug.tape" || break
 done
@@ -96,7 +106,12 @@ done
 The getting-started take begins without `wip.yml`. After showing `wip init`,
 it installs `recording.yml` while hidden: the generated starter contains a
 placeholder image and must be customized before use. Other tapes start with
-the fixture installed; shell, logs, and sync start with the app already running.
+the fixture installed in the recording directory. Shell, logs, sync, and ps start with the app
+already running. The ps take tears the stack down and removes the fixture source volume while
+hidden. The init take enters a fresh subdirectory, writes the generic starter, and highlights
+its opening lines. Config and doctor read the fixture without starting it. The config take
+also highlights the masked environment value. The volume take uses the fixture's existing
+`scratch` declaration and shows its status again after removing it.
 The security-scan take appends an internal `scan` network plus `target` and
 `scanner` sandboxes using the digest-pinned ZAP image, warms the image by
 creating `target` (which serves `/tmp/index.html` over HTTP on port 8080), and
@@ -109,7 +124,7 @@ runs for eight seconds while the job edits the file, then the tape
 reads `/app/message.txt` inside the container after Ctrl-C to show the result.
 
 Outputs are `docs/tapes/<slug>.gif` in the recording directory. After inspecting
-them, copy all eight GIFs into the checkout's `docs/tapes/` and commit them with
+them, copy the GIFs into the checkout's `docs/tapes/` and commit them with
 any changed source assets. Wiki pages reference the committed GIFs through
 `raw.githubusercontent.com`; after the commit reaches main, use:
 
@@ -122,7 +137,7 @@ with the backend's volume management commands once all fixture containers have
 been removed.
 
 `wip down` leaves networks behind. Warmup now reuses one network, but each take
-still adds one: eight takes leave nine networks on a clean host. Remove unused
+that boots the stack after warmup can add one. Remove unused
 fixture networks after each batch and before retrying if older batches remain.
 Accumulated networks exhaust the default IPv4 address pools: startup fails with
 "could not find an available, non-overlapping IPv4 address pool".
@@ -134,6 +149,11 @@ remove the shared warmup network with `wslc network rm wip-tapes-warm` too.
 Only remove fixture networks after their containers have been removed; keep
 unrelated networks. The command follows the
 [WSLC network cleanup example](https://github.com/microsoft/WSL/blob/master/test/windows/wslc/e2e/WSLCE2EHelpers.cpp).
+
+Before accepting the new takes, confirm init displays the generated starter, ps shows both
+running containers, config masks the fixture environment values, and volume ends at
+`not found`. For the ps take, verify the containers and source volume are gone after
+the hidden cleanup.
 
 ## Retake after a behavior change
 
@@ -147,6 +167,11 @@ unrelated networks. The command follows the
 | wip-sync | wip sync | --watch, host edit, mirrored content, Ctrl-C |
 | wip-sandbox | wip sandbox | create, status, list, exec --interactive, stop, destroy |
 | wip-security-scan | wip security scan | security tools, sandbox create, security scan --tool zap --output, status, destroy |
+| wip-init | wip init | create and display a generic starter |
+| wip-ps | wip ps | primary and sidecar status after startup |
+| wip-config | wip config | effective fixture configuration with redacted environment values |
+| wip-volume | wip volume | create, status, destroy, status |
+| wip-doctor | wip doctor | fixture diagnostics |
 
 When a command or output changes, edit the corresponding tape in this table.
 Check flags in `src/Wip.Cli/Program.cs` and behavior in
