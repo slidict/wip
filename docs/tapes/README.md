@@ -1,15 +1,16 @@
 # Wiki terminal recordings
 
-These thirteen VHS tapes record real commands with a shared fixture on Windows,
-wip's shipping target. The tape shell is PowerShell. GIF rendering runs on the
-recording host; these revised tapes have not been rendered in this environment.
+These twelve VHS tapes record real commands in PowerShell with a shared fixture.
+The GIFs are recorded on a Windows host and committed next to their tapes.
 
 ## Tools
 
 The host-tested versions are VHS 0.12.1, ttyd 1.7.7, and FFmpeg 9.0.2,
 on Windows 11 with WSLC 3.0.3.0. The first seven takes were recorded with
 wip 2.12.0; the security-scan take needs wip 2.12.1 or newer, because it
-declares `command:` on its sandboxes, which 2.12.0 rejects as an unsupported key. Install them from the
+declares `command:` on its sandboxes, which 2.12.0 rejects as an unsupported key.
+The `wip-init`, `wip-ps`, `wip-config`, and `wip-volume` takes were recorded with
+wip 2.14.0 and WSLC 3.0.5. Install the recording tools from the
 [VHS instructions](https://github.com/charmbracelet/vhs#installation),
 [ttyd releases](https://github.com/tsl0922/ttyd/releases), and
 [FFmpeg downloads](https://ffmpeg.org/download.html).
@@ -22,7 +23,7 @@ Also install `wip` itself and a working WSLC backend. Check `wip version` and
 `wip doctor` before recording. PowerShell must be available for the tapes.
 Run `prepare.sh` and the command blocks below from Git Bash or another Bash
 with standard utilities (`cp`, `sed`, `date`, `mkdir`, `mktemp`, `mv`, `touch`).
-Use an English terminal and backend.
+The Bash running `prepare.sh` needs `wslc` on `PATH`. Use an English terminal and backend.
 
 ## Prepare the recording directory
 
@@ -90,14 +91,12 @@ bash docs/tapes/prepare.sh wip-config
 vhs docs/tapes/wip-config.tape
 bash docs/tapes/prepare.sh wip-volume
 vhs docs/tapes/wip-volume.tape
-bash docs/tapes/prepare.sh wip-doctor
-vhs docs/tapes/wip-doctor.tape
 ```
 
-Or generate all thirteen sequentially, stopping on failure:
+Or generate all twelve sequentially, stopping on failure:
 
 ```bash
-for slug in getting-started wip-up wip-build wip-shell wip-logs wip-sync wip-sandbox wip-security-scan wip-init wip-ps wip-config wip-volume wip-doctor; do
+for slug in getting-started wip-up wip-build wip-shell wip-logs wip-sync wip-sandbox wip-security-scan wip-init wip-ps wip-config wip-volume; do
   bash docs/tapes/prepare.sh "$slug" || break
   vhs "docs/tapes/$slug.tape" || break
 done
@@ -107,11 +106,12 @@ The getting-started take begins without `wip.yml`. After showing `wip init`,
 it installs `recording.yml` while hidden: the generated starter contains a
 placeholder image and must be customized before use. Other tapes start with
 the fixture installed in the recording directory. Shell, logs, sync, and ps start with the app
-already running. The ps take tears the stack down and removes the fixture source volume while
-hidden. The init take enters a fresh subdirectory, writes the generic starter, and highlights
-its opening lines. Config and doctor read the fixture without starting it. The config take
-also highlights the masked environment value. The volume take uses the fixture's existing
-`scratch` declaration and shows its status again after removing it.
+already running. The next preparation tears down that stack. The init take enters a
+fresh subdirectory, writes the generic starter, and highlights its opening lines.
+Reserve the `wip-init.XXXXXX` temporary directory pattern for this take. Preparation
+cleans up earlier generated starters under that pattern. The config take shows the
+effective fixture. The volume take uses the existing `scratch` declaration and shows
+its status again after removing it.
 The security-scan take appends an internal `scan` network plus `target` and
 `scanner` sandboxes using the digest-pinned ZAP image, warms the image by
 creating `target` (which serves `/tmp/index.html` over HTTP on port 8080), and
@@ -151,9 +151,7 @@ unrelated networks. The command follows the
 [WSLC network cleanup example](https://github.com/microsoft/WSL/blob/master/test/windows/wslc/e2e/WSLCE2EHelpers.cpp).
 
 Before accepting the new takes, confirm init displays the generated starter, ps shows both
-running containers, config masks the fixture environment values, and volume ends at
-`not found`. For the ps take, verify the containers and source volume are gone after
-the hidden cleanup.
+running containers, config shows the effective fixture, and volume ends at `not found`.
 
 ## Retake after a behavior change
 
@@ -169,9 +167,8 @@ the hidden cleanup.
 | wip-security-scan | wip security scan | security tools, sandbox create, security scan --tool zap --output, status, destroy |
 | wip-init | wip init | create and display a generic starter |
 | wip-ps | wip ps | primary and sidecar status after startup |
-| wip-config | wip config | effective fixture configuration with redacted environment values |
+| wip-config | wip config | effective fixture configuration |
 | wip-volume | wip volume | create, status, destroy, status |
-| wip-doctor | wip doctor | fixture diagnostics |
 
 When a command or output changes, edit the corresponding tape in this table.
 Check flags in `src/Wip.Cli/Program.cs` and behavior in

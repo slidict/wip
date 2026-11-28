@@ -20,7 +20,3 @@ Show
 Type "wip config"
 Enter
 Sleep 5s
-
-Type@30ms "wip config | Select-String -SimpleMatch 'PS1:'"
-Enter
-Sleep 3s

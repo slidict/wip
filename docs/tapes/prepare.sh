@@ -3,7 +3,7 @@
 set -euo pipefail
 slug=${1:?Usage: bash docs/tapes/prepare.sh SLUG}
 case "$slug" in
-  getting-started|wip-up|wip-build|wip-shell|wip-logs|wip-sync|wip-sandbox|wip-security-scan|wip-init|wip-ps|wip-config|wip-volume|wip-doctor) ;;
+  getting-started|wip-up|wip-build|wip-shell|wip-logs|wip-sync|wip-sandbox|wip-security-scan|wip-init|wip-ps|wip-config|wip-volume) ;;
   *) echo 'Unknown tape' >&2; exit 1 ;;
 esac
 if [[ ! -f .wip-tapes-recording ]]; then
@@ -45,13 +45,36 @@ printf '%s\n' "$network" > context/payload/take.txt
 case "$slug" in
   getting-started) mv wip.yml starter.yml ;;
   wip-shell|wip-logs|wip-sync|wip-ps) wip up -d ;;
-  wip-init|wip-config|wip-volume|wip-doctor)
+  wip-init|wip-config|wip-volume)
     # These takes need no stack. Remove the source volume created during warmup.
-    wslc volume remove wip-tapes-src
+    wslc volume remove wip-tapes-src || true
     ;;
 esac
 case "$slug" in
-  wip-init) mktemp -d ./wip-init.XXXXXX > .init-directory ;;
+  wip-init)
+    # This mktemp name pattern is reserved in the disposable recording directory.
+    (
+      shopt -s nullglob dotglob
+      previous=
+      if [[ -f .init-directory ]]; then
+        previous=$(<.init-directory)
+      fi
+      for directory in ./wip-init.*; do
+        [[ $directory =~ ^\./wip-init\.[[:alnum:]]{6}$ && -d $directory && ! -L $directory ]] || continue
+        entries=("$directory"/*)
+        if [[ ${#entries[@]} -eq 1 && ${entries[0]} == "$directory/wip.yml" && -f ${entries[0]} && ! -L ${entries[0]} ]]; then
+          # Earlier takes may predate the current pointer. Recognize their starter.
+          if [[ $directory == "$previous" ]] || grep -Fq '# TODO: rename freely, as long as it matches a key under dependencies: below' "${entries[0]}"; then
+            rm -- "${entries[0]}"
+          fi
+        elif [[ $directory != "$previous" ]]; then
+          continue
+        fi
+        rmdir -- "$directory" 2>/dev/null || true
+      done
+    )
+    mktemp -d ./wip-init.XXXXXX > .init-directory
+    ;;
   wip-volume) wip volume destroy scratch ;;
   wip-security-scan)
     # Clear the previous run first. A prep that fails after target is recreated would

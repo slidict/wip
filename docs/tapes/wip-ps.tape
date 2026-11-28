@@ -20,8 +20,3 @@ Show
 Type "wip ps"
 Enter
 Sleep 4s
-
-Hide
-Type@0ms "wip down; wslc volume remove wip-tapes-src"
-Enter
-Sleep 15s
