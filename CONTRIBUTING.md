@@ -57,8 +57,9 @@ Examples:
 - `fix(config): accept positional path argument`
 - `ci: add push trigger for main`
 
-PR labels drive the release notes (`feat` → Features, `fix` → Fixes, everything else →
-Maintenance), so an accurate type matters even for small changes.
+The PR title prefix decides the release-notes section (`feat` → New Features, `fix` → Bug Fixes,
+other types and Dependabot updates → Maintenance, anything else → Other Changes), so an accurate
+type matters even for small changes.
 
 ## Versioning
 
