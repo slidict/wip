@@ -42,7 +42,6 @@ key, every command's flags, guides, and troubleshooting — see the
 - **No orchestration engine of its own** — every mode ultimately shells out to `wslc.exe` /
   `wslc` as a safe argv array; wip never talks to Docker and never grows logic that competes with
   `wslc`. See [Architecture](https://github.com/slidict/wip/wiki/Developing-wip#architecture).
-<a id="architecture"></a>
 - **Three modes for three project shapes** — drive containers directly, parse an existing
   `compose.yml` yourself, or bridge to a third-party compose-for-`wslc` tool. See
   [Which mode should you use?](#which-mode-should-you-use) below.
@@ -51,7 +50,7 @@ key, every command's flags, guides, and troubleshooting — see the
   [AI-Assisted Initialization](https://github.com/slidict/wip/wiki/AI-Assisted-Initialization).
 - **Healthcheck-aware startup** — under `mode: container` and `mode: compose-native`, `wip up`
   waits for each sidecar's `healthcheck:` to pass before starting the next dependency and the
-  primary container; under `mode: compose`, the compose tool handles it. See
+  primary container; under `mode: compose`, it is left to the compose tool. See
   [Healthchecks](https://github.com/slidict/wip/wiki/Healthchecks).
 - **Works from WSL2 shells, not just PowerShell** — `wip.exe` runs on Windows and drives `wslc`
   directly, but is meant to be typed from wherever you work. See

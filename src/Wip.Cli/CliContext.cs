@@ -1095,9 +1095,9 @@ internal sealed partial class CliContext
     /// </summary>
     /// <remarks>
     /// Waits on the sidecar's own healthcheck, regardless of which depends_on condition (if
-    /// any) named it. <see cref="SidecarNames"/> starts every sidecar before the primary
-    /// container, so a sidecar's <c>depends_on: &lt;primary&gt;: condition: service_healthy</c>
-    /// is not waited on: the primary starts last and its healthcheck is never polled.
+    /// any) named it. <see cref="SidecarNames"/> leaves the primary container out and it starts
+    /// last, so a sidecar that depends_on the primary still starts before it, and any
+    /// <c>service_healthy</c> condition on the primary is not waited on.
     /// </remarks>
     private void WaitForHealthy(string name)
     {
