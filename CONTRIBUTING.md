@@ -58,7 +58,8 @@ Examples:
 - `ci: add push trigger for main`
 
 The PR title prefix decides the release-notes section (`feat` → New Features, `fix` → Bug Fixes,
-other types → Maintenance, no prefix → Other Changes), so an accurate type matters even for small changes.
+other types and Dependabot updates → Maintenance, anything else → Other Changes), so an accurate
+type matters even for small changes.
 
 ## Versioning
 

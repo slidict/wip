@@ -7,69 +7,25 @@ template: |
 
   $CONTRIBUTORS
 
-# Labels come from the PR title (conventional commit prefix, optional scope and `!`).
-# The release-labels workflow applies them; every title matches exactly one rule.
-autolabeler:
-  - label: 'feat'
-    title:
-      - '/^feat(\([^)]*\))?!?:/i'
-  - label: 'fix'
-    title:
-      - '/^fix(\([^)]*\))?!?:/i'
-  - label: 'chore'
-    title:
-      - '/^chore(\([^)]*\))?!?:/i'
-  - label: 'ci'
-    title:
-      - '/^ci(\([^)]*\))?!?:/i'
-  - label: 'docs'
-    title:
-      - '/^docs(\([^)]*\))?!?:/i'
-  - label: 'build'
-    title:
-      - '/^build(\([^)]*\))?!?:/i'
-      # Dependabot's NuGet PRs have no prefix.
-      - '/^Bump /i'
-  - label: 'perf'
-    title:
-      - '/^perf(\([^)]*\))?!?:/i'
-  - label: 'test'
-    title:
-      - '/^test(\([^)]*\))?!?:/i'
-  - label: 'refactor'
-    title:
-      - '/^refactor(\([^)]*\))?!?:/i'
-  - label: 'style'
-    title:
-      - '/^style(\([^)]*\))?!?:/i'
-  - label: 'revert'
-    title:
-      - '/^revert(\([^)]*\))?!?:/i'
-  - label: 'other'
-    title:
-      - '/^(?!(feat|fix|chore|ci|docs|build|perf|test|refactor|style|revert)(\([^)]*\))?!?:|Bump )/i'
-
+# Sections come from the PR title, read as a conventional commit header
+# (`feat(scope)!: ...`), so no labels are needed.
 category-template: '### $TITLE'
 categories:
   - title: '✨ New Features'
-    labels:
-      - 'feat'
+    when:
+      conventional:
+        type: 'feat'
   - title: '🐛 Bug Fixes'
-    labels:
-      - 'fix'
+    when:
+      conventional:
+        type: 'fix'
   - title: '🧰 Maintenance'
-    labels:
-      - 'chore'
-      - 'ci'
-      - 'docs'
-      - 'build'
-      - 'perf'
-      - 'test'
-      - 'refactor'
-      - 'style'
-      - 'revert'
+    when:
+      - conventional:
+          types: ['chore', 'ci', 'docs', 'build', 'perf', 'test', 'refactor', 'style', 'revert']
+      # Dependabot's NuGet PRs are titled "Bump ..." with no prefix.
+      - label: 'dependencies'
+  # No `when`: everything the sections above did not take.
   - title: '🛸 Other Changes'
-    labels:
-      - 'other'
 change-template: '- $TITLE @$AUTHOR (#$NUMBER)'
 no-changes-template: '- No changes'
