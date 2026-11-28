@@ -11,6 +11,17 @@ on:
 permissions:
   contents: read
 
+# Recording tool versions. To upgrade one, change its version and its SHA-256 together:
+# download the release asset named in "Install recording tools" for the new version and take
+# its SHA-256 (`Get-FileHash -Algorithm SHA256`, or the digest GitHub shows for the asset).
+env:
+  VHS_VERSION: '0.12.1'
+  VHS_SHA256: 'acaefb840663123fb9cf4a211b5ca8d14bf248e30780a0a436fab7a675615f26'
+  TTYD_VERSION: '1.7.7'
+  TTYD_SHA256: 'e33a27501b10b96981335bcba938b1145c7f52551a343e72160f00ab71832b37'
+  FFMPEG_VERSION: '9.0.2'
+  FFMPEG_SHA256: '60f467265b1e312373dbcd92200c2618a74850f98d3d078e94296bb3fa2047ba'
+
 jobs:
   record:
     runs-on: windows-latest
@@ -85,22 +96,25 @@ jobs:
             return $path
           }
 
+          $vhsName = "vhs_$($env:VHS_VERSION)_Windows_x86_64"
+          $ffmpegName = "ffmpeg-$($env:FFMPEG_VERSION)-essentials_build"
+
           $vhs = Get-VerifiedDownload `
-            'https://github.com/charmbracelet/vhs/releases/download/v0.12.1/vhs_0.12.1_Windows_x86_64.zip' `
-            'vhs.zip' 'acaefb840663123fb9cf4a211b5ca8d14bf248e30780a0a436fab7a675615f26'
+            "https://github.com/charmbracelet/vhs/releases/download/v$($env:VHS_VERSION)/$vhsName.zip" `
+            'vhs.zip' $env:VHS_SHA256
           Get-VerifiedDownload `
-            'https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.win32.exe' `
-            'ttyd.exe' 'e33a27501b10b96981335bcba938b1145c7f52551a343e72160f00ab71832b37' | Out-Null
+            "https://github.com/tsl0922/ttyd/releases/download/$($env:TTYD_VERSION)/ttyd.win32.exe" `
+            'ttyd.exe' $env:TTYD_SHA256 | Out-Null
           $ffmpeg = Get-VerifiedDownload `
-            'https://github.com/GyanD/codexffmpeg/releases/download/9.0.2/ffmpeg-9.0.2-essentials_build.zip' `
-            'ffmpeg.zip' '60f467265b1e312373dbcd92200c2618a74850f98d3d078e94296bb3fa2047ba'
+            "https://github.com/GyanD/codexffmpeg/releases/download/$($env:FFMPEG_VERSION)/$ffmpegName.zip" `
+            'ffmpeg.zip' $env:FFMPEG_SHA256
 
           Expand-Archive -LiteralPath $vhs -DestinationPath $tools
           Expand-Archive -LiteralPath $ffmpeg -DestinationPath $tools
           Add-Content -Path $env:GITHUB_PATH -Value @(
             $tools
-            (Join-Path $tools 'vhs_0.12.1_Windows_x86_64')
-            (Join-Path $tools 'ffmpeg-9.0.2-essentials_build/bin')
+            (Join-Path $tools $vhsName)
+            (Join-Path $tools "$ffmpegName/bin")
           )
 
       - name: Record the selected tapes
