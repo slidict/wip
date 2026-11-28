@@ -24,6 +24,31 @@ Run `prepare.sh` and the command blocks below from Git Bash or another Bash
 with standard utilities (`cp`, `sed`, `date`, `mkdir`, `mv`, `touch`).
 Use an English terminal and backend.
 
+## Recording with the workflow
+
+In GitHub Actions, open **Record tapes** and select **Run workflow**. Leave
+`tapes` empty to record all slugs, or enter a space-separated selection:
+
+```bash
+gh workflow run record-tapes.yml -f tapes="wip-up wip-shell"
+```
+
+Download `tapes-<run number>-<run attempt>` from the run's **Artifacts** section. It contains
+the generated GIFs and each take's preparation and VHS logs. Check the last
+frame of every take, confirm the output is in English, and scan the whole GIF
+for internal details before committing it. The workflow flags recordings with
+fewer than three distinct frames and keeps the GIF and logs for inspection.
+
+### Updating the recording tools
+
+The workflow pins VHS, ttyd and FFmpeg in the `env` block at the top of
+`.github/workflows/record-tapes.yml`. To move to a newer release, change the
+tool's `*_VERSION` and its `*_SHA256` together: download the same release
+asset the workflow names for the new version and take its SHA-256 with
+`Get-FileHash -Algorithm SHA256` (or the digest GitHub shows for the asset).
+A mismatch stops the run before anything is recorded. Update the versions listed
+under **Tools** above when the recordings are made with the new tools.
+
 ## Prepare the recording directory
 
 Use a dedicated directory outside the checkout and outside a user profile.

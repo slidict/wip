@@ -2,10 +2,15 @@
 # Run in a disposable recording directory containing docs/tapes.
 set -euo pipefail
 slug=${1:?Usage: bash docs/tapes/prepare.sh SLUG}
-case "$slug" in
-  getting-started|wip-up|wip-build|wip-shell|wip-logs|wip-sync|wip-sandbox|wip-security-scan) ;;
-  *) echo 'Unknown tape' >&2; exit 1 ;;
-esac
+slugs=(getting-started wip-up wip-build wip-shell wip-logs wip-sync wip-sandbox wip-security-scan)
+if [[ $slug == --list ]]; then
+  printf '%s\n' "${slugs[@]}"
+  exit 0
+fi
+if [[ " ${slugs[*]} " != *" $slug "* || $slug == *[[:space:]]* ]]; then
+  echo 'Unknown tape' >&2
+  exit 1
+fi
 if [[ ! -f .wip-tapes-recording ]]; then
   echo 'Create .wip-tapes-recording in a disposable recording directory first.' >&2
   exit 1
