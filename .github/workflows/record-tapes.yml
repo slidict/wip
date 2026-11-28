@@ -1,0 +1,159 @@
+name: Record tapes
+
+on:
+  workflow_dispatch:
+    inputs:
+      tapes:
+        description: 'Space-separated tape slugs (empty records all tapes)'
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  record:
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Validate tape selection
+        id: selection
+        shell: bash
+        env:
+          TAPES_INPUT: ${{ inputs.tapes }}
+        run: |
+          available_list=$(bash docs/tapes/prepare.sh --list)
+          mapfile -t available <<< "$available_list"
+          mapfile -t requested < <(printf '%s\n' "$TAPES_INPUT" | tr -s '[:space:]' '\n')
+          selected=()
+          for slug in "${requested[@]}"; do
+            [[ -n $slug ]] || continue
+            if [[ " ${available[*]} " != *" $slug "* ]]; then
+              printf 'Unknown tape: %s\n' "$slug" >&2
+              exit 1
+            fi
+            if [[ " ${selected[*]} " != *" $slug "* ]]; then
+              selected+=("$slug")
+            fi
+          done
+          if (( ${#selected[@]} == 0 )); then
+            selected=("${available[@]}")
+          fi
+          printf 'tapes=%s\n' "${selected[*]}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6
+        with:
+          global-json-file: global.json
+
+      - name: Restore locked dependencies
+        shell: pwsh
+        run: ./scripts/Invoke-LockedRestore.ps1
+
+      - name: Publish wip.exe
+        run: >
+          dotnet publish src/Wip.Cli/Wip.Cli.csproj
+          --configuration Release
+          --runtime win-x64 --no-restore
+          --output artifacts/win-x64
+
+      - name: Add wip.exe to PATH
+        shell: pwsh
+        run: Add-Content -Path $env:GITHUB_PATH -Value (Resolve-Path artifacts/win-x64).Path
+
+      - name: Set up WSLC
+        uses: ./.github/actions/setup-wslc
+
+      - name: Install recording tools
+        shell: pwsh
+        run: |
+          $tools = Join-Path $env:RUNNER_TEMP 'recording-tools'
+          New-Item -ItemType Directory -Path $tools | Out-Null
+
+          function Get-VerifiedDownload($url, $name, $sha256) {
+            $path = Join-Path $tools $name
+            Invoke-WebRequest -Uri $url -OutFile $path
+            if ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -ne $sha256) {
+              throw "SHA-256 mismatch for $name"
+            }
+            return $path
+          }
+
+          $vhs = Get-VerifiedDownload `
+            'https://github.com/charmbracelet/vhs/releases/download/v0.12.1/vhs_0.12.1_Windows_x86_64.zip' `
+            'vhs.zip' 'acaefb840663123fb9cf4a211b5ca8d14bf248e30780a0a436fab7a675615f26'
+          Get-VerifiedDownload `
+            'https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.win32.exe' `
+            'ttyd.exe' 'e33a27501b10b96981335bcba938b1145c7f52551a343e72160f00ab71832b37' | Out-Null
+          $ffmpeg = Get-VerifiedDownload `
+            'https://github.com/GyanD/codexffmpeg/releases/download/9.0.2/ffmpeg-9.0.2-essentials_build.zip' `
+            'ffmpeg.zip' '60f467265b1e312373dbcd92200c2618a74850f98d3d078e94296bb3fa2047ba'
+
+          Expand-Archive -LiteralPath $vhs -DestinationPath $tools
+          Expand-Archive -LiteralPath $ffmpeg -DestinationPath $tools
+          Add-Content -Path $env:GITHUB_PATH -Value @(
+            $tools
+            (Join-Path $tools 'vhs_0.12.1_Windows_x86_64')
+            (Join-Path $tools 'ffmpeg-9.0.2-essentials_build/bin')
+          )
+
+      - name: Record the selected tapes
+        id: record
+        shell: bash
+        env:
+          SELECTED_TAPES: ${{ steps.selection.outputs.tapes }}
+        run: |
+          for tool in wip wslc vhs ttyd ffmpeg; do
+            command -v "$tool"
+          done
+          artifact="$(cygpath -u "$RUNNER_TEMP")/tapes"
+          mkdir -p "$artifact/gifs" "$artifact/logs" C:/wip-demo/docs
+          cp -R docs/tapes C:/wip-demo/docs/
+          cd C:/wip-demo
+          touch .wip-tapes-recording
+          # Copies from the checkout must not count as successful recordings.
+          rm -f docs/tapes/*.gif
+
+          read -ra slugs <<< "$SELECTED_TAPES"
+          failures=()
+          for slug in "${slugs[@]}"; do
+            prepare_log="$artifact/logs/$slug.prepare.log"
+            vhs_log="$artifact/logs/$slug.vhs.log"
+            if ! bash docs/tapes/prepare.sh "$slug" > "$prepare_log" 2>&1; then
+              printf 'Skipped because preparation failed.\n' > "$vhs_log"
+              failures+=("$slug (prepare)")
+              continue
+            fi
+            if ! vhs "docs/tapes/$slug.tape" > "$vhs_log" 2>&1; then
+              failures+=("$slug (vhs)")
+              continue
+            fi
+            if [[ ! -s docs/tapes/$slug.gif ]]; then
+              printf '\nRecording did not produce a nonempty GIF.\n' >> "$vhs_log"
+              failures+=("$slug (missing GIF)")
+              continue
+            fi
+            cp "docs/tapes/$slug.gif" "$artifact/gifs/"
+          done
+
+          if (( ${#failures[@]} > 0 )); then
+            {
+              printf '### Failed tape recordings\n\n'
+              printf -- '- %s\n' "${failures[@]}"
+            } | tee -a "$GITHUB_STEP_SUMMARY" >&2
+            exit 1
+          fi
+
+      - name: Upload GIFs and logs
+        if: always() && steps.record.outcome != 'skipped'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: tapes-${{ github.run_number }}
+          path: ${{ runner.temp }}/tapes
+          if-no-files-found: warn
