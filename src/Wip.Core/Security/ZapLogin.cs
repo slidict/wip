@@ -1,4 +1,4 @@
-using System.Text.RegularExpressions;
+using System.Globalization;
 
 namespace Wip.Security;
 
@@ -56,19 +56,20 @@ internal sealed record ZapLogin(
     }
 
     // An empty pattern matches every response, so the session check would always pass or always fail.
-    // ZAP compiles the pattern with Java; .NET catches the malformed ones before any image pull.
+    // wip does not compile the pattern: .NET rejects Java-valid ones such as \Qa.b\E or a++. The
+    // pinned ZAP image (measured) refuses a malformed one with "Invalid verification loggedInRegex: <pattern>",
+    // runs no job and exits 1, so the plan writes no report and the scan ends incomplete.
+    // Control, format (U+202E) and line or paragraph separator characters would break or disguise
+    // the coverage record, which carries the patterns.
     private static void RequirePattern(string option, string? pattern)
     {
         if (pattern is null) return;
         if (pattern.Length == 0)
             throw new ConfigException($"{option} must not be empty");
-        try
-        {
-            _ = new Regex(pattern, RegexOptions.None, TimeSpan.FromSeconds(1));
-        }
-        catch (ArgumentException error)
-        {
-            throw new ConfigException($"{option} is not a valid regular expression: {error.Message}");
-        }
+        if (pattern.Any(IsUnprintable))
+            throw new ConfigException($"{option} must not contain control or format characters");
     }
+
+    private static bool IsUnprintable(char c) => char.IsControl(c) || CharUnicodeInfo.GetUnicodeCategory(c)
+        is UnicodeCategory.Format or UnicodeCategory.LineSeparator or UnicodeCategory.ParagraphSeparator;
 }

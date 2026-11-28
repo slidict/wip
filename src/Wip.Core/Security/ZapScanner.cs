@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Wip.Yaml;
@@ -158,6 +159,7 @@ internal sealed class ZapScanner(ZapProfile? profile = null) : ISecurityScanner
                       (profile.Login is null ? "authenticated paths, " : "") +
                       "browser/Ajax crawling, " +
                       (profile.Login is null ? "form submission" : "form submission other than the configured login request") +
+                      (profile.Login is null ? "" : ", confirmation that the login succeeded") +
                       ", and out-of-band callbacks";
         var active = profile.ActiveScan
             ? $"; active scanning of the crawled in-scope requests stops after at most {Minutes(profile.ActiveScanMinutes)}, " +
@@ -181,16 +183,21 @@ internal sealed class ZapScanner(ZapProfile? profile = null) : ISecurityScanner
         // https://github.com/zaproxy/zaproxy/blob/main/zap/src/main/java/org/zaproxy/zap/authentication/VerificationMethod.java
         var rules = new List<string>();
         if (login.LoggedInRegex is not null)
-            rules.Add($"a response matching the logged-in regex {login.LoggedInRegex} counts as logged in");
+            rules.Add($"a response matching the logged-in regex {JsonQuote(login.LoggedInRegex)} counts as logged in");
         if (login.LoggedOutRegex is not null)
-            rules.Add($"a response matching the logged-out regex {login.LoggedOutRegex} counts as logged out");
+            rules.Add($"a response matching the logged-out regex {JsonQuote(login.LoggedOutRegex)} counts as logged out");
         rules.Add(login.LoggedOutRegex is null ? "any other response counts as logged out"
             : login.LoggedInRegex is null ? "a response without the logged-out marker is accepted but recorded as unknown"
             : "a response matching neither is accepted but recorded as unknown");
         return "The spider and any active scan run as one user configured to log in by form at " +
                $"{new Uri(login.LoginUrl).AbsoluteUri}; {string.Join("; ", rules)}. " +
-               "Pages ZAP could not reach as that user are not evidence. ";
+               "Which paths ZAP reached as that user is not recorded; " +
+               "pages ZAP could not reach as that user are not evidence. ";
     }
+
+    // JSON string quoting, so a pattern containing ';' or '.' cannot run into the sentence around it.
+    private static string JsonQuote(string pattern) =>
+        "\"" + JsonEncodedText.Encode(pattern, JavaScriptEncoder.UnsafeRelaxedJsonEscaping) + "\"";
 
     private static string Minutes(int value) => value == 1 ? "1 minute" : $"{value} minutes";
 

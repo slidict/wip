@@ -477,10 +477,16 @@ public sealed class SecurityOutputTests
     }
 
     [Fact]
-    public void AZapLoginIndicatorThatDoesNotCompileIsRefused()
+    public void AZapLoginIndicatorWithAControlCharacterIsRefused()
     {
-        var error = Assert.Throws<ConfigException>(() => ParseZapLogin([.. LoginArgs.Take(8), "--zap-logged-out-regex", "[a-"]));
-        Assert.Contains("--zap-logged-out-regex is not a valid regular expression", error.Message);
+        var error = Assert.Throws<ConfigException>(() => ParseZapLogin([.. LoginArgs.Take(8), "--zap-logged-out-regex", "Sign\nin"]));
+        Assert.Contains("--zap-logged-out-regex must not contain control or format characters", error.Message);
+    }
+
+    [Fact]
+    public void AZapLoginIndicatorIsNotCompiledByWip()
+    {
+        Assert.Equal(@"\Qa.b\E", ParseZapLogin([.. LoginArgs.Take(8), "--zap-logged-out-regex", @"\Qa.b\E"])!.Login!.LoggedOutRegex);
     }
 
     [Fact]

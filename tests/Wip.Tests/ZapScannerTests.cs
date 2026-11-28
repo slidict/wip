@@ -614,7 +614,7 @@ public class ZapScannerTests
             "--zap-login-url" => (Login with { LoginUrl = "" }, "requires --zap-login-url"),
             "--zap-login-body" => (Login with { LoginBody = "" }, "requires --zap-login-body"),
             "--zap-login-username" => (Login with { Username = "" }, "requires --zap-login-username"),
-            "--zap-logged-in-regex" => (Login with { LoggedInRegex = "(" }, "--zap-logged-in-regex is not a valid regular expression"),
+            "--zap-logged-in-regex" => (Login with { LoggedInRegex = "Sign\nout" }, "--zap-logged-in-regex must not contain control or format characters"),
             "--zap-logged-out-regex" => (Login with { LoggedOutRegex = "" }, "--zap-logged-out-regex must not be empty"),
             "indicator" => (Login with { LoggedInRegex = null, LoggedOutRegex = null }, "--zap-logged-in-regex or --zap-logged-out-regex"),
             _ => (Login with { Password = null! }, "--zap-login-password"),
@@ -622,6 +622,35 @@ public class ZapScannerTests
 
         var error = Assert.Throws<ConfigException>(() => Plan(new ZapProfile(Login: login)));
         Assert.Contains(expected, error.Message);
+    }
+
+    [Theory]
+    [InlineData("--zap-logged-in-regex", "Sign\nout")]
+    [InlineData("--zap-logged-in-regex", "Sign\tout")]
+    [InlineData("--zap-logged-out-regex", "Sign\nin")]
+    [InlineData("--zap-logged-out-regex", "Sign\tin")]
+    [InlineData("--zap-logged-in-regex", "Sign\u2028out")]
+    [InlineData("--zap-logged-out-regex", "Sign\u202Ein")]
+    [InlineData("--zap-logged-in-regex", "Sign\u200Bout")]
+    public void AnIndicatorWithAControlCharacterIsRefusedNamingTheFlag(string option, string pattern)
+    {
+        var login = option == ZapLogin.LoggedInRegexOption ? Login with { LoggedInRegex = pattern } : Login with { LoggedOutRegex = pattern };
+
+        var error = Assert.Throws<ConfigException>(() => Plan(new ZapProfile(Login: login)));
+        Assert.Equal($"{option} must not contain control or format characters", error.Message);
+    }
+
+    [Theory]
+    [InlineData(@"\Qa.b\E")]
+    [InlineData("a++")]
+    public void JavaPatternsThatDotNetRejectsAreLeftToZap(string pattern)
+    {
+        var plan = Plan(new ZapProfile(Login: Login with { LoggedInRegex = pattern, LoggedOutRegex = pattern }));
+
+        plan.Validate("zap");
+        var verification = Mapping(Mapping(Context(plan)["authentication"])["verification"]);
+        Assert.Equal(pattern, verification["loggedInRegex"]);
+        Assert.Equal(pattern, verification["loggedOutRegex"]);
     }
 
     [Fact]
@@ -634,19 +663,21 @@ public class ZapScannerTests
     }
 
     [Fact]
-    public void TheLoginCoverageRecordNamesTheLoginAndNoLongerListsAuthenticatedPaths()
+    public void TheLoginCoverageRecordNamesTheLoginAndDoesNotClaimItSucceeded()
     {
         var coverage = PlanCoverage(Plan(new ZapProfile(Login: Login)));
 
         Assert.StartsWith(
             "Checks not performed by this profile: active scanning, browser/Ajax crawling, " +
-            "form submission other than the configured login request, and out-of-band callbacks.\n",
+            "form submission other than the configured login request, confirmation that the login succeeded, " +
+            "and out-of-band callbacks.\n",
             coverage);
         Assert.Contains("configured to log in by form at http://app.test:8080/app/login; " +
-            "a response matching the logged-in regex Sign out counts as logged in; " +
-            "a response matching the logged-out regex Sign in counts as logged out; " +
+            "a response matching the logged-in regex \"Sign out\" counts as logged in; " +
+            "a response matching the logged-out regex \"Sign in\" counts as logged out; " +
             "a response matching neither is accepted but recorded as unknown. ", coverage);
-        Assert.Contains("Pages ZAP could not reach as that user are not evidence", coverage);
+        Assert.Contains("Which paths ZAP reached as that user is not recorded; " +
+            "pages ZAP could not reach as that user are not evidence. ", coverage);
         Assert.DoesNotContain("verified", coverage);
         Assert.DoesNotContain("test-password", coverage);
         Assert.DoesNotContain("scanner@example.test", coverage);
@@ -655,16 +686,20 @@ public class ZapScannerTests
         var active = PlanCoverage(Plan(new ZapProfile(ActiveScan: true, Login: Login with { LoggedInRegex = null })));
         Assert.StartsWith(
             "Checks not performed by this profile: browser/Ajax crawling, " +
-            "form submission other than the configured login request, and out-of-band callbacks.\n", active);
-        Assert.Contains("; a response matching the logged-out regex Sign in counts as logged out; " +
+            "form submission other than the configured login request, confirmation that the login succeeded, " +
+            "and out-of-band callbacks.\n", active);
+        Assert.Contains("; a response matching the logged-out regex \"Sign in\" counts as logged out; " +
             "a response without the logged-out marker is accepted but recorded as unknown. ", active);
         Assert.DoesNotContain("logged-in regex", active);
         Assert.DoesNotContain("verified", active);
 
         var loggedInOnly = PlanCoverage(Plan(new ZapProfile(Login: Login with { LoggedOutRegex = null })));
-        Assert.Contains("; a response matching the logged-in regex Sign out counts as logged in; " +
+        Assert.Contains("; a response matching the logged-in regex \"Sign out\" counts as logged in; " +
             "any other response counts as logged out. ", loggedInOnly);
         Assert.DoesNotContain("unknown", loggedInOnly);
+
+        var punctuated = PlanCoverage(Plan(new ZapProfile(Login: Login with { LoggedInRegex = "a\"; b", LoggedOutRegex = null })));
+        Assert.Contains("the logged-in regex \"a\\\"; b\" counts as logged in", punctuated);
     }
 
     [Theory]
