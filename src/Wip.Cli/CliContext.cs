@@ -1094,11 +1094,10 @@ internal sealed partial class CliContext
     /// declares no healthcheck at all, which keeps every project unaffected until it opts in.
     /// </summary>
     /// <remarks>
-    /// Waits on any healthcheck it finds, regardless of which depends_on condition (if any)
-    /// named it: <see cref="SidecarNames"/> already starts sidecars before the primary
-    /// container, and compose-native's dependency order already starts a dependency before
-    /// anything depends_on says depends on it, so there is no separate per-edge condition to
-    /// gate on selectively here.
+    /// Waits on the sidecar's own healthcheck, regardless of which depends_on condition (if
+    /// any) named it. <see cref="SidecarNames"/> starts every sidecar before the primary
+    /// container, so a sidecar's <c>depends_on: &lt;primary&gt;: condition: service_healthy</c>
+    /// is not waited on: the primary starts last and its healthcheck is never polled.
     /// </remarks>
     private void WaitForHealthy(string name)
     {
