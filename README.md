@@ -41,17 +41,17 @@ key, every command's flags, guides, and troubleshooting — see the
 
 - **No orchestration engine of its own** — every mode ultimately shells out to `wslc.exe` /
   `wslc` as a safe argv array; wip never talks to Docker and never grows logic that competes with
-  `wslc`. See [Architecture](https://github.com/slidict/wip/wiki/Architecture).
-<a id="architecture"></a>
+  `wslc`. See [Architecture](https://github.com/slidict/wip/wiki/Developing-wip#architecture).
 - **Three modes for three project shapes** — drive containers directly, parse an existing
   `compose.yml` yourself, or bridge to a third-party compose-for-`wslc` tool. See
   [Which mode should you use?](#which-mode-should-you-use) below.
 - **`wip init --ai`** — describe your stack in natural language and get a validated `wip.yml`
   back, via any local OpenAI-compatible server (Ollama, LM Studio). See
   [AI-Assisted Initialization](https://github.com/slidict/wip/wiki/AI-Assisted-Initialization).
-- **Healthcheck-aware startup** — `wip up` waits on a dependency's `healthcheck:` before starting
-  whatever depends on it, in every mode. See
-  [Restart Policies](https://github.com/slidict/wip/wiki/Restart-Policies).
+- **Healthcheck-aware startup** — under `mode: container` and `mode: compose-native`, `wip up`
+  waits for each sidecar's `healthcheck:` to pass before starting the next dependency and the
+  primary container; under `mode: compose`, it is left to the compose tool. See
+  [Healthchecks](https://github.com/slidict/wip/wiki/Healthchecks).
 - **Works from WSL2 shells, not just PowerShell** — `wip.exe` runs on Windows and drives `wslc`
   directly, but is meant to be typed from wherever you work. See
   [Running from a WSL2 Shell](https://github.com/slidict/wip/wiki/Running-from-a-WSL2-Shell).
@@ -369,7 +369,7 @@ dotnet test tests/Wip.Tests/Wip.Tests.csproj
 
 Requires the .NET 10 SDK. The test suite doesn't need WSLC and runs on Linux and macOS as well
 as Windows. See [CONTRIBUTING.md](CONTRIBUTING.md) for the full setup, and
-[Development](https://github.com/slidict/wip/wiki/Development) on the wiki for the e2e suite,
+[Developing wip](https://github.com/slidict/wip/wiki/Developing-wip) on the wiki for the e2e suite,
 the golden-corpus tests, and architecture notes. Known gaps and deferred decisions are tracked in
 [docs/csharp-migration-plan.md](docs/csharp-migration-plan.md).
 
