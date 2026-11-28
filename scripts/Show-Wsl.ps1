@@ -4,8 +4,8 @@
 
 .DESCRIPTION
     The single place this repository decides which wsl.exe to run and how to read it.
-    Dot-sourced by the Update WSL, Verify wslc is available and Diagnostics steps of
-    .github/workflows/e2e-windows.yml and by tests/e2e/run-e2e.ps1.
+    Dot-sourced by .github/actions/setup-wslc/action.yml, which both e2e-windows.yml and
+    record-tapes.yml use, and by the E2E Diagnostics step and tests/e2e/run-e2e.ps1.
 
     benchmark/scripts/common.ps1 dot-sources it for Resolve-WslLauncher alone, and keeps its
     own process plumbing: the benchmark runs under Windows PowerShell 5.1, where the
@@ -39,8 +39,8 @@
     System32 holds the launcher when the Microsoft-Windows-Subsystem-Linux optional
     component is enabled. It is not the only place: with WSL installed only as the Store
     package, the launcher lives with the package instead, which is why the sibling lookup
-    in Verify wslc is available checks ProgramFiles\WSL and the Appx install location for
-    wslc.exe. The same locations are checked here, in that order.
+    in .github/actions/setup-wslc/action.yml checks ProgramFiles\WSL and the Appx install
+    location for wslc.exe. The same locations are checked here, in that order.
 
     Order is the whole design here. The first three locations all need administrator rights
     to write to, so a decoy cannot be placed in them by whoever can write to the working

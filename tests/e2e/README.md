@@ -156,14 +156,14 @@ the per-sandbox lock; delivery of a `herdr-report` line with relay-stamped `sour
 ## In CI
 
 [`.github/workflows/e2e-windows.yml`](../../.github/workflows/e2e-windows.yml) runs it on
-`windows-latest`: it publishes `wip.exe`, updates stable WSL directly from GitHub
-with `wsl --update --web-download` (WSLC is GA in WSL 3.0.1 and later), verifies
-`wslc` is on PATH, publishes the pseudo-console harness, then runs this script. It runs on
-every pull request, plus weekly and on demand. Keeping it out of the `Test` workflow is about that workflow staying
-WSLC-free on Linux, not about running this one rarely.
+`windows-latest`. It publishes `wip.exe` and the test harnesses, sets up WSLC, then runs this
+script. It runs on every pull request, plus weekly and on demand. The separate `Test`
+workflow runs without WSLC.
 
-If the runner image has no WSLC, the "Verify wslc is available" step says so in one line
-instead of letting a wip command fail for unrelated reasons.
+Both E2E and [Record tapes](../../.github/workflows/record-tapes.yml) use
+[`setup-wslc`](../../.github/actions/setup-wslc/action.yml) to update stable WSL from GitHub
+with `wsl --update --web-download` and put `wslc` on PATH. Its **Verify wslc is available**
+step reports a missing backend before a test or recording starts.
 
 ## Adding a case
 

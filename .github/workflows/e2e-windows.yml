@@ -105,8 +105,8 @@ jobs:
           $PSNativeCommandUseErrorActionPreference = $false
 
           # Show-Wsl runs wsl.exe by absolute path and returns its exit code and output;
-          # scripts/Show-Wsl.ps1 says why each of those matters. Both steps that need it
-          # dot-source the one copy.
+          # scripts/Show-Wsl.ps1 documents the launcher. The setup action used here and
+          # in record-tapes.yml (.github/actions/setup-wslc/action.yml) sources it too.
           . "$env:GITHUB_WORKSPACE\scripts\Show-Wsl.ps1"
 
           # Caught individually: this step runs under if: failure() to collect evidence, so a

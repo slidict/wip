@@ -33,10 +33,11 @@ In GitHub Actions, open **Record tapes** and select **Run workflow**. Leave
 gh workflow run record-tapes.yml -f tapes="wip-up wip-shell"
 ```
 
-Download `tapes-<run number>` from the run's **Artifacts** section. It contains
+Download `tapes-<run number>-<run attempt>` from the run's **Artifacts** section. It contains
 the generated GIFs and each take's preparation and VHS logs. Check the last
 frame of every take, confirm the output is in English, and scan the whole GIF
-for internal details before committing it.
+for internal details before committing it. The workflow flags recordings with
+fewer than three distinct frames and keeps the GIF and logs for inspection.
 
 ### Updating the recording tools
 
